@@ -8,6 +8,7 @@
         :root {
             --bg: #0a0a0f;
             --surface: #12121a;
+            --surface2: #1a1a26;
             --border: #2a2a3a;
             --text: #e0e0e8;
             --text-dim: #6a6a7a;
@@ -36,11 +37,8 @@
             gap: 1rem;
         }
 
-        header h1 {
-            font-size: 1.4rem;
-            color: var(--accent);
-            font-weight: 600;
-        }
+        header h1 { font-size: 1.4rem; color: var(--accent); font-weight: 600; cursor: pointer; }
+        header .breadcrumb { font-size: 0.9rem; color: var(--text-dim); }
 
         header .status {
             font-size: 0.8rem;
@@ -50,18 +48,13 @@
 
         header .status .dot {
             display: inline-block;
-            width: 8px;
-            height: 8px;
+            width: 8px; height: 8px;
             border-radius: 50%;
             background: var(--green);
             margin-right: 0.4rem;
         }
 
-        main {
-            padding: 2rem;
-            max-width: 1200px;
-            margin: 0 auto;
-        }
+        main { padding: 2rem; max-width: 1200px; margin: 0 auto; }
 
         .section-title {
             font-size: 0.75rem;
@@ -71,32 +64,66 @@
             margin-bottom: 1rem;
         }
 
-        #agents {
-            display: flex;
-            flex-direction: column;
-            gap: 0.5rem;
+        /* Forms */
+        .form-row { display: flex; gap: 0.5rem; margin-bottom: 1.5rem; }
+
+        .form-row input[type="text"] {
+            flex: 1;
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            padding: 0.6rem 1rem;
+            color: var(--text);
+            font-family: inherit;
+            font-size: 0.85rem;
+            outline: none;
+            transition: border-color 0.2s;
         }
+
+        .form-row input:focus { border-color: var(--accent); }
+        .form-row input::placeholder { color: var(--text-dim); }
+
+        .btn {
+            background: var(--accent);
+            color: white;
+            border: none;
+            border-radius: 6px;
+            padding: 0.6rem 1.2rem;
+            font-family: inherit;
+            font-size: 0.85rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: opacity 0.2s;
+            white-space: nowrap;
+        }
+
+        .btn:hover { opacity: 0.85; }
+        .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+        .btn-danger { background: var(--red); }
+        .btn-sm { padding: 0.35rem 0.8rem; font-size: 0.8rem; }
+
+        /* Agent list */
+        #agents { display: flex; flex-direction: column; gap: 0.5rem; }
 
         .agent-card {
             background: var(--surface);
             border: 1px solid var(--border);
             border-radius: 8px;
             padding: 1rem 1.5rem;
-            display: grid;
-            grid-template-columns: 80px 120px 1fr 80px;
-            align-items: center;
-            gap: 1rem;
+            cursor: pointer;
             transition: border-color 0.2s;
         }
 
-        .agent-card:hover {
-            border-color: var(--accent);
+        .agent-card:hover { border-color: var(--accent); }
+
+        .agent-card-top {
+            display: grid;
+            grid-template-columns: 80px 100px 1fr 80px;
+            align-items: center;
+            gap: 1rem;
         }
 
-        .agent-id {
-            font-size: 0.85rem;
-            color: var(--text-dim);
-        }
+        .agent-id { font-size: 0.85rem; color: var(--text-dim); }
 
         .agent-state {
             font-size: 0.8rem;
@@ -112,79 +139,177 @@
         .state-failed { background: rgba(248, 113, 113, 0.15); color: var(--red); }
         .state-banished { background: rgba(167, 139, 250, 0.15); color: var(--purple); }
 
-        .agent-task {
-            font-size: 0.9rem;
-            white-space: nowrap;
+        .agent-task { font-size: 0.9rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .agent-age { font-size: 0.8rem; color: var(--text-dim); text-align: right; }
+
+        .agent-card-live {
+            margin-top: 0.6rem;
+            padding-top: 0.5rem;
+            border-top: 1px solid var(--border);
+            font-size: 0.8rem;
+            color: var(--text-dim);
+            max-height: 60px;
             overflow: hidden;
-            text-overflow: ellipsis;
-        }
-
-        .agent-age {
-            font-size: 0.8rem;
-            color: var(--text-dim);
-            text-align: right;
-        }
-
-        .empty {
-            text-align: center;
-            padding: 4rem;
-            color: var(--text-dim);
-        }
-
-        .empty .icon { font-size: 2rem; margin-bottom: 1rem; }
-
-        #event-log {
-            margin-top: 2rem;
-            background: var(--surface);
-            border: 1px solid var(--border);
-            border-radius: 8px;
-            padding: 1rem;
-            max-height: 400px;
-            overflow-y: auto;
-            font-size: 0.8rem;
-        }
-
-        .event-line {
-            padding: 0.2rem 0;
-            color: var(--text-dim);
             white-space: pre-wrap;
             word-break: break-all;
         }
 
-        .event-line .timestamp {
-            color: var(--text-dim);
-            margin-right: 0.5rem;
+        .agent-card-live .live-label {
+            font-size: 0.7rem;
+            color: var(--green);
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            margin-bottom: 0.2rem;
         }
 
-        .event-line.stdout { color: var(--text); }
-        .event-line.stderr { color: var(--yellow); }
-        .event-line.state-change { color: var(--accent); font-weight: 600; }
+        .empty { text-align: center; padding: 4rem; color: var(--text-dim); }
+        .empty .icon { font-size: 2rem; margin-bottom: 1rem; }
+
+        /* Detail view */
+        #detail-view { display: none; }
+
+        .detail-header {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+            margin-bottom: 1.5rem;
+            padding-bottom: 1rem;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .detail-header .back {
+            color: var(--text-dim);
+            cursor: pointer;
+            font-size: 1.2rem;
+            padding: 0.2rem 0.5rem;
+            border-radius: 4px;
+            transition: color 0.2s;
+        }
+
+        .detail-header .back:hover { color: var(--text); }
+        .detail-header .info { flex: 1; }
+
+        .detail-meta {
+            display: flex;
+            gap: 1.5rem;
+            font-size: 0.8rem;
+            color: var(--text-dim);
+        }
+
+        .detail-meta span { display: flex; align-items: center; gap: 0.3rem; }
+        .detail-actions { display: flex; gap: 0.5rem; }
+
+        /* Stream output */
+        #agent-output {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 1.5rem;
+            max-height: calc(100vh - 380px);
+            overflow-y: auto;
+            font-size: 0.85rem;
+            line-height: 1.6;
+        }
+
+        .ev-init { color: var(--accent); padding: 0.3rem 0; border-bottom: 1px solid var(--border); margin-bottom: 0.8rem; }
+        .ev-text { color: var(--text); white-space: pre-wrap; word-break: break-word; }
+
+        .ev-tool {
+            margin: 0.6rem 0;
+            padding: 0.6rem 0.8rem;
+            background: var(--surface2);
+            border-radius: 6px;
+            border-left: 3px solid var(--yellow);
+        }
+
+        .ev-tool .tool-name { color: var(--yellow); font-weight: 600; }
+        .ev-tool .tool-param { color: var(--text-dim); font-size: 0.8rem; margin-top: 0.2rem; }
+
+        .ev-tool-result {
+            margin: 0.3rem 0 0.6rem 0;
+            padding: 0.4rem 0.8rem;
+            background: var(--surface2);
+            border-radius: 6px;
+            border-left: 3px solid var(--green);
+            font-size: 0.8rem;
+            color: var(--text-dim);
+            max-height: 200px;
+            overflow-y: auto;
+            white-space: pre-wrap;
+        }
+
+        .ev-tool-result.error { border-left-color: var(--red); color: var(--red); }
+
+        .ev-result { margin-top: 1rem; padding-top: 0.8rem; border-top: 1px solid var(--border); font-size: 0.8rem; }
+        .ev-result .success { color: var(--green); }
+        .ev-result .failure { color: var(--red); }
+        .ev-result .meta { color: var(--text-dim); margin-left: 0.5rem; }
+
+        #invoke-section { margin-top: 1.5rem; }
     </style>
 </head>
 <body>
     <header>
-        <h1>grimoire</h1>
+        <h1 onclick="showList()">grimoire</h1>
+        <span class="breadcrumb" id="breadcrumb"></span>
         <span class="status"><span class="dot" id="status-dot"></span><span id="status-text">connecting...</span></span>
     </header>
 
     <main>
-        <div class="section-title">Agents in the Circle</div>
-        <div id="agents">
-            <div class="empty">
-                <div class="icon">&#x2728;</div>
-                <div>No agents summoned yet</div>
+        <div id="list-view">
+            <div class="section-title">Summon Agent</div>
+            <div class="form-row">
+                <input type="text" id="summon-input" placeholder="Enter a task for the agent..." onkeydown="if(event.key==='Enter')doSummon()">
+                <button class="btn" onclick="doSummon()" id="summon-btn">Summon</button>
+            </div>
+
+            <div class="section-title">Agents in the Circle</div>
+            <div id="agents">
+                <div class="empty"><div class="icon">&#x2728;</div><div>No agents summoned yet</div></div>
             </div>
         </div>
 
-        <div class="section-title" style="margin-top: 2rem;">Live Events</div>
-        <div id="event-log"></div>
+        <div id="detail-view">
+            <div class="detail-header">
+                <span class="back" onclick="showList()">&larr;</span>
+                <div class="info">
+                    <div id="detail-title" style="font-weight: 600;"></div>
+                    <div class="detail-meta" id="detail-meta"></div>
+                </div>
+                <div class="detail-actions" id="detail-actions"></div>
+            </div>
+            <div class="section-title">Agent Output</div>
+            <div id="agent-output"></div>
+
+            <div id="invoke-section" style="display:none;">
+                <div class="section-title" style="margin-top:1.5rem;">Invoke</div>
+                <div class="form-row">
+                    <input type="text" id="invoke-input" placeholder="Send a follow-up message..." onkeydown="if(event.key==='Enter')doInvoke()">
+                    <button class="btn" onclick="doInvoke()" id="invoke-btn">Invoke</button>
+                </div>
+            </div>
+        </div>
     </main>
 
     <script>
         const agentsEl = document.getElementById('agents');
-        const eventLog = document.getElementById('event-log');
         const statusDot = document.getElementById('status-dot');
         const statusText = document.getElementById('status-text');
+        const listView = document.getElementById('list-view');
+        const detailView = document.getElementById('detail-view');
+        const breadcrumb = document.getElementById('breadcrumb');
+        const detailTitle = document.getElementById('detail-title');
+        const detailMeta = document.getElementById('detail-meta');
+        const detailActions = document.getElementById('detail-actions');
+        const agentOutput = document.getElementById('agent-output');
+        const invokeSection = document.getElementById('invoke-section');
+
+        let currentAgentId = null;
+        let currentAgentState = null;
+        let agentSSE = null;
+
+        // Per-agent latest activity for list view live preview
+        const agentLatestLine = {};
 
         function formatAge(secs) {
             if (secs < 60) return secs + 's';
@@ -193,76 +318,360 @@
             return Math.floor(secs / 86400) + 'd';
         }
 
+        function esc(s) {
+            const d = document.createElement('div');
+            d.textContent = s;
+            return d.innerHTML;
+        }
+
+        // Extract a short human-readable summary from a stream-json line
+        function summarizeLine(jsonLine) {
+            try {
+                const v = JSON.parse(jsonLine);
+                switch (v.type) {
+                    case 'system':
+                        return `◆ ${v.model || 'unknown'} starting...`;
+                    case 'assistant': {
+                        const content = v.message?.content;
+                        if (!Array.isArray(content)) return null;
+                        const parts = [];
+                        for (const b of content) {
+                            if (b.type === 'text') {
+                                const t = (b.text || '').trim();
+                                if (t) parts.push(t.slice(0, 150));
+                            }
+                            if (b.type === 'tool_use') {
+                                const inp = b.input || {};
+                                let detail = '';
+                                switch (b.name) {
+                                    case 'Bash':
+                                        detail = inp.command ? `: ${inp.command}` : ''; break;
+                                    case 'Read': case 'Write': case 'Edit':
+                                        detail = inp.file_path ? `: ${inp.file_path.split('/').pop()}` : ''; break;
+                                    case 'Glob': case 'Grep':
+                                        detail = inp.pattern ? `: ${inp.pattern}` : ''; break;
+                                    default:
+                                        break;
+                                }
+                                parts.push(`▸ ${b.name}${detail}`);
+                            }
+                        }
+                        return parts.length ? parts.join(' · ').slice(0, 200) : null;
+                    }
+                    case 'result': {
+                        const dur = v.duration_ms || 0;
+                        const durStr = dur > 60000 ? (dur/60000).toFixed(1) + 'm' : (dur/1000).toFixed(1) + 's';
+                        const cost = v.total_cost_usd;
+                        let s = v.subtype === 'success' ? '✓ complete' : '✗ ' + (v.subtype || 'error');
+                        s += ` in ${durStr}`;
+                        if (cost != null) s += ` · $${cost.toFixed(4)}`;
+                        return s;
+                    }
+                    default:
+                        return null;
+                }
+            } catch { return null; }
+        }
+
+        // --- Summon ---
+
+        async function doSummon() {
+            const input = document.getElementById('summon-input');
+            const btn = document.getElementById('summon-btn');
+            const task = input.value.trim();
+            if (!task) return;
+            btn.disabled = true;
+            btn.textContent = 'Summoning...';
+            try {
+                const res = await fetch('/api/agents', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ task })
+                });
+                const data = await res.json();
+                if (data.id) { input.value = ''; fetchAgents(); showAgent(data.id); }
+            } catch (e) {}
+            btn.disabled = false;
+            btn.textContent = 'Summon';
+        }
+
+        async function doBanish() {
+            if (!currentAgentId) return;
+            try { await fetch(`/api/agents/${currentAgentId}`, { method: 'DELETE' }); } catch (e) {}
+        }
+
+        async function doInvoke() {
+            const input = document.getElementById('invoke-input');
+            const btn = document.getElementById('invoke-btn');
+            const message = input.value.trim();
+            if (!message || !currentAgentId) return;
+            btn.disabled = true;
+            btn.textContent = 'Invoking...';
+            try {
+                const res = await fetch('/api/agents/' + currentAgentId + '/invoke', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ message })
+                });
+                const data = await res.json();
+                if (!data.error) { input.value = ''; updateDetailActions('active'); }
+            } catch (e) {}
+            btn.disabled = false;
+            btn.textContent = 'Invoke';
+        }
+
+        // --- List view ---
+
         function renderAgents(agents) {
             if (!agents.length) {
                 agentsEl.innerHTML = '<div class="empty"><div class="icon">&#x2728;</div><div>No agents summoned yet</div></div>';
                 return;
             }
-            agentsEl.innerHTML = agents.map(a => `
-                <div class="agent-card">
-                    <span class="agent-id">${a.id}</span>
-                    <span class="agent-state state-${a.state}">${a.state}</span>
-                    <span class="agent-task">${a.task || '-'}</span>
-                    <span class="agent-age">${formatAge(a.age_secs)}</span>
-                </div>
-            `).join('');
+            agentsEl.innerHTML = agents.map(a => {
+                const latest = agentLatestLine[a.id];
+                const isLive = a.state === 'active' || a.state === 'summoning';
+                const liveHtml = isLive && latest
+                    ? `<div class="agent-card-live"><div class="live-label">● live</div>${esc(latest)}</div>`
+                    : (latest && a.state === 'complete'
+                        ? `<div class="agent-card-live" style="color:var(--blue)">${esc(latest)}</div>`
+                        : '');
+                return `
+                    <div class="agent-card" onclick="showAgent('${esc(a.id)}')">
+                        <div class="agent-card-top">
+                            <span class="agent-id">${esc(a.id)}</span>
+                            <span class="agent-state state-${esc(a.state)}">${esc(a.state)}</span>
+                            <span class="agent-task">${esc(a.task || '-')}</span>
+                            <span class="agent-age">${formatAge(a.age_secs)}</span>
+                        </div>
+                        ${liveHtml}
+                    </div>`;
+            }).join('');
         }
 
-        function addEvent(text, cls) {
-            const line = document.createElement('div');
-            line.className = 'event-line ' + (cls || '');
-            const time = new Date().toLocaleTimeString();
-            line.innerHTML = `<span class="timestamp">${time}</span>${text}`;
-            eventLog.appendChild(line);
-            eventLog.scrollTop = eventLog.scrollHeight;
-
-            // Keep max 500 lines
-            while (eventLog.children.length > 500) {
-                eventLog.removeChild(eventLog.firstChild);
-            }
-        }
-
-        // Fetch agents periodically
         async function fetchAgents() {
             try {
                 const res = await fetch('/api/agents');
                 const data = await res.json();
                 renderAgents(data.agents || []);
+            } catch (e) {}
+        }
+
+        // --- Detail view ---
+
+        function updateDetailActions(state) {
+            currentAgentState = state;
+            let html = '';
+            if (state === 'active' || state === 'summoning') {
+                html = `<button class="btn btn-danger btn-sm" onclick="doBanish()">Banish</button>`;
+                invokeSection.style.display = 'none';
+            } else if (state === 'complete' || state === 'failed') {
+                invokeSection.style.display = '';
+            } else {
+                invokeSection.style.display = 'none';
+            }
+            detailActions.innerHTML = html;
+        }
+
+        function showList() {
+            currentAgentId = null;
+            currentAgentState = null;
+            if (agentSSE) { agentSSE.close(); agentSSE = null; }
+            listView.style.display = '';
+            detailView.style.display = 'none';
+            breadcrumb.textContent = '';
+            fetchAgents();
+        }
+
+        async function showAgent(id) {
+            currentAgentId = id;
+            listView.style.display = 'none';
+            detailView.style.display = 'block';
+            agentOutput.innerHTML = '';
+            invokeSection.style.display = 'none';
+            detailActions.innerHTML = '';
+
+            try {
+                const res = await fetch(`/api/agents/${id}`);
+                const agent = await res.json();
+                breadcrumb.textContent = `/ ${id}`;
+                detailTitle.textContent = agent.task || id;
+                detailMeta.innerHTML = `
+                    <span class="agent-state state-${esc(agent.state)}" style="font-size:0.75rem">${esc(agent.state)}</span>
+                    <span>${esc(id)}</span>
+                    <span>${esc(agent.model || '')}</span>
+                `;
+                updateDetailActions(agent.state);
             } catch (e) {
-                console.error('Failed to fetch agents:', e);
+                detailTitle.textContent = id;
+            }
+
+            // Load history
+            try {
+                const res = await fetch(`/api/agents/${id}/history`);
+                const events = await res.json();
+                if (Array.isArray(events)) {
+                    for (const ev of events) {
+                        if (ev.event_type === 'stdout') renderStreamEvent(ev.payload);
+                    }
+                }
+            } catch (e) {}
+
+            // SSE for live updates (streams new output in real-time)
+            if (agentSSE) agentSSE.close();
+            agentSSE = new EventSource(`/api/agents/${id}/events`);
+            agentSSE.onmessage = (e) => {
+                try {
+                    const event = JSON.parse(e.data);
+                    if (event.type === 'output' && event.stream === 'stdout') {
+                        renderStreamEvent(event.line);
+                    } else if (event.type === 'state_change') {
+                        const badge = detailMeta.querySelector('.agent-state');
+                        if (badge) {
+                            badge.className = `agent-state state-${event.new_state}`;
+                            badge.textContent = event.new_state;
+                        }
+                        updateDetailActions(event.new_state);
+                    }
+                } catch (err) {}
+            };
+        }
+
+        // --- Stream-JSON parser (formatted rendering) ---
+
+        function renderStreamEvent(jsonLine) {
+            let v;
+            try { v = JSON.parse(jsonLine); } catch { return; }
+            switch (v.type) {
+                case 'system': renderInit(v); break;
+                case 'assistant': renderAssistant(v); break;
+                case 'user': renderUser(v); break;
+                case 'tool_use': renderToolUse(v); break;
+                case 'tool_result': renderToolResult(v); break;
+                case 'result': renderResult(v); break;
+            }
+            agentOutput.scrollTop = agentOutput.scrollHeight;
+        }
+
+        function renderInit(v) {
+            const el = document.createElement('div');
+            el.className = 'ev-init';
+            el.textContent = `◆ ${v.model || 'unknown'}  session ${(v.session_id || '').slice(0, 8)}`;
+            agentOutput.appendChild(el);
+        }
+
+        function renderAssistant(v) {
+            const content = v.message?.content;
+            if (!Array.isArray(content)) return;
+            for (const block of content) {
+                if (block.type === 'text') {
+                    const text = (block.text || '').trim();
+                    if (!text) continue;
+                    const el = document.createElement('div');
+                    el.className = 'ev-text';
+                    el.textContent = text;
+                    agentOutput.appendChild(el);
+                } else if (block.type === 'tool_use') {
+                    appendToolUse(block.name, block.input);
+                }
             }
         }
 
-        // SSE for live events
+        function renderUser(v) {
+            const content = v.message?.content;
+            if (!Array.isArray(content)) return;
+            for (const block of content) {
+                if (block.type === 'tool_result') {
+                    const el = document.createElement('div');
+                    el.className = 'ev-tool-result' + (block.is_error ? ' error' : '');
+                    let text = '';
+                    if (typeof block.content === 'string') text = block.content;
+                    else if (Array.isArray(block.content))
+                        text = block.content.filter(c => c.type === 'text').map(c => c.text || '').join('\n');
+                    const lines = text.split('\n');
+                    el.textContent = lines.length > 20
+                        ? lines.slice(0, 15).join('\n') + `\n... (${lines.length} lines)` : text;
+                    agentOutput.appendChild(el);
+                }
+            }
+        }
+
+        function renderToolUse(v) { appendToolUse(v.name, v.input); }
+
+        function appendToolUse(name, input) {
+            const el = document.createElement('div');
+            el.className = 'ev-tool';
+            let paramHtml = '';
+            if (input) {
+                switch (name) {
+                    case 'Bash':
+                        if (input.command) paramHtml = `<div class="tool-param">${esc(input.command)}</div>`;
+                        break;
+                    case 'Read': case 'Write': case 'Edit':
+                        if (input.file_path) paramHtml = `<div class="tool-param">${esc(input.file_path)}</div>`;
+                        break;
+                    case 'Glob': case 'Grep':
+                        if (input.pattern) paramHtml = `<div class="tool-param">${esc(input.pattern)}</div>`;
+                        break;
+                    default:
+                        const keys = Object.keys(input);
+                        if (keys.length) paramHtml = `<div class="tool-param">${esc(keys.join(', '))}</div>`;
+                }
+            }
+            el.innerHTML = `<span class="tool-name">▸ ${esc(name)}</span>${paramHtml}`;
+            agentOutput.appendChild(el);
+        }
+
+        function renderToolResult(v) {
+            const el = document.createElement('div');
+            el.className = 'ev-tool-result' + (v.is_error ? ' error' : '');
+            const output = v.content || v.output || '';
+            const lines = output.split('\n');
+            el.textContent = lines.length > 20
+                ? lines.slice(0, 15).join('\n') + `\n... (${lines.length} lines)` : output;
+            agentOutput.appendChild(el);
+        }
+
+        function renderResult(v) {
+            const el = document.createElement('div');
+            el.className = 'ev-result';
+            const ok = v.subtype === 'success';
+            const dur = v.duration_ms || 0;
+            const durStr = dur > 60000 ? (dur/60000).toFixed(1) + 'm' : (dur/1000).toFixed(1) + 's';
+            const turns = v.num_turns || 0;
+            const cost = v.total_cost_usd;
+            let html = ok
+                ? `<span class="success">✓ success</span>`
+                : `<span class="failure">✗ ${esc(v.subtype || 'error')}</span>`;
+            html += `<span class="meta">${durStr} · ${turns} turn${turns===1?'':'s'}`;
+            if (cost != null) html += ` · $${cost.toFixed(4)}`;
+            html += `</span>`;
+            el.innerHTML = html;
+            agentOutput.appendChild(el);
+        }
+
+        // --- Global SSE (feeds per-agent previews on list view) ---
+
         function connectSSE() {
             const es = new EventSource('/api/events');
-
             es.onopen = () => {
                 statusDot.style.background = 'var(--green)';
                 statusText.textContent = 'connected';
             };
-
             es.onmessage = (e) => {
                 try {
                     const event = JSON.parse(e.data);
-                    switch (event.type) {
-                        case 'output':
-                            addEvent(`[${event.agent_id}] ${event.line}`, event.stream);
-                            break;
-                        case 'state_change':
-                            addEvent(`Agent ${event.agent_id}: ${event.old_state} → ${event.new_state}`, 'state-change');
-                            fetchAgents();
-                            break;
-                        case 'agent_created':
-                            addEvent(`Agent ${event.agent.id} summoned: ${event.agent.task || ''}`, 'state-change');
-                            fetchAgents();
-                            break;
+                    if (event.type === 'output' && event.stream === 'stdout') {
+                        const summary = summarizeLine(event.line);
+                        if (summary) {
+                            agentLatestLine[event.agent_id] = summary;
+                            // Re-render list if visible
+                            if (!currentAgentId) fetchAgents();
+                        }
+                    } else if (event.type === 'state_change' || event.type === 'agent_created') {
+                        fetchAgents();
                     }
-                } catch (err) {
-                    console.error('SSE parse error:', err);
-                }
+                } catch (err) {}
             };
-
             es.onerror = () => {
                 statusDot.style.background = 'var(--red)';
                 statusText.textContent = 'disconnected';
@@ -272,8 +681,9 @@
         }
 
         fetchAgents();
-        setInterval(fetchAgents, 5000);
+        setInterval(fetchAgents, 10000);
         connectSSE();
+        document.getElementById('summon-input').focus();
     </script>
 </body>
 </html>

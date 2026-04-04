@@ -50,6 +50,7 @@ impl DaemonClient {
     }
 
     /// Send a bind request and return lines as they come
+    #[allow(dead_code)]
     pub async fn bind(&mut self, method: &str, params: serde_json::Value) -> Result<()> {
         let id = REQ_ID.fetch_add(1, Ordering::Relaxed);
         let req = RpcRequest {
@@ -75,6 +76,42 @@ impl DaemonClient {
         }
 
         Ok(())
+    }
+}
+
+/// Resolve a short ID prefix to a full agent ID.
+/// Queries the daemon for all agents and finds the unique match.
+pub async fn resolve_agent_id(prefix: &str) -> Result<String> {
+    let mut client = DaemonClient::connect().await?;
+    let response = client
+        .call("agent.circle", serde_json::json!({}))
+        .await?;
+
+    if let Some(error) = response.error {
+        anyhow::bail!("Failed to list agents: {}", error.message);
+    }
+
+    let result: crate::shared::protocol::CircleResult =
+        serde_json::from_value(response.result.unwrap())?;
+
+    let matches: Vec<_> = result
+        .agents
+        .iter()
+        .filter(|a| a.id.starts_with(prefix))
+        .collect();
+
+    match matches.len() {
+        0 => anyhow::bail!("No agent matching '{}'", prefix),
+        1 => Ok(matches[0].id.clone()),
+        n => {
+            let ids: Vec<_> = matches.iter().map(|a| a.id.as_str()).collect();
+            anyhow::bail!(
+                "Ambiguous prefix '{}' matches {} agents: {}",
+                prefix,
+                n,
+                ids.join(", ")
+            )
+        }
     }
 }
 

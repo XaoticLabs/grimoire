@@ -4,7 +4,7 @@ use rusqlite::{Connection, params};
 use std::path::Path;
 use std::sync::Mutex;
 
-use crate::shared::types::{Agent, AgentEvent, AgentState};
+use crate::shared::types::{Agent, AgentEvent, AgentState, Pact, PactState};
 
 pub struct Database {
     conn: Mutex<Connection>,
@@ -49,6 +49,20 @@ impl Database {
 
             CREATE INDEX IF NOT EXISTS idx_agent_events_agent_id
                 ON agent_events(agent_id);
+
+            CREATE TABLE IF NOT EXISTS pacts (
+                id          TEXT PRIMARY KEY,
+                source_id   TEXT NOT NULL REFERENCES agents(id),
+                task_tpl    TEXT NOT NULL,
+                name        TEXT,
+                state       TEXT NOT NULL DEFAULT 'pending',
+                target_id   TEXT,
+                created_at  TEXT NOT NULL,
+                fired_at    TEXT
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_pacts_source_id
+                ON pacts(source_id);
             ",
         )?;
         Ok(())
@@ -87,6 +101,16 @@ impl Database {
         conn.execute(
             "UPDATE agents SET state = ?1, exit_code = ?2, updated_at = ?3 WHERE id = ?4",
             params![state.as_str(), exit_code, now, id],
+        )?;
+        Ok(())
+    }
+
+    pub fn update_agent_session_id(&self, id: &str, session_id: &str) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        let now = Utc::now().to_rfc3339();
+        conn.execute(
+            "UPDATE agents SET session_id = ?1, updated_at = ?2 WHERE id = ?3",
+            params![session_id, now, id],
         )?;
         Ok(())
     }
@@ -189,12 +213,135 @@ impl Database {
         Ok(events)
     }
 
+    #[allow(dead_code)]
     pub fn delete_agent(&self, id: &str) -> Result<()> {
         let conn = self.conn.lock().unwrap();
         conn.execute("DELETE FROM agent_events WHERE agent_id = ?1", params![id])?;
         conn.execute("DELETE FROM agents WHERE id = ?1", params![id])?;
         Ok(())
     }
+
+    // --- Pact methods ---
+
+    pub fn insert_pact(&self, pact: &Pact) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO pacts (id, source_id, task_tpl, name, state, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![
+                pact.id,
+                pact.source_id,
+                pact.task_tpl,
+                pact.name,
+                pact.state.as_str(),
+                pact.created_at.to_rfc3339(),
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn list_pacts(&self, source_id: Option<&str>) -> Result<Vec<Pact>> {
+        let conn = self.conn.lock().unwrap();
+        let mut pacts = Vec::new();
+        if let Some(sid) = source_id {
+            let mut stmt = conn.prepare(
+                "SELECT id, source_id, task_tpl, name, state, target_id, created_at, fired_at
+                 FROM pacts WHERE source_id = ?1 ORDER BY created_at DESC",
+            )?;
+            let mut rows = stmt.query(params![sid])?;
+            while let Some(row) = rows.next()? {
+                pacts.push(row_to_pact(row)?);
+            }
+        } else {
+            let mut stmt = conn.prepare(
+                "SELECT id, source_id, task_tpl, name, state, target_id, created_at, fired_at
+                 FROM pacts ORDER BY created_at DESC",
+            )?;
+            let mut rows = stmt.query([])?;
+            while let Some(row) = rows.next()? {
+                pacts.push(row_to_pact(row)?);
+            }
+        }
+        Ok(pacts)
+    }
+
+    pub fn get_pending_pacts_for_agent(&self, agent_id: &str) -> Result<Vec<Pact>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT id, source_id, task_tpl, name, state, target_id, created_at, fired_at
+             FROM pacts WHERE source_id = ?1 AND state = 'pending'",
+        )?;
+        let mut rows = stmt.query(params![agent_id])?;
+        let mut pacts = Vec::new();
+        while let Some(row) = rows.next()? {
+            pacts.push(row_to_pact(row)?);
+        }
+        Ok(pacts)
+    }
+
+    pub fn update_pact_fired(&self, id: &str, target_id: &str) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        let now = Utc::now().to_rfc3339();
+        conn.execute(
+            "UPDATE pacts SET state = 'fired', target_id = ?1, fired_at = ?2 WHERE id = ?3",
+            params![target_id, now, id],
+        )?;
+        Ok(())
+    }
+
+    pub fn update_pact_failed(&self, id: &str) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        let now = Utc::now().to_rfc3339();
+        conn.execute(
+            "UPDATE pacts SET state = 'failed', fired_at = ?1 WHERE id = ?2",
+            params![now, id],
+        )?;
+        Ok(())
+    }
+
+    /// Extract the final result text from an agent's output events.
+    pub fn get_agent_output(&self, agent_id: &str) -> Result<Option<String>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT payload FROM agent_events
+             WHERE agent_id = ?1 AND event_type = 'stdout'
+             ORDER BY id DESC",
+        )?;
+        let mut rows = stmt.query(params![agent_id])?;
+        while let Some(row) = rows.next()? {
+            let payload: String = row.get(0)?;
+            if let Ok(v) = serde_json::from_str::<serde_json::Value>(&payload) {
+                if v.get("type").and_then(|t| t.as_str()) == Some("result") {
+                    if let Some(result) = v.get("result").and_then(|r| r.as_str()) {
+                        return Ok(Some(result.to_string()));
+                    }
+                }
+            }
+        }
+        Ok(None)
+    }
+}
+
+fn row_to_pact(row: &rusqlite::Row) -> Result<Pact> {
+    let state_str: String = row.get(4)?;
+    let state = PactState::from_str(&state_str).unwrap_or(PactState::Failed);
+    let created_str: String = row.get(6)?;
+    let fired_str: Option<String> = row.get(7)?;
+
+    Ok(Pact {
+        id: row.get(0)?,
+        source_id: row.get(1)?,
+        task_tpl: row.get(2)?,
+        name: row.get(3)?,
+        state,
+        target_id: row.get(5)?,
+        created_at: chrono::DateTime::parse_from_rfc3339(&created_str)
+            .unwrap()
+            .with_timezone(&chrono::Utc),
+        fired_at: fired_str
+            .and_then(|s| chrono::DateTime::parse_from_rfc3339(&s).ok())
+            .map(|d| d.with_timezone(&chrono::Utc)),
+    })
 }
 
 fn row_to_agent(row: &rusqlite::Row) -> Result<Agent> {

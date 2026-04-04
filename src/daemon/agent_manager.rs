@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{Result, anyhow};
 use chrono::Utc;
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -6,6 +6,7 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 use tracing::{error, info};
 
+use crate::shared::config::Config;
 use crate::shared::protocol::StreamEvent;
 use crate::shared::types::{Agent, AgentId, AgentState, AgentSummary};
 
@@ -13,6 +14,7 @@ use super::event_bus::EventBus;
 use super::persistence::Database;
 use super::process_manager;
 
+#[allow(dead_code)]
 struct ManagedAgent {
     agent: Agent,
     monitor_handle: Option<tokio::task::JoinHandle<()>>,
@@ -22,17 +24,18 @@ pub struct AgentManager {
     agents: Mutex<HashMap<AgentId, ManagedAgent>>,
     db: Arc<Database>,
     event_bus: EventBus,
+    config: Config,
 }
 
 impl AgentManager {
-    pub async fn new(db: Arc<Database>, event_bus: EventBus) -> Arc<Self> {
+    pub async fn new(db: Arc<Database>, event_bus: EventBus, config: Config) -> Arc<Self> {
         let manager = Arc::new(Self {
             agents: Mutex::new(HashMap::new()),
             db,
             event_bus,
+            config,
         });
 
-        // Reload agents from DB on startup
         if let Err(e) = manager.reload_from_db().await {
             error!("Failed to reload agents from DB: {}", e);
         }
@@ -44,7 +47,6 @@ impl AgentManager {
         let agents = self.db.list_agents(None)?;
         let mut map = self.agents.lock().await;
         for mut agent in agents {
-            // Mark any previously-active agents as failed (daemon restarted)
             if agent.state == AgentState::Summoning || agent.state == AgentState::Active {
                 agent.state = AgentState::Failed;
                 let _ = self
@@ -62,6 +64,51 @@ impl AgentManager {
         Ok(())
     }
 
+    /// Spawn a monitor task for a process, updating state when it completes
+    fn spawn_monitor(
+        self: &Arc<Self>,
+        agent_id: AgentId,
+        child: tokio::process::Child,
+    ) -> tokio::task::JoinHandle<()> {
+        let db = self.db.clone();
+        let bus = self.event_bus.clone();
+        let id = agent_id.clone();
+        let manager = self.clone();
+
+        tokio::spawn(async move {
+            let result =
+                process_manager::monitor_agent(id.clone(), child, bus.clone(), db.clone()).await;
+
+            // Store session_id if we captured one
+            if let Some(ref sid) = result.session_id {
+                if let Err(e) = db.update_agent_session_id(&id, sid) {
+                    error!(agent_id = %id, error = %e, "Failed to store session_id");
+                }
+            }
+
+            // Update DB state
+            if let Err(e) = db.update_agent_state(&id, &result.state, result.exit_code) {
+                error!(agent_id = %id, error = %e, "Failed to update agent state");
+            }
+
+            // Update in-memory state
+            let mut agents = manager.agents.lock().await;
+            if let Some(managed) = agents.get_mut(&id) {
+                managed.agent.state = result.state.clone();
+                managed.agent.exit_code = result.exit_code;
+                if let Some(ref sid) = result.session_id {
+                    managed.agent.session_id = Some(sid.clone());
+                }
+            }
+
+            bus.publish(StreamEvent::StateChange {
+                agent_id: id,
+                old_state: "active".to_string(),
+                new_state: result.state.as_str().to_string(),
+            });
+        })
+    }
+
     pub async fn summon(
         self: &Arc<Self>,
         task: String,
@@ -70,7 +117,10 @@ impl AgentManager {
         cwd: Option<PathBuf>,
     ) -> Result<Agent> {
         let agent_id = uuid::Uuid::new_v4().to_string()[..8].to_string();
-        let cwd = cwd.unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/")));
+        let cwd = cwd
+            .or_else(|| self.config.agent.default_cwd.clone())
+            .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/")));
+        let model = model.or_else(|| self.config.agent.default_model.clone());
         let now = Utc::now();
 
         let agent = Agent {
@@ -87,18 +137,15 @@ impl AgentManager {
             updated_at: now,
         };
 
-        // Persist
         self.db.insert_agent(&agent)?;
 
-        // Broadcast creation
         self.event_bus
             .publish(StreamEvent::AgentCreated { agent: agent.clone() });
 
-        // Spawn process
-        let spawned = process_manager::spawn_claude(&task, &cwd, model.as_deref())?;
+        let binary = self.config.claude_binary();
+        let spawned = process_manager::spawn_claude(&task, &cwd, model.as_deref(), Some(&binary))?;
         let pid = spawned.pid;
 
-        // Update state to active
         self.db.update_agent_pid(&agent_id, pid)?;
         self.db
             .update_agent_state(&agent_id, &AgentState::Active, None)?;
@@ -113,37 +160,8 @@ impl AgentManager {
             new_state: "active".to_string(),
         });
 
-        // Start monitoring in background
-        let db = self.db.clone();
-        let bus = self.event_bus.clone();
-        let id = agent_id.clone();
-        let manager = self.clone();
+        let handle = self.spawn_monitor(agent_id.clone(), spawned.child);
 
-        let handle = tokio::spawn(async move {
-            let (final_state, exit_code) =
-                process_manager::monitor_agent(id.clone(), spawned.child, bus.clone(), db.clone())
-                    .await;
-
-            // Update DB
-            if let Err(e) = db.update_agent_state(&id, &final_state, exit_code) {
-                error!(agent_id = %id, error = %e, "Failed to update agent state");
-            }
-
-            // Update in-memory state
-            let mut agents = manager.agents.lock().await;
-            if let Some(managed) = agents.get_mut(&id) {
-                managed.agent.state = final_state.clone();
-                managed.agent.exit_code = exit_code;
-            }
-
-            bus.publish(StreamEvent::StateChange {
-                agent_id: id,
-                old_state: "active".to_string(),
-                new_state: final_state.as_str().to_string(),
-            });
-        });
-
-        // Store in memory
         let mut agents = self.agents.lock().await;
         agents.insert(
             agent_id,
@@ -157,13 +175,72 @@ impl AgentManager {
         Ok(agent)
     }
 
+    pub async fn invoke(
+        self: &Arc<Self>,
+        id: &str,
+        message: String,
+    ) -> Result<()> {
+        // Look up the agent and its session_id
+        let (session_id, cwd) = {
+            let agents = self.agents.lock().await;
+            let managed = agents
+                .get(id)
+                .ok_or_else(|| anyhow!("Agent not found: {}", id))?;
+
+            let session_id = managed
+                .agent
+                .session_id
+                .clone()
+                .ok_or_else(|| anyhow!("Agent {} has no session to resume", id))?;
+
+            (session_id, managed.agent.cwd.clone())
+        };
+
+        // Update state to active
+        self.db
+            .update_agent_state(id, &AgentState::Active, None)?;
+
+        self.event_bus.publish(StreamEvent::StateChange {
+            agent_id: id.to_string(),
+            old_state: "complete".to_string(),
+            new_state: "active".to_string(),
+        });
+
+        // Spawn resumed process
+        let binary = self.config.claude_binary();
+        let spawned = process_manager::spawn_claude_resume(&session_id, &message, &cwd, Some(&binary))?;
+        let pid = spawned.pid;
+
+        self.db.update_agent_pid(id, pid)?;
+
+        // Update in-memory
+        {
+            let mut agents = self.agents.lock().await;
+            if let Some(managed) = agents.get_mut(id) {
+                managed.agent.state = AgentState::Active;
+                managed.agent.pid = Some(pid);
+            }
+        }
+
+        let handle = self.spawn_monitor(id.to_string(), spawned.child);
+
+        {
+            let mut agents = self.agents.lock().await;
+            if let Some(managed) = agents.get_mut(id) {
+                managed.monitor_handle = Some(handle);
+            }
+        }
+
+        info!(id = %id, message = %message, "Agent invoked");
+        Ok(())
+    }
+
     pub async fn banish(&self, id: &str) -> Result<bool> {
         let mut agents = self.agents.lock().await;
         if let Some(managed) = agents.get_mut(id) {
             if managed.agent.state == AgentState::Active
                 || managed.agent.state == AgentState::Summoning
             {
-                // Kill the process
                 if let Some(pid) = managed.agent.pid {
                     if let Err(e) = process_manager::kill_process(pid) {
                         error!(agent_id = %id, error = %e, "Failed to kill agent process");

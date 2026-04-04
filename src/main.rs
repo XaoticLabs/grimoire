@@ -39,7 +39,7 @@ enum Commands {
 
     /// Bind to an agent's output stream
     Bind {
-        /// Agent ID
+        /// Agent ID (or prefix)
         id: String,
 
         /// Number of historical events to show
@@ -49,8 +49,47 @@ enum Commands {
 
     /// Banish (kill) an agent
     Banish {
-        /// Agent ID
+        /// Agent ID (or prefix)
         id: String,
+    },
+
+    /// Send a follow-up message to a completed agent
+    Invoke {
+        /// Agent ID (or prefix)
+        id: String,
+
+        /// The follow-up message
+        message: String,
+    },
+
+    /// Create or list pacts (agent chains)
+    Pact {
+        /// Source agent ID (omit to list all pacts)
+        source_id: Option<String>,
+
+        /// Task template for the triggered agent ({output} = source result)
+        #[arg(short, long)]
+        task: Option<String>,
+
+        /// Name for the triggered agent
+        #[arg(short, long)]
+        name: Option<String>,
+
+        /// List pacts instead of creating
+        #[arg(short, long)]
+        list: bool,
+    },
+
+    /// Show daemon status
+    Status,
+
+    /// View or edit configuration
+    Tome {
+        /// Config key (e.g. agent.default_model)
+        key: Option<String>,
+
+        /// Value to set (omit to read)
+        value: Option<String>,
     },
 
     /// Open the web dashboard
@@ -63,7 +102,6 @@ async fn main() {
 
     match cli.command {
         Commands::Daemon => {
-            // Initialize logging for daemon
             tracing_subscriber::fmt()
                 .with_env_filter(
                     tracing_subscriber::EnvFilter::try_from_default_env()
@@ -77,7 +115,6 @@ async fn main() {
             }
         }
 
-        // All CLI commands: ensure daemon is running, then dispatch
         cmd => {
             if !cli::client::is_daemon_running().await {
                 eprintln!("Daemon not running. Starting...");
@@ -86,7 +123,6 @@ async fn main() {
                     eprintln!("Start it manually with: grim daemon");
                     std::process::exit(1);
                 }
-                // Verify it started
                 tokio::time::sleep(std::time::Duration::from_millis(500)).await;
                 if !cli::client::is_daemon_running().await {
                     eprintln!("Daemon failed to start. Start it manually with: grim daemon");
@@ -100,8 +136,32 @@ async fn main() {
                     cli::commands::summon::run(task, name, model).await
                 }
                 Commands::Circle { state } => cli::commands::circle::run(state).await,
-                Commands::Bind { id, tail } => cli::commands::bind::run(id, tail).await,
-                Commands::Banish { id } => cli::commands::banish::run(id).await,
+                Commands::Bind { id, tail } => {
+                    let id = resolve_id(&id).await;
+                    cli::commands::bind::run(id, tail).await
+                }
+                Commands::Banish { id } => {
+                    let id = resolve_id(&id).await;
+                    cli::commands::banish::run(id).await
+                }
+                Commands::Invoke { id, message } => {
+                    let id = resolve_id(&id).await;
+                    cli::commands::invoke::run(id, message).await
+                }
+                Commands::Pact {
+                    source_id,
+                    task,
+                    name,
+                    list,
+                } => {
+                    let source_id = match source_id {
+                        Some(id) => Some(resolve_id(&id).await),
+                        None => None,
+                    };
+                    cli::commands::pact::run(source_id, task, name, list).await
+                }
+                Commands::Status => cli::commands::status::run().await,
+                Commands::Tome { key, value } => cli::commands::tome::run(key, value).await,
                 Commands::Scry => cli::commands::scry::run().await,
                 Commands::Daemon => unreachable!(),
             };
@@ -110,6 +170,17 @@ async fn main() {
                 eprintln!("Error: {}", e);
                 std::process::exit(1);
             }
+        }
+    }
+}
+
+/// Resolve a short ID prefix to a full agent ID
+async fn resolve_id(id: &str) -> String {
+    match cli::client::resolve_agent_id(id).await {
+        Ok(full_id) => full_id,
+        Err(e) => {
+            eprintln!("Error: {}", e);
+            std::process::exit(1);
         }
     }
 }

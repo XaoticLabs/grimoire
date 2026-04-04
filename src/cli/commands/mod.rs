@@ -1,5 +1,9 @@
 pub mod banish;
 pub mod bind;
 pub mod circle;
+pub mod invoke;
+pub mod pact;
 pub mod scry;
+pub mod status;
 pub mod summon;
+pub mod tome;

@@ -75,3 +75,44 @@ pub struct AgentSummary {
     pub task: Option<String>,
     pub age_secs: i64,
 }
+
+// --- Pacts ---
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum PactState {
+    Pending,
+    Fired,
+    Failed,
+}
+
+impl PactState {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Pending => "pending",
+            Self::Fired => "fired",
+            Self::Failed => "failed",
+        }
+    }
+
+    pub fn from_str(s: &str) -> Option<Self> {
+        match s {
+            "pending" => Some(Self::Pending),
+            "fired" => Some(Self::Fired),
+            "failed" => Some(Self::Failed),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Pact {
+    pub id: String,
+    pub source_id: AgentId,
+    pub task_tpl: String,
+    pub name: Option<String>,
+    pub state: PactState,
+    pub target_id: Option<AgentId>,
+    pub created_at: DateTime<Utc>,
+    pub fired_at: Option<DateTime<Utc>>,
+}

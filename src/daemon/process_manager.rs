@@ -15,9 +15,15 @@ pub struct SpawnedAgent {
     pub pid: u32,
 }
 
+pub struct MonitorResult {
+    pub state: AgentState,
+    pub exit_code: Option<i32>,
+    pub session_id: Option<String>,
+}
+
 /// Spawn a Claude Code process with structured JSON output
-pub fn spawn_claude(task: &str, cwd: &Path, model: Option<&str>) -> Result<SpawnedAgent> {
-    let mut cmd = Command::new("claude");
+pub fn spawn_claude(task: &str, cwd: &Path, model: Option<&str>, binary: Option<&str>) -> Result<SpawnedAgent> {
+    let mut cmd = Command::new(binary.unwrap_or("claude"));
     cmd.arg("--print")
         .arg("--output-format")
         .arg("stream-json")
@@ -39,14 +45,40 @@ pub fn spawn_claude(task: &str, cwd: &Path, model: Option<&str>) -> Result<Spawn
     Ok(SpawnedAgent { child, pid })
 }
 
+/// Spawn a Claude Code process that resumes an existing session
+pub fn spawn_claude_resume(
+    session_id: &str,
+    message: &str,
+    cwd: &Path,
+    binary: Option<&str>,
+) -> Result<SpawnedAgent> {
+    let mut cmd = Command::new(binary.unwrap_or("claude"));
+    cmd.arg("--print")
+        .arg("--output-format")
+        .arg("stream-json")
+        .arg("--verbose")
+        .arg("--resume")
+        .arg(session_id)
+        .arg("-p")
+        .arg(message)
+        .current_dir(cwd)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+
+    let child = cmd.spawn()?;
+    let pid = child.id().unwrap_or(0);
+
+    Ok(SpawnedAgent { child, pid })
+}
+
 /// Monitor a running agent's stdout/stderr, emitting events and persisting them.
-/// Returns the exit code when the process completes.
 pub async fn monitor_agent(
     agent_id: AgentId,
     mut child: Child,
     event_bus: EventBus,
     db: std::sync::Arc<crate::daemon::persistence::Database>,
-) -> (AgentState, Option<i32>) {
+) -> MonitorResult {
     let stdout = child.stdout.take();
     let stderr = child.stderr.take();
 
@@ -54,11 +86,24 @@ pub async fn monitor_agent(
     let db_stdout = db.clone();
     let id_stdout = agent_id.clone();
 
+    // Shared session_id extracted from the system init event
+    let session_id = std::sync::Arc::new(tokio::sync::Mutex::new(None::<String>));
+    let session_id_writer = session_id.clone();
+
     let stdout_handle = tokio::spawn(async move {
         if let Some(stdout) = stdout {
             let reader = BufReader::new(stdout);
             let mut lines = reader.lines();
             while let Ok(Some(line)) = lines.next_line().await {
+                // Try to extract session_id from system init event
+                if let Ok(v) = serde_json::from_str::<serde_json::Value>(&line) {
+                    if v.get("type").and_then(|t| t.as_str()) == Some("system") {
+                        if let Some(sid) = v.get("session_id").and_then(|s| s.as_str()) {
+                            *session_id_writer.lock().await = Some(sid.to_string());
+                        }
+                    }
+                }
+
                 // Persist event
                 let event = AgentEvent {
                     id: None,
@@ -117,20 +162,34 @@ pub async fn monitor_agent(
     let _ = stdout_handle.await;
     let _ = stderr_handle.await;
 
+    let captured_session_id = session_id.lock().await.clone();
+
     match exit_status {
         Ok(status) => {
             let code = status.code();
             if status.success() {
                 info!(agent_id = %agent_id, "Agent completed successfully");
-                (AgentState::Complete, code)
+                MonitorResult {
+                    state: AgentState::Complete,
+                    exit_code: code,
+                    session_id: captured_session_id,
+                }
             } else {
                 warn!(agent_id = %agent_id, code = ?code, "Agent failed");
-                (AgentState::Failed, code)
+                MonitorResult {
+                    state: AgentState::Failed,
+                    exit_code: code,
+                    session_id: captured_session_id,
+                }
             }
         }
         Err(e) => {
             error!(agent_id = %agent_id, error = %e, "Failed to wait on agent process");
-            (AgentState::Failed, None)
+            MonitorResult {
+                state: AgentState::Failed,
+                exit_code: None,
+                session_id: captured_session_id,
+            }
         }
     }
 }

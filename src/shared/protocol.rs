@@ -72,6 +72,7 @@ pub struct BanishParams {
     pub id: AgentId,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct InvokeParams {
     pub id: AgentId,
@@ -102,6 +103,31 @@ pub struct DaemonStatusResult {
     pub uptime_secs: i64,
     pub agent_count: usize,
     pub active_count: usize,
+}
+
+// --- Pact params/results ---
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PactCreateParams {
+    pub source_id: AgentId,
+    pub task_tpl: String,
+    pub name: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PactCreateResult {
+    pub id: String,
+    pub source_id: AgentId,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PactListParams {
+    pub source_id: Option<AgentId>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PactListResult {
+    pub pacts: Vec<super::types::Pact>,
 }
 
 // --- Streaming events (sent over bind/SSE) ---

@@ -18,12 +18,14 @@ use super::rpc;
 #[derive(Clone)]
 pub struct AppState {
     pub manager: Arc<AgentManager>,
+    pub db: Arc<super::persistence::Database>,
 }
 
 /// Start both UDS and HTTP servers
-pub async fn run(manager: Arc<AgentManager>) -> Result<()> {
+pub async fn run(manager: Arc<AgentManager>, db: Arc<super::persistence::Database>) -> Result<()> {
     let state = AppState {
         manager: manager.clone(),
+        db,
     };
 
     // Start UDS listener
@@ -144,7 +146,7 @@ async fn run_uds_server(state: AppState) -> Result<()> {
                     }
                 }
 
-                let response = rpc::handle_rpc(&state.manager, req).await;
+                let response = rpc::handle_rpc(&state.manager, &state.db, req).await;
                 if write_response(&mut writer, &response).await.is_err() {
                     return;
                 }
@@ -172,7 +174,9 @@ async fn run_http_server(state: AppState) -> Result<()> {
         .route("/api/agents", post(http_summon_agent))
         .route("/api/agents/{id}", get(http_get_agent))
         .route("/api/agents/{id}", delete(http_banish_agent))
+        .route("/api/agents/{id}/invoke", post(http_invoke_agent))
         .route("/api/agents/{id}/events", get(http_agent_events_sse))
+        .route("/api/agents/{id}/history", get(http_agent_history))
         .route("/api/events", get(http_all_events_sse))
         .route("/", get(http_dashboard))
         .with_state(state);
@@ -234,6 +238,27 @@ async fn http_banish_agent(
     }
 }
 
+async fn http_invoke_agent(
+    State(state): State<AppState>,
+    axum::extract::Path(id): axum::extract::Path<String>,
+    axum::Json(body): axum::Json<serde_json::Value>,
+) -> axum::Json<serde_json::Value> {
+    let message = body
+        .get("message")
+        .and_then(|m| m.as_str())
+        .unwrap_or("")
+        .to_string();
+
+    if message.is_empty() {
+        return axum::Json(serde_json::json!({"error": "message is required"}));
+    }
+
+    match state.manager.invoke(&id, message).await {
+        Ok(()) => axum::Json(serde_json::json!({"success": true})),
+        Err(e) => axum::Json(serde_json::json!({"error": e.to_string()})),
+    }
+}
+
 async fn http_agent_events_sse(
     State(state): State<AppState>,
     axum::extract::Path(id): axum::extract::Path<String>,
@@ -281,6 +306,16 @@ async fn http_all_events_sse(
     };
 
     Sse::new(stream).keep_alive(KeepAlive::default())
+}
+
+async fn http_agent_history(
+    State(state): State<AppState>,
+    axum::extract::Path(id): axum::extract::Path<String>,
+) -> axum::Json<serde_json::Value> {
+    match state.manager.get_events(&id, None) {
+        Ok(events) => axum::Json(serde_json::to_value(events).unwrap()),
+        Err(e) => axum::Json(serde_json::json!({"error": e.to_string()})),
+    }
 }
 
 async fn http_dashboard() -> axum::response::Html<String> {

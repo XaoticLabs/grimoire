@@ -1,5 +1,6 @@
 pub mod agent_manager;
 pub mod event_bus;
+pub mod orchestrator;
 pub mod persistence;
 pub mod process_manager;
 pub mod rpc;
@@ -9,32 +10,45 @@ use anyhow::Result;
 use std::sync::Arc;
 use tracing::info;
 
+use crate::shared::config::Config;
 use crate::shared::constants;
 
 pub async fn start() -> Result<()> {
-    // Ensure grimoire directory exists
+    let config = Config::load()?;
+
     let dir = constants::grimoire_dir();
     std::fs::create_dir_all(&dir)?;
 
-    // Write PID file
     let pid = std::process::id();
     std::fs::write(constants::pid_path(), pid.to_string())?;
 
+    let socket = config.socket_path();
+    let port = config.port();
+
+    eprintln!();
+    eprintln!("  ◆ grimoire daemon v{}", env!("CARGO_PKG_VERSION"));
+    eprintln!(
+        "    pid {}  ·  socket {}  ·  http 127.0.0.1:{}",
+        pid,
+        socket.display(),
+        port
+    );
+    eprintln!("    db {}", constants::db_path().display());
+    eprintln!();
+
     info!(pid = pid, dir = %dir.display(), "Grimoire daemon starting");
 
-    // Open database
     let db = Arc::new(persistence::Database::open(&constants::db_path())?);
-
-    // Create event bus
     let event_bus = event_bus::EventBus::new();
+    let manager = agent_manager::AgentManager::new(db.clone(), event_bus.clone(), config).await;
 
-    // Create agent manager
-    let manager = agent_manager::AgentManager::new(db, event_bus).await;
+    // Start orchestrator (listens for agent completions, fires pacts)
+    let orch = orchestrator::Orchestrator::new(db.clone(), manager.clone());
+    orch.start(&event_bus);
 
     // Start servers (UDS + HTTP)
-    server::run(manager).await?;
+    server::run(manager, db).await?;
 
-    // Cleanup
     let _ = std::fs::remove_file(constants::socket_path());
     let _ = std::fs::remove_file(constants::pid_path());
 
