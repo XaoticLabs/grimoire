@@ -23,13 +23,7 @@ rusqlite = { version = "0.32", features = ["bundled"] }
 
 # Web server
 axum = { version = "0.8", features = ["ws"] }
-tower = "0.5"
-tower-http = { version = "0.6", features = ["cors", "fs"] }
 tokio-stream = "0.1"
-
-# Templates
-askama = "0.12"
-askama_axum = "0.4"
 
 # Logging
 tracing = "0.1"
@@ -38,7 +32,6 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # Utilities
 uuid = { version = "1", features = ["v4", "serde"] }
 chrono = { version = "0.4", features = ["serde"] }
-thiserror = "2"
 anyhow = "1"
 directories = "6"
 colored = "3"

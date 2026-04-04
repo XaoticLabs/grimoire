@@ -19,13 +19,19 @@ use super::rpc;
 pub struct AppState {
     pub manager: Arc<AgentManager>,
     pub db: Arc<super::persistence::Database>,
+    pub scroll_keeper: Arc<super::scroll_keeper::ScrollKeeper>,
 }
 
 /// Start both UDS and HTTP servers
-pub async fn run(manager: Arc<AgentManager>, db: Arc<super::persistence::Database>) -> Result<()> {
+pub async fn run(
+    manager: Arc<AgentManager>,
+    db: Arc<super::persistence::Database>,
+    scroll_keeper: Arc<super::scroll_keeper::ScrollKeeper>,
+) -> Result<()> {
     let state = AppState {
         manager: manager.clone(),
         db,
+        scroll_keeper,
     };
 
     // Start UDS listener
@@ -113,13 +119,7 @@ async fn run_uds_server(state: AppState) -> Result<()> {
                         match rx.recv().await {
                             Ok(event) => {
                                 // Filter to this agent
-                                let agent_id = match &event {
-                                    StreamEvent::Output { agent_id, .. } => Some(agent_id),
-                                    StreamEvent::StateChange { agent_id, .. } => Some(agent_id),
-                                    StreamEvent::AgentCreated { agent } => Some(&agent.id),
-                                    StreamEvent::AgentEvent { event } => Some(&event.agent_id),
-                                };
-                                if agent_id == Some(&params.id) {
+                                if event.agent_id() == Some(params.id.as_str()) {
                                     let json = serde_json::to_string(&event).unwrap();
                                     if writer.write_all(json.as_bytes()).await.is_err() {
                                         return;
@@ -132,10 +132,7 @@ async fn run_uds_server(state: AppState) -> Result<()> {
 
                                 // Stop streaming if agent finished
                                 if let StreamEvent::StateChange { new_state, .. } = &event {
-                                    if new_state == "complete"
-                                        || new_state == "failed"
-                                        || new_state == "banished"
-                                    {
+                                    if new_state.is_terminal() {
                                         return;
                                     }
                                 }
@@ -146,7 +143,7 @@ async fn run_uds_server(state: AppState) -> Result<()> {
                     }
                 }
 
-                let response = rpc::handle_rpc(&state.manager, &state.db, req).await;
+                let response = rpc::handle_rpc(&state.manager, &state.db, &state.scroll_keeper, req).await;
                 if write_response(&mut writer, &response).await.is_err() {
                     return;
                 }
@@ -178,6 +175,11 @@ async fn run_http_server(state: AppState) -> Result<()> {
         .route("/api/agents/{id}/events", get(http_agent_events_sse))
         .route("/api/agents/{id}/history", get(http_agent_history))
         .route("/api/events", get(http_all_events_sse))
+        .route("/api/scrolls", get(http_list_scrolls))
+        .route("/api/scrolls", post(http_inscribe_scroll))
+        .route("/api/scrolls/{id}", get(http_scroll_status))
+        .route("/api/scrolls/{id}/activate", post(http_activate_scroll))
+        .route("/api/scrolls/{id}/abandon", post(http_abandon_scroll))
         .route("/", get(http_dashboard))
         .with_state(state);
 
@@ -205,7 +207,7 @@ async fn http_summon_agent(
 ) -> axum::Json<serde_json::Value> {
     match state
         .manager
-        .summon(params.task, params.name, params.model, params.cwd)
+        .summon(params.task, params.name, params.model, params.cwd, params.provider)
         .await
     {
         Ok(agent) => axum::Json(serde_json::to_value(SummonResult {
@@ -268,13 +270,7 @@ async fn http_agent_events_sse(
         loop {
             match rx.recv().await {
                 Ok(event) => {
-                    let agent_id = match &event {
-                        StreamEvent::Output { agent_id, .. } => Some(agent_id.clone()),
-                        StreamEvent::StateChange { agent_id, .. } => Some(agent_id.clone()),
-                        StreamEvent::AgentCreated { agent } => Some(agent.id.clone()),
-                        StreamEvent::AgentEvent { event } => Some(event.agent_id.clone()),
-                    };
-                    if agent_id.as_deref() == Some(id.as_str()) {
+                    if event.agent_id() == Some(id.as_str()) {
                         let json = serde_json::to_string(&event).unwrap();
                         yield Ok(Event::default().data(json));
                     }
@@ -314,6 +310,86 @@ async fn http_agent_history(
 ) -> axum::Json<serde_json::Value> {
     match state.manager.get_events(&id, None) {
         Ok(events) => axum::Json(serde_json::to_value(events).unwrap()),
+        Err(e) => axum::Json(serde_json::json!({"error": e.to_string()})),
+    }
+}
+
+async fn http_list_scrolls(
+    State(state): State<AppState>,
+) -> axum::Json<serde_json::Value> {
+    match state.db.list_scrolls() {
+        Ok(scrolls) => axum::Json(serde_json::json!({"scrolls": scrolls})),
+        Err(e) => axum::Json(serde_json::json!({"error": e.to_string()})),
+    }
+}
+
+async fn http_inscribe_scroll(
+    State(state): State<AppState>,
+    axum::Json(body): axum::Json<serde_json::Value>,
+) -> axum::Json<serde_json::Value> {
+    let spec_path = match body.get("spec_path").and_then(|v| v.as_str()) {
+        Some(p) => p.to_string(),
+        None => return axum::Json(serde_json::json!({"error": "spec_path is required"})),
+    };
+    let max_concurrency = body
+        .get("max_concurrency")
+        .and_then(|v| v.as_u64())
+        .map(|v| v as u32);
+
+    let content = match std::fs::read_to_string(&spec_path) {
+        Ok(c) => c,
+        Err(e) => {
+            return axum::Json(serde_json::json!({"error": format!("Failed to read spec: {}", e)}))
+        }
+    };
+
+    let spec = match super::scroll_parser::parse_scroll(&content) {
+        Ok(s) => s,
+        Err(e) => {
+            return axum::Json(serde_json::json!({"error": format!("Parse error: {}", e)}))
+        }
+    };
+
+    match state
+        .scroll_keeper
+        .inscribe(spec, max_concurrency, Some(spec_path))
+    {
+        Ok(result) => axum::Json(serde_json::json!({
+            "id": result.scroll.id,
+            "name": result.scroll.name,
+            "rune_count": result.rune_count,
+            "conflicts": result.conflicts,
+        })),
+        Err(e) => axum::Json(serde_json::json!({"error": e.to_string()})),
+    }
+}
+
+async fn http_scroll_status(
+    State(state): State<AppState>,
+    axum::extract::Path(id): axum::extract::Path<String>,
+) -> axum::Json<serde_json::Value> {
+    match state.scroll_keeper.status(&id) {
+        Ok(status) => axum::Json(serde_json::to_value(status).unwrap()),
+        Err(e) => axum::Json(serde_json::json!({"error": e.to_string()})),
+    }
+}
+
+async fn http_activate_scroll(
+    State(state): State<AppState>,
+    axum::extract::Path(id): axum::extract::Path<String>,
+) -> axum::Json<serde_json::Value> {
+    match state.scroll_keeper.activate(&id).await {
+        Ok(()) => axum::Json(serde_json::json!({"success": true})),
+        Err(e) => axum::Json(serde_json::json!({"error": e.to_string()})),
+    }
+}
+
+async fn http_abandon_scroll(
+    State(state): State<AppState>,
+    axum::extract::Path(id): axum::extract::Path<String>,
+) -> axum::Json<serde_json::Value> {
+    match state.scroll_keeper.abandon(&id).await {
+        Ok(()) => axum::Json(serde_json::json!({"success": true})),
         Err(e) => axum::Json(serde_json::json!({"error": e.to_string()})),
     }
 }

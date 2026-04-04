@@ -49,34 +49,6 @@ impl DaemonClient {
         Ok(response)
     }
 
-    /// Send a bind request and return lines as they come
-    #[allow(dead_code)]
-    pub async fn bind(&mut self, method: &str, params: serde_json::Value) -> Result<()> {
-        let id = REQ_ID.fetch_add(1, Ordering::Relaxed);
-        let req = RpcRequest {
-            method: method.to_string(),
-            params,
-            id,
-        };
-
-        let json = serde_json::to_string(&req)?;
-        self.writer.write_all(json.as_bytes()).await?;
-        self.writer.write_all(b"\n").await?;
-        self.writer.flush().await?;
-
-        let mut line = String::new();
-        loop {
-            line.clear();
-            let n = self.reader.read_line(&mut line).await?;
-            if n == 0 {
-                break;
-            }
-            // Print the raw event line (commands will parse this)
-            print!("{}", line);
-        }
-
-        Ok(())
-    }
 }
 
 /// Resolve a short ID prefix to a full agent ID.
@@ -133,7 +105,5 @@ pub fn auto_start_daemon() -> Result<()> {
         .spawn()
         .context("Failed to start daemon")?;
 
-    // Give it a moment to start
-    std::thread::sleep(std::time::Duration::from_millis(500));
     Ok(())
 }

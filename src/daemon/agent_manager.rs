@@ -13,10 +13,11 @@ use crate::shared::types::{Agent, AgentId, AgentState, AgentSummary};
 use super::event_bus::EventBus;
 use super::persistence::Database;
 use super::process_manager;
+use super::provider_registry::ProviderRegistry;
 
-#[allow(dead_code)]
 struct ManagedAgent {
     agent: Agent,
+    #[allow(dead_code)] // handle kept alive to avoid aborting the monitor task
     monitor_handle: Option<tokio::task::JoinHandle<()>>,
 }
 
@@ -25,15 +26,18 @@ pub struct AgentManager {
     db: Arc<Database>,
     event_bus: EventBus,
     config: Config,
+    registry: ProviderRegistry,
 }
 
 impl AgentManager {
     pub async fn new(db: Arc<Database>, event_bus: EventBus, config: Config) -> Arc<Self> {
+        let registry = ProviderRegistry::from_config(&config);
         let manager = Arc::new(Self {
             agents: Mutex::new(HashMap::new()),
             db,
             event_bus,
             config,
+            registry,
         });
 
         if let Err(e) = manager.reload_from_db().await {
@@ -69,6 +73,7 @@ impl AgentManager {
         self: &Arc<Self>,
         agent_id: AgentId,
         child: tokio::process::Child,
+        provider: Arc<dyn super::provider::Provider>,
     ) -> tokio::task::JoinHandle<()> {
         let db = self.db.clone();
         let bus = self.event_bus.clone();
@@ -77,7 +82,8 @@ impl AgentManager {
 
         tokio::spawn(async move {
             let result =
-                process_manager::monitor_agent(id.clone(), child, bus.clone(), db.clone()).await;
+                process_manager::monitor_agent(id.clone(), child, bus.clone(), db.clone(), provider)
+                    .await;
 
             // Store session_id if we captured one
             if let Some(ref sid) = result.session_id {
@@ -103,8 +109,8 @@ impl AgentManager {
 
             bus.publish(StreamEvent::StateChange {
                 agent_id: id,
-                old_state: "active".to_string(),
-                new_state: result.state.as_str().to_string(),
+                old_state: AgentState::Active,
+                new_state: result.state.clone(),
             });
         })
     }
@@ -115,8 +121,15 @@ impl AgentManager {
         name: Option<String>,
         model: Option<String>,
         cwd: Option<PathBuf>,
+        provider_name: Option<String>,
     ) -> Result<Agent> {
-        let agent_id = uuid::Uuid::new_v4().to_string()[..8].to_string();
+        let provider_name = provider_name.unwrap_or_else(|| self.registry.default_name().to_string());
+        let provider = self
+            .registry
+            .get(&provider_name)
+            .ok_or_else(|| anyhow!("Unknown provider: {}", provider_name))?;
+
+        let agent_id = crate::shared::constants::generate_short_id();
         let cwd = cwd
             .or_else(|| self.config.agent.default_cwd.clone())
             .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/")));
@@ -129,6 +142,7 @@ impl AgentManager {
             state: AgentState::Summoning,
             task: Some(task.clone()),
             model: model.clone(),
+            provider: Some(provider_name),
             cwd: cwd.clone(),
             pid: None,
             session_id: None,
@@ -142,8 +156,7 @@ impl AgentManager {
         self.event_bus
             .publish(StreamEvent::AgentCreated { agent: agent.clone() });
 
-        let binary = self.config.claude_binary();
-        let spawned = process_manager::spawn_claude(&task, &cwd, model.as_deref(), Some(&binary))?;
+        let spawned = provider.spawn(&task, &cwd, model.as_deref())?;
         let pid = spawned.pid;
 
         self.db.update_agent_pid(&agent_id, pid)?;
@@ -156,11 +169,11 @@ impl AgentManager {
 
         self.event_bus.publish(StreamEvent::StateChange {
             agent_id: agent_id.clone(),
-            old_state: "summoning".to_string(),
-            new_state: "active".to_string(),
+            old_state: AgentState::Summoning,
+            new_state: AgentState::Active,
         });
 
-        let handle = self.spawn_monitor(agent_id.clone(), spawned.child);
+        let handle = self.spawn_monitor(agent_id.clone(), spawned.child, provider);
 
         let mut agents = self.agents.lock().await;
         agents.insert(
@@ -180,8 +193,8 @@ impl AgentManager {
         id: &str,
         message: String,
     ) -> Result<()> {
-        // Look up the agent and its session_id
-        let (session_id, cwd) = {
+        // Look up the agent, its session_id, and provider
+        let (session_id, cwd, provider_name) = {
             let agents = self.agents.lock().await;
             let managed = agents
                 .get(id)
@@ -193,8 +206,24 @@ impl AgentManager {
                 .clone()
                 .ok_or_else(|| anyhow!("Agent {} has no session to resume", id))?;
 
-            (session_id, managed.agent.cwd.clone())
+            (
+                session_id,
+                managed.agent.cwd.clone(),
+                managed.agent.provider.clone().unwrap_or_else(|| "claude".to_string()),
+            )
         };
+
+        let provider = self
+            .registry
+            .get(&provider_name)
+            .ok_or_else(|| anyhow!("Unknown provider: {}", provider_name))?;
+
+        if !provider.capabilities().supports_resume {
+            return Err(anyhow!(
+                "Provider '{}' does not support session resume",
+                provider_name
+            ));
+        }
 
         // Update state to active
         self.db
@@ -202,13 +231,12 @@ impl AgentManager {
 
         self.event_bus.publish(StreamEvent::StateChange {
             agent_id: id.to_string(),
-            old_state: "complete".to_string(),
-            new_state: "active".to_string(),
+            old_state: AgentState::Complete,
+            new_state: AgentState::Active,
         });
 
         // Spawn resumed process
-        let binary = self.config.claude_binary();
-        let spawned = process_manager::spawn_claude_resume(&session_id, &message, &cwd, Some(&binary))?;
+        let spawned = provider.spawn_resume(&session_id, &message, &cwd)?;
         let pid = spawned.pid;
 
         self.db.update_agent_pid(id, pid)?;
@@ -222,7 +250,7 @@ impl AgentManager {
             }
         }
 
-        let handle = self.spawn_monitor(id.to_string(), spawned.child);
+        let handle = self.spawn_monitor(id.to_string(), spawned.child, provider);
 
         {
             let mut agents = self.agents.lock().await;
@@ -253,8 +281,8 @@ impl AgentManager {
 
                 self.event_bus.publish(StreamEvent::StateChange {
                     agent_id: id.to_string(),
-                    old_state: "active".to_string(),
-                    new_state: "banished".to_string(),
+                    old_state: AgentState::Active,
+                    new_state: AgentState::Banished,
                 });
 
                 info!(id = %id, "Agent banished");

@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
-use super::types::{Agent, AgentEvent, AgentId, AgentSummary};
+use super::types::{Agent, AgentEvent, AgentId, AgentState, AgentSummary, RuneConflict, RuneState, ScrollId};
 
 /// JSON-RPC request from CLI to daemon
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -52,6 +52,7 @@ pub struct SummonParams {
     pub task: String,
     pub name: Option<String>,
     pub model: Option<String>,
+    pub provider: Option<String>,
     pub cwd: Option<PathBuf>,
 }
 
@@ -72,7 +73,6 @@ pub struct BanishParams {
     pub id: AgentId,
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct InvokeParams {
     pub id: AgentId,
@@ -144,11 +144,152 @@ pub enum StreamEvent {
     #[serde(rename = "state_change")]
     StateChange {
         agent_id: AgentId,
-        old_state: String,
-        new_state: String,
+        old_state: AgentState,
+        new_state: AgentState,
     },
     #[serde(rename = "agent_created")]
     AgentCreated { agent: Agent },
     #[serde(rename = "agent_event")]
     AgentEvent { event: AgentEvent },
+    #[serde(rename = "scroll_progress")]
+    ScrollProgress {
+        scroll_id: ScrollId,
+        total: usize,
+        complete: usize,
+        active: usize,
+        blocked: usize,
+        failed: usize,
+        skipped: usize,
+    },
+    #[serde(rename = "rune_state_change")]
+    RuneStateChange {
+        scroll_id: ScrollId,
+        rune_id: String,
+        rune_name: String,
+        old_state: RuneState,
+        new_state: RuneState,
+    },
+}
+
+impl StreamEvent {
+    /// Extract the agent ID from any event variant, if applicable.
+    pub fn agent_id(&self) -> Option<&str> {
+        match self {
+            Self::Output { agent_id, .. } => Some(agent_id),
+            Self::StateChange { agent_id, .. } => Some(agent_id),
+            Self::AgentCreated { agent } => Some(&agent.id),
+            Self::AgentEvent { event } => Some(&event.agent_id),
+            Self::ScrollProgress { .. } | Self::RuneStateChange { .. } => None,
+        }
+    }
+}
+
+// --- Scroll params/results ---
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ScrollInscribeParams {
+    pub spec_path: String,
+    pub max_concurrency: Option<u32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ScrollInscribeResult {
+    pub id: ScrollId,
+    pub name: String,
+    pub rune_count: usize,
+    pub conflicts: Vec<RuneConflict>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ScrollActivateParams {
+    pub id: ScrollId,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ScrollStatusParams {
+    pub id: ScrollId,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ScrollAbandonParams {
+    pub id: ScrollId,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::shared::types::{Agent, AgentEvent, AgentState, RuneState};
+    use chrono::Utc;
+    use std::path::PathBuf;
+
+    #[test]
+    fn agent_id_extraction() {
+        // Output event
+        let event = StreamEvent::Output {
+            agent_id: "abc".to_string(),
+            stream: "stdout".to_string(),
+            line: "hello".to_string(),
+        };
+        assert_eq!(event.agent_id(), Some("abc"));
+
+        // StateChange event
+        let event = StreamEvent::StateChange {
+            agent_id: "xyz".to_string(),
+            old_state: AgentState::Active,
+            new_state: AgentState::Complete,
+        };
+        assert_eq!(event.agent_id(), Some("xyz"));
+
+        // AgentCreated event
+        let agent = Agent {
+            id: "test1234".to_string(),
+            name: None,
+            state: AgentState::Summoning,
+            task: None,
+            model: None,
+            provider: None,
+            cwd: PathBuf::from("/tmp"),
+            pid: None,
+            session_id: None,
+            exit_code: None,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        };
+        assert_eq!(StreamEvent::AgentCreated { agent }.agent_id(), Some("test1234"));
+
+        // AgentEvent event
+        let event = StreamEvent::AgentEvent {
+            event: AgentEvent {
+                id: None,
+                agent_id: "evt12345".to_string(),
+                event_type: "stdout".to_string(),
+                payload: "data".to_string(),
+                created_at: Utc::now(),
+            },
+        };
+        assert_eq!(event.agent_id(), Some("evt12345"));
+    }
+
+    #[test]
+    fn agent_id_scroll_events_are_none() {
+        let event = StreamEvent::ScrollProgress {
+            scroll_id: "s1".to_string(),
+            total: 4,
+            complete: 1,
+            active: 2,
+            blocked: 1,
+            failed: 0,
+            skipped: 0,
+        };
+        assert_eq!(event.agent_id(), None);
+
+        let event = StreamEvent::RuneStateChange {
+            scroll_id: "s1".to_string(),
+            rune_id: "r1".to_string(),
+            rune_name: "Rune 1".to_string(),
+            old_state: RuneState::Blocked,
+            new_state: RuneState::Active,
+        };
+        assert_eq!(event.agent_id(), None);
+    }
 }

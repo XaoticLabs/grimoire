@@ -42,9 +42,9 @@ pub async fn run(id: String, tail: Option<usize>) -> Result<()> {
                         }
                     }
                 }
-                StreamEvent::StateChange { new_state, .. } => {
-                    println!("\n{} Agent state: {}", "→".yellow(), new_state.bold());
-                    if new_state == "complete" || new_state == "failed" || new_state == "banished" {
+                StreamEvent::StateChange { ref new_state, .. } => {
+                    println!("\n{} Agent state: {}", "→".yellow(), new_state.to_string().bold());
+                    if new_state.is_terminal() {
                         break;
                     }
                 }

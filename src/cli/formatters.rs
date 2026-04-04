@@ -67,3 +67,47 @@ pub fn format_circle(agents: &[AgentSummary]) {
         );
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn format_age_seconds() {
+        assert_eq!(format_age(0), "0s");
+        assert_eq!(format_age(30), "30s");
+        assert_eq!(format_age(59), "59s");
+    }
+
+    #[test]
+    fn format_age_minutes() {
+        assert_eq!(format_age(60), "1m");
+        assert_eq!(format_age(3599), "59m");
+    }
+
+    #[test]
+    fn format_age_hours() {
+        assert_eq!(format_age(3600), "1h");
+        assert_eq!(format_age(86399), "23h");
+    }
+
+    #[test]
+    fn format_age_days() {
+        assert_eq!(format_age(86400), "1d");
+        assert_eq!(format_age(172800), "2d");
+    }
+
+    #[test]
+    fn format_state_all_variants() {
+        // Just ensure they produce non-empty strings (actual colors are terminal-dependent)
+        for state in [
+            AgentState::Summoning,
+            AgentState::Active,
+            AgentState::Complete,
+            AgentState::Failed,
+            AgentState::Banished,
+        ] {
+            assert!(!format_state(&state).is_empty());
+        }
+    }
+}

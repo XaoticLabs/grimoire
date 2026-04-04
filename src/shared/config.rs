@@ -1,5 +1,6 @@
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::path::PathBuf;
 
 use super::constants;
@@ -10,6 +11,17 @@ pub struct Config {
     pub daemon: DaemonConfig,
     #[serde(default)]
     pub agent: AgentConfig,
+    #[serde(default)]
+    pub providers: HashMap<String, ProviderConfig>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProviderConfig {
+    pub binary: String,
+    #[serde(default)]
+    pub args_template: Vec<String>,
+    #[serde(default)]
+    pub env: HashMap<String, String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -40,6 +52,8 @@ pub struct AgentConfig {
     pub default_cwd: Option<PathBuf>,
     #[serde(default)]
     pub claude_binary: Option<String>,
+    #[serde(default)]
+    pub default_provider: Option<String>,
 }
 
 fn default_port() -> u16 {
@@ -68,7 +82,9 @@ impl Config {
 
     pub fn save(&self) -> Result<()> {
         let path = Self::config_path();
-        std::fs::create_dir_all(path.parent().unwrap())?;
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
         let content = toml::to_string_pretty(self)?;
         std::fs::write(&path, content)?;
         Ok(())

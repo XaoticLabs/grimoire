@@ -21,6 +21,11 @@ pub fn pid_path() -> PathBuf {
     grimoire_dir().join("grimd.pid")
 }
 
+/// Generate a short 8-character ID from a UUID.
+pub fn generate_short_id() -> String {
+    uuid::Uuid::new_v4().to_string()[..8].to_string()
+}
+
 fn dirs_home() -> PathBuf {
     directories::BaseDirs::new()
         .map(|d| d.home_dir().to_path_buf())

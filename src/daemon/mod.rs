@@ -3,7 +3,12 @@ pub mod event_bus;
 pub mod orchestrator;
 pub mod persistence;
 pub mod process_manager;
+pub mod provider;
+pub mod provider_registry;
+pub mod providers;
 pub mod rpc;
+pub mod scroll_keeper;
+pub mod scroll_parser;
 pub mod server;
 
 use anyhow::Result;
@@ -46,8 +51,12 @@ pub async fn start() -> Result<()> {
     let orch = orchestrator::Orchestrator::new(db.clone(), manager.clone());
     orch.start(&event_bus);
 
+    // Start scroll keeper (listens for agent completions, manages scroll DAGs)
+    let scroll_keeper = Arc::new(scroll_keeper::ScrollKeeper::new(db.clone(), manager.clone()));
+    scroll_keeper.clone().start(&event_bus);
+
     // Start servers (UDS + HTTP)
-    server::run(manager, db).await?;
+    server::run(manager, db, scroll_keeper).await?;
 
     let _ = std::fs::remove_file(constants::socket_path());
     let _ = std::fs::remove_file(constants::pid_path());

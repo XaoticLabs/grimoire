@@ -29,7 +29,7 @@ impl Orchestrator {
                         ref new_state,
                         ..
                     }) => {
-                        if new_state == "complete" {
+                        if *new_state == crate::shared::types::AgentState::Complete {
                             self.handle_completion(agent_id).await;
                         }
                     }
@@ -75,7 +75,7 @@ impl Orchestrator {
 
             match self
                 .manager
-                .summon(task, pact.name.clone(), None, None)
+                .summon(task, pact.name.clone(), None, None, None)
                 .await
             {
                 Ok(agent) => {

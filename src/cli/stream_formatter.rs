@@ -77,27 +77,12 @@ fn format_tool_call(name: &str, input: &serde_json::Value) -> String {
                 out.push_str(&format!("\n  {}", cmd.dimmed()));
             }
         }
-        "Read" => {
+        "Read" | "Write" | "Edit" => {
             if let Some(path) = input.get("file_path").and_then(|p| p.as_str()) {
                 out.push_str(&format!(" {}", path.dimmed()));
             }
         }
-        "Write" => {
-            if let Some(path) = input.get("file_path").and_then(|p| p.as_str()) {
-                out.push_str(&format!(" {}", path.dimmed()));
-            }
-        }
-        "Edit" => {
-            if let Some(path) = input.get("file_path").and_then(|p| p.as_str()) {
-                out.push_str(&format!(" {}", path.dimmed()));
-            }
-        }
-        "Glob" => {
-            if let Some(pattern) = input.get("pattern").and_then(|p| p.as_str()) {
-                out.push_str(&format!(" {}", pattern.dimmed()));
-            }
-        }
-        "Grep" => {
+        "Glob" | "Grep" => {
             if let Some(pattern) = input.get("pattern").and_then(|p| p.as_str()) {
                 out.push_str(&format!(" {}", pattern.dimmed()));
             }
@@ -206,4 +191,60 @@ fn format_result(v: &serde_json::Value) -> Option<String> {
     }
 
     Some(line)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn system_event() {
+        let line = r#"{"type":"system","model":"claude-sonnet","session_id":"abcdef1234567890"}"#;
+        let result = format_stream_json(line).unwrap();
+        assert!(result.contains("claude-sonnet"));
+        assert!(result.contains("abcdef12"));
+    }
+
+    #[test]
+    fn result_success_event() {
+        let line = r#"{"type":"result","subtype":"success","result":"done","duration_ms":5000,"num_turns":3,"total_cost_usd":0.05}"#;
+        let result = format_stream_json(line).unwrap();
+        assert!(result.contains("success"));
+        assert!(result.contains("5.0s"));
+        assert!(result.contains("3 turns"));
+    }
+
+    #[test]
+    fn tool_use_bash() {
+        let line = r#"{"type":"tool_use","name":"Bash","input":{"command":"ls -la"}}"#;
+        let result = format_stream_json(line).unwrap();
+        assert!(result.contains("Bash"));
+        assert!(result.contains("ls -la"));
+    }
+
+    #[test]
+    fn tool_result_error() {
+        let line = r#"{"type":"tool_result","name":"Bash","is_error":true,"content":"command not found"}"#;
+        let result = format_stream_json(line).unwrap();
+        assert!(result.contains("command not found"));
+    }
+
+    #[test]
+    fn rate_limit_suppressed() {
+        let line = r#"{"type":"rate_limit_event"}"#;
+        assert!(format_stream_json(line).is_none());
+    }
+
+    #[test]
+    fn unknown_event_suppressed() {
+        let line = r#"{"type":"unknown_thing"}"#;
+        assert!(format_stream_json(line).is_none());
+    }
+
+    #[test]
+    fn malformed_json() {
+        assert!(format_stream_json("not json").is_none());
+        assert!(format_stream_json("").is_none());
+        assert!(format_stream_json("{}").is_none()); // no type field
+    }
 }

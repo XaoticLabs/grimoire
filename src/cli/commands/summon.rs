@@ -4,13 +4,14 @@ use colored::Colorize;
 use crate::cli::client::DaemonClient;
 use crate::shared::protocol::SummonResult;
 
-pub async fn run(task: String, name: Option<String>, model: Option<String>) -> Result<()> {
+pub async fn run(task: String, name: Option<String>, model: Option<String>, provider: Option<String>) -> Result<()> {
     let mut client = DaemonClient::connect().await?;
 
     let params = serde_json::json!({
         "task": task,
         "name": name,
         "model": model,
+        "provider": provider,
     });
 
     let response = client.call("agent.summon", params).await?;

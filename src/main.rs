@@ -28,6 +28,10 @@ enum Commands {
         /// Model to use
         #[arg(short, long)]
         model: Option<String>,
+
+        /// Provider to use (e.g. claude, codex, aider)
+        #[arg(short, long)]
+        provider: Option<String>,
     },
 
     /// List all agents in the circle
@@ -78,6 +82,34 @@ enum Commands {
         /// List pacts instead of creating
         #[arg(short, long)]
         list: bool,
+    },
+
+    /// Inscribe a scroll (load a spec for orchestrated execution)
+    Inscribe {
+        /// Path to the spec markdown file
+        spec: String,
+
+        /// Max concurrent agents
+        #[arg(short = 'c', long, default_value = "4")]
+        concurrency: u32,
+
+        /// Immediately activate after inscribing
+        #[arg(short, long)]
+        activate: bool,
+    },
+
+    /// View scroll status or control scrolls
+    Scroll {
+        /// Scroll ID (omit to list all)
+        id: Option<String>,
+
+        /// Activate a scroll
+        #[arg(long)]
+        activate: bool,
+
+        /// Abandon a scroll
+        #[arg(long)]
+        abandon: bool,
     },
 
     /// Show daemon status
@@ -132,8 +164,8 @@ async fn main() {
             }
 
             let result = match cmd {
-                Commands::Summon { task, name, model } => {
-                    cli::commands::summon::run(task, name, model).await
+                Commands::Summon { task, name, model, provider } => {
+                    cli::commands::summon::run(task, name, model, provider).await
                 }
                 Commands::Circle { state } => cli::commands::circle::run(state).await,
                 Commands::Bind { id, tail } => {
@@ -160,6 +192,16 @@ async fn main() {
                     };
                     cli::commands::pact::run(source_id, task, name, list).await
                 }
+                Commands::Inscribe {
+                    spec,
+                    concurrency,
+                    activate,
+                } => cli::commands::inscribe::run(spec, concurrency, activate).await,
+                Commands::Scroll {
+                    id,
+                    activate,
+                    abandon,
+                } => cli::commands::scroll::run(id, activate, abandon).await,
                 Commands::Status => cli::commands::status::run().await,
                 Commands::Tome { key, value } => cli::commands::tome::run(key, value).await,
                 Commands::Scry => cli::commands::scry::run().await,
