@@ -1,5 +1,8 @@
 pub mod agent_manager;
 pub mod event_bus;
+pub mod executor;
+pub mod worker_registry;
+pub mod worker_rpc_server;
 pub mod orchestrator;
 pub mod persistence;
 pub mod process_manager;
@@ -7,6 +10,7 @@ pub mod provider;
 pub mod provider_registry;
 pub mod providers;
 pub mod rpc;
+pub mod scheduler;
 pub mod scroll_keeper;
 pub mod scroll_parser;
 pub mod server;
@@ -44,7 +48,7 @@ pub async fn start() -> Result<()> {
     info!(pid = pid, dir = %dir.display(), "Grimoire daemon starting");
 
     let db = Arc::new(persistence::Database::open(&constants::db_path())?);
-    let event_bus = event_bus::EventBus::new();
+    let event_bus = event_bus::EventBus::new(db.clone());
     let manager = agent_manager::AgentManager::new(db.clone(), event_bus.clone(), config).await;
 
     // Start orchestrator (listens for agent completions, fires pacts)

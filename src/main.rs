@@ -113,7 +113,18 @@ enum Commands {
     },
 
     /// Show daemon status
-    Status,
+    Status {
+        /// Emit raw JSON instead of human text
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Show pending queued work, oldest first
+    Queue {
+        /// Emit raw JSON instead of human text
+        #[arg(long)]
+        json: bool,
+    },
 
     /// View or edit configuration
     Tome {
@@ -126,6 +137,12 @@ enum Commands {
 
     /// Open the web dashboard
     Scry,
+
+    /// Agent-to-agent messaging (send/list/ack/subscribe/unsubscribe/topics).
+    Mail {
+        #[command(subcommand)]
+        cmd: cli::commands::mail::MailCommand,
+    },
 }
 
 #[tokio::main]
@@ -202,9 +219,11 @@ async fn main() {
                     activate,
                     abandon,
                 } => cli::commands::scroll::run(id, activate, abandon).await,
-                Commands::Status => cli::commands::status::run().await,
+                Commands::Status { json } => cli::commands::status::run(json).await,
+                Commands::Queue { json } => cli::commands::queue::run(json).await,
                 Commands::Tome { key, value } => cli::commands::tome::run(key, value).await,
                 Commands::Scry => cli::commands::scry::run().await,
+                Commands::Mail { cmd } => cli::commands::mail::run(cmd).await,
                 Commands::Daemon => unreachable!(),
             };
 

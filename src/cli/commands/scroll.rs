@@ -98,7 +98,7 @@ fn print_scroll_status(status: &ScrollStatus) {
         state_colored,
     );
     println!(
-        "  {} runes: {} complete, {} active, {} blocked, {} ready, {} failed, {} skipped",
+        "  {} tasks: {} complete, {} active, {} blocked, {} ready, {} failed, {} skipped",
         status.total,
         status.complete.to_string().green(),
         status.active.to_string().yellow(),
@@ -109,8 +109,8 @@ fn print_scroll_status(status: &ScrollStatus) {
     );
     println!();
 
-    for rs in &status.runes {
-        let (icon, state_str) = match rs.rune.state.as_str() {
+    for rs in &status.tasks {
+        let (icon, state_str) = match rs.task.state.as_str() {
             "complete" => ("✓".green(), "done".green()),
             "active" => ("◆".yellow(), "active".yellow()),
             "blocked" => ("◇".dimmed(), "blocked".dimmed()),
@@ -121,14 +121,14 @@ fn print_scroll_status(status: &ScrollStatus) {
         };
 
         let agent_info = rs
-            .rune
+            .task
             .agent_id
             .as_ref()
             .map(|id| format!("agent:{}", id))
             .unwrap_or_default();
 
         let dep_info = if !rs.depends_on_names.is_empty()
-            && (rs.rune.state.as_str() == "blocked" || rs.rune.state.as_str() == "ready")
+            && (rs.task.state.as_str() == "blocked" || rs.task.state.as_str() == "ready")
         {
             format!("  waiting on: {}", rs.depends_on_names.join(", "))
         } else {
@@ -139,7 +139,7 @@ fn print_scroll_status(status: &ScrollStatus) {
             "  [{}] {:<8} {:<30} {}{}",
             icon,
             state_str,
-            rs.rune.name,
+            rs.task.name,
             agent_info.dimmed(),
             dep_info.dimmed(),
         );
@@ -151,8 +151,8 @@ fn print_scroll_status(status: &ScrollStatus) {
         for c in &status.conflicts {
             println!(
                 "  {} <-> {} ({})",
-                c.rune_a_name,
-                c.rune_b_name,
+                c.task_a_name,
+                c.task_b_name,
                 c.overlapping_patterns.join(", ")
             );
         }

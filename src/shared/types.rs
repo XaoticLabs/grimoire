@@ -39,6 +39,7 @@ macro_rules! impl_state_enum {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum AgentState {
+    Queued,
     Summoning,
     Active,
     Complete,
@@ -47,6 +48,7 @@ pub enum AgentState {
 }
 
 impl_state_enum!(AgentState {
+    Queued => "queued",
     Summoning => "summoning",
     Active => "active",
     Complete => "complete",
@@ -74,6 +76,8 @@ pub struct Agent {
     pub exit_code: Option<i32>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+    #[serde(default)]
+    pub worker_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -92,6 +96,48 @@ pub struct AgentSummary {
     pub state: AgentState,
     pub task: Option<String>,
     pub age_secs: i64,
+    #[serde(default)]
+    pub worker_id: Option<String>,
+}
+
+// --- Mail ---
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "PascalCase")]
+pub enum MailState {
+    Pending,
+    Delivered,
+    Failed,
+}
+
+impl_state_enum!(MailState {
+    Pending => "Pending",
+    Delivered => "Delivered",
+    Failed => "Failed",
+});
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Mail {
+    pub id: String,
+    pub recipient_id: AgentId,
+    pub sender_id: Option<AgentId>,
+    pub topic: Option<String>,
+    pub body: String,
+    pub in_reply_to: Option<String>,
+    pub state: MailState,
+    pub fail_reason: Option<String>,
+    pub created_at: i64,
+    pub delivered_at: Option<i64>,
+    pub seq: i64,
+    pub wake_eligible: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Subscription {
+    pub id: String,
+    pub subscriber_id: AgentId,
+    pub topic: String,
+    pub created_at: i64,
 }
 
 // --- Pacts ---
@@ -125,7 +171,7 @@ pub struct Pact {
 // --- Scrolls (Spec-based DAG Orchestration) ---
 
 pub type ScrollId = String;
-pub type RuneId = String;
+pub type TaskId = String;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -147,7 +193,7 @@ impl_state_enum!(ScrollState {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
-pub enum RuneState {
+pub enum TaskState {
     Blocked,
     Ready,
     Active,
@@ -156,7 +202,7 @@ pub enum RuneState {
     Skipped,
 }
 
-impl_state_enum!(RuneState {
+impl_state_enum!(TaskState {
     Blocked => "blocked",
     Ready => "ready",
     Active => "active",
@@ -177,12 +223,12 @@ pub struct Scroll {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Rune {
-    pub id: RuneId,
+pub struct Task {
+    pub id: TaskId,
     pub scroll_id: ScrollId,
     pub name: String,
-    pub task: String,
-    pub state: RuneState,
+    pub prompt: String,
+    pub state: TaskState,
     pub agent_id: Option<AgentId>,
     pub provider: Option<String>,
     pub model: Option<String>,
@@ -194,16 +240,16 @@ pub struct Rune {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RuneConflict {
-    pub rune_a: RuneId,
-    pub rune_a_name: String,
-    pub rune_b: RuneId,
-    pub rune_b_name: String,
+pub struct TaskConflict {
+    pub task_a: TaskId,
+    pub task_a_name: String,
+    pub task_b: TaskId,
+    pub task_b_name: String,
     pub overlapping_patterns: Vec<String>,
 }
 
-impl RuneConflict {
-    pub fn detect(a: &Rune, b: &Rune) -> Option<Self> {
+impl TaskConflict {
+    pub fn detect(a: &Task, b: &Task) -> Option<Self> {
         let a_patterns: HashSet<&str> = a.file_patterns.iter().map(|s| s.as_str()).collect();
         let b_patterns: HashSet<&str> = b.file_patterns.iter().map(|s| s.as_str()).collect();
         let overlap: Vec<String> = a_patterns
@@ -214,10 +260,10 @@ impl RuneConflict {
             None
         } else {
             Some(Self {
-                rune_a: a.id.clone(),
-                rune_a_name: a.name.clone(),
-                rune_b: b.id.clone(),
-                rune_b_name: b.name.clone(),
+                task_a: a.id.clone(),
+                task_a_name: a.name.clone(),
+                task_b: b.id.clone(),
+                task_b_name: b.name.clone(),
                 overlapping_patterns: overlap,
             })
         }
@@ -232,6 +278,7 @@ mod tests {
     fn state_enum_roundtrips() {
         // AgentState
         for (s, expected) in [
+            ("queued", AgentState::Queued),
             ("summoning", AgentState::Summoning),
             ("active", AgentState::Active),
             ("complete", AgentState::Complete),
@@ -267,16 +314,16 @@ mod tests {
             assert_eq!(parsed.to_string(), s);
         }
 
-        // RuneState
+        // TaskState
         for (s, expected) in [
-            ("blocked", RuneState::Blocked),
-            ("ready", RuneState::Ready),
-            ("active", RuneState::Active),
-            ("complete", RuneState::Complete),
-            ("failed", RuneState::Failed),
-            ("skipped", RuneState::Skipped),
+            ("blocked", TaskState::Blocked),
+            ("ready", TaskState::Ready),
+            ("active", TaskState::Active),
+            ("complete", TaskState::Complete),
+            ("failed", TaskState::Failed),
+            ("skipped", TaskState::Skipped),
         ] {
-            let parsed: RuneState = s.parse().unwrap();
+            let parsed: TaskState = s.parse().unwrap();
             assert_eq!(parsed, expected);
             assert_eq!(parsed.to_string(), s);
         }
@@ -287,11 +334,12 @@ mod tests {
         assert!("bogus".parse::<AgentState>().is_err());
         assert!("bogus".parse::<PactState>().is_err());
         assert!("bogus".parse::<ScrollState>().is_err());
-        assert!("bogus".parse::<RuneState>().is_err());
+        assert!("bogus".parse::<TaskState>().is_err());
     }
 
     #[test]
     fn agent_state_is_terminal() {
+        assert!(!AgentState::Queued.is_terminal());
         assert!(!AgentState::Summoning.is_terminal());
         assert!(!AgentState::Active.is_terminal());
         assert!(AgentState::Complete.is_terminal());
@@ -300,39 +348,61 @@ mod tests {
     }
 
     #[test]
-    fn rune_conflict_detect_overlap() {
-        let a = make_rune("a", vec!["src/foo.rs", "src/bar.rs"]);
-        let b = make_rune("b", vec!["src/bar.rs", "src/baz.rs"]);
-        let conflict = RuneConflict::detect(&a, &b).unwrap();
+    fn agent_state_queued_is_not_terminal() {
+        assert!(!AgentState::Queued.is_terminal());
+    }
+
+    #[test]
+    fn agent_state_queued_string_roundtrip() {
+        assert_eq!(AgentState::Queued.to_string(), "queued");
+        assert_eq!(
+            "queued".parse::<AgentState>().unwrap(),
+            AgentState::Queued
+        );
+    }
+
+    #[test]
+    fn agent_state_queued_serde_roundtrip() {
+        let json = serde_json::to_string(&AgentState::Queued).unwrap();
+        assert_eq!(json, "\"queued\"");
+        let parsed: AgentState = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed, AgentState::Queued);
+    }
+
+    #[test]
+    fn task_conflict_detect_overlap() {
+        let a = make_task("a", vec!["src/foo.rs", "src/bar.rs"]);
+        let b = make_task("b", vec!["src/bar.rs", "src/baz.rs"]);
+        let conflict = TaskConflict::detect(&a, &b).unwrap();
         assert_eq!(conflict.overlapping_patterns, vec!["src/bar.rs"]);
     }
 
     #[test]
-    fn rune_conflict_detect_no_overlap() {
-        let a = make_rune("a", vec!["src/foo.rs"]);
-        let b = make_rune("b", vec!["src/bar.rs"]);
-        assert!(RuneConflict::detect(&a, &b).is_none());
+    fn task_conflict_detect_no_overlap() {
+        let a = make_task("a", vec!["src/foo.rs"]);
+        let b = make_task("b", vec!["src/bar.rs"]);
+        assert!(TaskConflict::detect(&a, &b).is_none());
     }
 
     #[test]
-    fn rune_conflict_detect_empty_patterns() {
-        let a = make_rune("a", vec![]);
-        let b = make_rune("b", vec!["src/bar.rs"]);
-        assert!(RuneConflict::detect(&a, &b).is_none());
+    fn task_conflict_detect_empty_patterns() {
+        let a = make_task("a", vec![]);
+        let b = make_task("b", vec!["src/bar.rs"]);
+        assert!(TaskConflict::detect(&a, &b).is_none());
 
         // Both empty
-        let c = make_rune("c", vec![]);
-        let d = make_rune("d", vec![]);
-        assert!(RuneConflict::detect(&c, &d).is_none());
+        let c = make_task("c", vec![]);
+        let d = make_task("d", vec![]);
+        assert!(TaskConflict::detect(&c, &d).is_none());
     }
 
-    fn make_rune(id: &str, file_patterns: Vec<&str>) -> Rune {
-        Rune {
+    fn make_task(id: &str, file_patterns: Vec<&str>) -> Task {
+        Task {
             id: id.to_string(),
             scroll_id: "scroll1".to_string(),
-            name: format!("Rune {}", id),
-            task: "test task".to_string(),
-            state: RuneState::Ready,
+            name: format!("Task {}", id),
+            prompt: "test task".to_string(),
+            state: TaskState::Ready,
             agent_id: None,
             provider: None,
             model: None,

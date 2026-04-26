@@ -73,9 +73,17 @@ impl Orchestrator {
                 "Firing pact"
             );
 
+            let cwd = self.manager.resolve_cwd(None);
             match self
                 .manager
-                .summon(task, pact.name.clone(), None, None, None)
+                .enqueue(
+                    &task,
+                    pact.name.clone(),
+                    None,
+                    None,
+                    &cwd,
+                    crate::daemon::agent_manager::Lane::Scroll,
+                )
                 .await
             {
                 Ok(agent) => {

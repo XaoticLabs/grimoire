@@ -143,7 +143,8 @@ async fn run_uds_server(state: AppState) -> Result<()> {
                     }
                 }
 
-                let response = rpc::handle_rpc(&state.manager, &state.db, &state.scroll_keeper, req).await;
+                let bus = state.manager.event_bus();
+                let response = rpc::handle_rpc(&state.manager, &state.db, &state.scroll_keeper, &bus, req).await;
                 if write_response(&mut writer, &response).await.is_err() {
                     return;
                 }
@@ -205,9 +206,17 @@ async fn http_summon_agent(
     State(state): State<AppState>,
     axum::Json(params): axum::Json<SummonParams>,
 ) -> axum::Json<serde_json::Value> {
+    let cwd = state.manager.resolve_cwd(params.cwd);
     match state
         .manager
-        .summon(params.task, params.name, params.model, params.cwd, params.provider)
+        .enqueue(
+            &params.task,
+            params.name,
+            params.model,
+            params.provider,
+            &cwd,
+            crate::daemon::agent_manager::Lane::Adhoc,
+        )
         .await
     {
         Ok(agent) => axum::Json(serde_json::to_value(SummonResult {
@@ -255,7 +264,7 @@ async fn http_invoke_agent(
         return axum::Json(serde_json::json!({"error": "message is required"}));
     }
 
-    match state.manager.invoke(&id, message).await {
+    match state.manager.invoke(&id, &message, None).await {
         Ok(()) => axum::Json(serde_json::json!({"success": true})),
         Err(e) => axum::Json(serde_json::json!({"error": e.to_string()})),
     }
@@ -357,7 +366,7 @@ async fn http_inscribe_scroll(
         Ok(result) => axum::Json(serde_json::json!({
             "id": result.scroll.id,
             "name": result.scroll.name,
-            "rune_count": result.rune_count,
+            "task_count": result.task_count,
             "conflicts": result.conflicts,
         })),
         Err(e) => axum::Json(serde_json::json!({"error": e.to_string()})),

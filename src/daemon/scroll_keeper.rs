@@ -5,7 +5,7 @@ use tracing::{error, info, warn};
 
 use crate::shared::protocol::StreamEvent;
 use crate::shared::types::{
-    Rune, RuneConflict, RuneState, Scroll, ScrollState,
+    Task, TaskConflict, TaskState, Scroll, ScrollState,
 };
 
 use super::agent_manager::AgentManager;
@@ -22,7 +22,7 @@ pub struct ScrollKeeper {
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ScrollStatus {
     pub scroll: Scroll,
-    pub runes: Vec<RuneStatus>,
+    pub tasks: Vec<TaskStatus>,
     pub total: usize,
     pub complete: usize,
     pub active: usize,
@@ -30,12 +30,12 @@ pub struct ScrollStatus {
     pub ready: usize,
     pub failed: usize,
     pub skipped: usize,
-    pub conflicts: Vec<RuneConflict>,
+    pub conflicts: Vec<TaskConflict>,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct RuneStatus {
-    pub rune: Rune,
+pub struct TaskStatus {
+    pub task: Task,
     pub depends_on_names: Vec<String>,
 }
 
@@ -96,45 +96,45 @@ impl ScrollKeeper {
 
         self.db.insert_scroll(&scroll)?;
 
-        // Create runes and build name->id map
+        // Create tasks and build name->id map
         let mut name_to_id: HashMap<String, String> = HashMap::new();
-        let mut runes = Vec::new();
+        let mut tasks = Vec::new();
 
-        for (idx, rune_spec) in spec.runes.iter().enumerate() {
-            let rune_id = crate::shared::constants::generate_short_id();
-            name_to_id.insert(rune_spec.name.clone(), rune_id.clone());
+        for (idx, task_spec) in spec.tasks.iter().enumerate() {
+            let task_id = crate::shared::constants::generate_short_id();
+            name_to_id.insert(task_spec.name.clone(), task_id.clone());
 
-            let has_deps = !rune_spec.depends_on.is_empty();
-            let rune = Rune {
-                id: rune_id,
+            let has_deps = !task_spec.depends_on.is_empty();
+            let task = Task {
+                id: task_id,
                 scroll_id: scroll_id.clone(),
-                name: rune_spec.name.clone(),
-                task: rune_spec.task.clone(),
+                name: task_spec.name.clone(),
+                prompt: task_spec.prompt.clone(),
                 state: if has_deps {
-                    RuneState::Blocked
+                    TaskState::Blocked
                 } else {
-                    RuneState::Ready
+                    TaskState::Ready
                 },
                 agent_id: None,
-                provider: rune_spec.provider.clone(),
-                model: rune_spec.model.clone(),
-                cwd: rune_spec.cwd.clone(),
-                file_patterns: rune_spec.file_patterns.clone(),
+                provider: task_spec.provider.clone(),
+                model: task_spec.model.clone(),
+                cwd: task_spec.cwd.clone(),
+                file_patterns: task_spec.file_patterns.clone(),
                 order_index: idx as u32,
                 created_at: now,
                 updated_at: now,
             };
 
-            self.db.insert_rune(&rune)?;
-            runes.push(rune);
+            self.db.insert_task(&task)?;
+            tasks.push(task);
         }
 
         // Insert dependency edges
-        for rune_spec in &spec.runes {
-            let rune_id = &name_to_id[&rune_spec.name];
-            for dep_name in &rune_spec.depends_on {
+        for task_spec in &spec.tasks {
+            let task_id = &name_to_id[&task_spec.name];
+            for dep_name in &task_spec.depends_on {
                 let dep_id = &name_to_id[dep_name];
-                self.db.insert_rune_dependency(rune_id, dep_id)?;
+                self.db.insert_task_dependency(task_id, dep_id)?;
             }
         }
 
@@ -142,18 +142,18 @@ impl ScrollKeeper {
         self.validate_dag(&scroll_id)?;
 
         // Detect file conflicts
-        let conflicts = self.detect_all_conflicts(&runes);
+        let conflicts = self.detect_all_conflicts(&tasks);
 
-        info!(scroll_id = %scroll_id, name = %spec.name, runes = runes.len(), "Scroll inscribed");
+        info!(scroll_id = %scroll_id, name = %spec.name, tasks = tasks.len(), "Scroll inscribed");
 
         Ok(InscribeResult {
             scroll,
-            rune_count: runes.len(),
+            task_count: tasks.len(),
             conflicts,
         })
     }
 
-    /// Activate a scroll — start scheduling ready runes
+    /// Activate a scroll — start scheduling ready tasks
     pub async fn activate(&self, scroll_id: &str) -> anyhow::Result<()> {
         let scroll = self
             .db
@@ -173,25 +173,25 @@ impl ScrollKeeper {
 
         info!(scroll_id = %scroll_id, "Scroll activated");
 
-        self.schedule_runes(scroll_id).await?;
+        self.schedule_tasks(scroll_id).await?;
 
         Ok(())
     }
 
-    /// Abandon a scroll — banish active agents, mark incomplete runes as skipped
+    /// Abandon a scroll — banish active agents, mark incomplete tasks as skipped
     pub async fn abandon(&self, scroll_id: &str) -> anyhow::Result<()> {
-        let runes = self.db.get_runes_for_scroll(scroll_id)?;
+        let tasks = self.db.get_tasks_for_scroll(scroll_id)?;
 
-        for rune in &runes {
-            match rune.state {
-                RuneState::Active => {
-                    if let Some(ref agent_id) = rune.agent_id {
+        for task in &tasks {
+            match task.state {
+                TaskState::Active => {
+                    if let Some(ref agent_id) = task.agent_id {
                         let _ = self.manager.banish(agent_id).await;
                     }
-                    self.db.update_rune_state(&rune.id, &RuneState::Skipped)?;
+                    self.db.update_task_state(&task.id, &TaskState::Skipped)?;
                 }
-                RuneState::Blocked | RuneState::Ready => {
-                    self.db.update_rune_state(&rune.id, &RuneState::Skipped)?;
+                TaskState::Blocked | TaskState::Ready => {
+                    self.db.update_task_state(&task.id, &TaskState::Skipped)?;
                 }
                 _ => {}
             }
@@ -211,46 +211,46 @@ impl ScrollKeeper {
             .get_scroll(scroll_id)?
             .ok_or_else(|| anyhow::anyhow!("Scroll not found: {}", scroll_id))?;
 
-        let runes = self.db.get_runes_for_scroll(scroll_id)?;
+        let tasks = self.db.get_tasks_for_scroll(scroll_id)?;
 
         // Build name map for dependency display
-        let id_to_name: HashMap<String, String> = runes
+        let id_to_name: HashMap<String, String> = tasks
             .iter()
             .map(|r| (r.id.clone(), r.name.clone()))
             .collect();
 
-        let mut rune_statuses = Vec::new();
-        for rune in &runes {
-            let deps = self.db.get_rune_dependencies(&rune.id)?;
+        let mut task_statuses = Vec::new();
+        for task in &tasks {
+            let deps = self.db.get_task_dependencies(&task.id)?;
             let depends_on_names: Vec<String> = deps
                 .iter()
                 .filter_map(|id| id_to_name.get(id).cloned())
                 .collect();
-            rune_statuses.push(RuneStatus {
-                rune: rune.clone(),
+            task_statuses.push(TaskStatus {
+                task: task.clone(),
                 depends_on_names,
             });
         }
 
-        let total = runes.len();
-        let complete = runes.iter().filter(|r| r.state == RuneState::Complete).count();
-        let active = runes.iter().filter(|r| r.state == RuneState::Active).count();
-        let blocked = runes.iter().filter(|r| r.state == RuneState::Blocked).count();
-        let ready = runes.iter().filter(|r| r.state == RuneState::Ready).count();
-        let failed = runes.iter().filter(|r| r.state == RuneState::Failed).count();
-        let skipped = runes.iter().filter(|r| r.state == RuneState::Skipped).count();
+        let total = tasks.len();
+        let complete = tasks.iter().filter(|r| r.state == TaskState::Complete).count();
+        let active = tasks.iter().filter(|r| r.state == TaskState::Active).count();
+        let blocked = tasks.iter().filter(|r| r.state == TaskState::Blocked).count();
+        let ready = tasks.iter().filter(|r| r.state == TaskState::Ready).count();
+        let failed = tasks.iter().filter(|r| r.state == TaskState::Failed).count();
+        let skipped = tasks.iter().filter(|r| r.state == TaskState::Skipped).count();
 
-        // Detect conflicts among active + ready runes
-        let conflictable: Vec<Rune> = runes
+        // Detect conflicts among active + ready tasks
+        let conflictable: Vec<Task> = tasks
             .iter()
-            .filter(|r| r.state == RuneState::Active || r.state == RuneState::Ready)
+            .filter(|r| r.state == TaskState::Active || r.state == TaskState::Ready)
             .cloned()
             .collect();
         let conflicts = self.detect_all_conflicts(&conflictable);
 
         Ok(ScrollStatus {
             scroll,
-            runes: rune_statuses,
+            tasks: task_statuses,
             total,
             complete,
             active,
@@ -265,116 +265,116 @@ impl ScrollKeeper {
     // --- Internal ---
 
     async fn handle_agent_completion(&self, agent_id: &str) {
-        let rune = match self.db.get_rune_by_agent_id(agent_id) {
+        let task = match self.db.get_task_by_agent_id(agent_id) {
             Ok(Some(r)) => r,
             Ok(None) => return, // Not a scroll-managed agent
             Err(e) => {
-                error!(agent_id = %agent_id, error = %e, "Failed to look up rune");
+                error!(agent_id = %agent_id, error = %e, "Failed to look up task");
                 return;
             }
         };
 
         info!(
-            scroll_id = %rune.scroll_id,
-            rune = %rune.name,
+            scroll_id = %task.scroll_id,
+            task = %task.name,
             agent_id = %agent_id,
-            "Rune completed"
+            "Task completed"
         );
 
-        if let Err(e) = self.db.update_rune_state(&rune.id, &RuneState::Complete) {
-            error!(rune_id = %rune.id, error = %e, "Failed to update rune state");
+        if let Err(e) = self.db.update_task_state(&task.id, &TaskState::Complete) {
+            error!(task_id = %task.id, error = %e, "Failed to update task state");
             return;
         }
 
         // Check if scroll is done
-        let runes = match self.db.get_runes_for_scroll(&rune.scroll_id) {
+        let tasks = match self.db.get_tasks_for_scroll(&task.scroll_id) {
             Ok(r) => r,
             Err(e) => {
-                error!(error = %e, "Failed to get runes for scroll");
+                error!(error = %e, "Failed to get tasks for scroll");
                 return;
             }
         };
 
-        let all_done = runes
+        let all_done = tasks
             .iter()
-            .all(|r| matches!(r.state, RuneState::Complete | RuneState::Skipped | RuneState::Failed));
+            .all(|r| matches!(r.state, TaskState::Complete | TaskState::Skipped | TaskState::Failed));
 
         if all_done {
-            let any_failed = runes.iter().any(|r| r.state == RuneState::Failed);
+            let any_failed = tasks.iter().any(|r| r.state == TaskState::Failed);
             let new_state = if any_failed {
                 ScrollState::Failed
             } else {
                 ScrollState::Complete
             };
-            let _ = self.db.update_scroll_state(&rune.scroll_id, &new_state);
-            info!(scroll_id = %rune.scroll_id, state = %new_state, "Scroll finished");
+            let _ = self.db.update_scroll_state(&task.scroll_id, &new_state);
+            info!(scroll_id = %task.scroll_id, state = %new_state, "Scroll finished");
         } else {
             // Schedule next batch
-            if let Err(e) = self.schedule_runes(&rune.scroll_id).await {
-                error!(scroll_id = %rune.scroll_id, error = %e, "Failed to schedule runes");
+            if let Err(e) = self.schedule_tasks(&task.scroll_id).await {
+                error!(scroll_id = %task.scroll_id, error = %e, "Failed to schedule tasks");
             }
         }
     }
 
     async fn handle_agent_failure(&self, agent_id: &str) {
-        let rune = match self.db.get_rune_by_agent_id(agent_id) {
+        let task = match self.db.get_task_by_agent_id(agent_id) {
             Ok(Some(r)) => r,
             Ok(None) => return,
             Err(e) => {
-                error!(agent_id = %agent_id, error = %e, "Failed to look up rune");
+                error!(agent_id = %agent_id, error = %e, "Failed to look up task");
                 return;
             }
         };
 
         warn!(
-            scroll_id = %rune.scroll_id,
-            rune = %rune.name,
+            scroll_id = %task.scroll_id,
+            task = %task.name,
             agent_id = %agent_id,
-            "Rune failed"
+            "Task failed"
         );
 
-        let _ = self.db.update_rune_state(&rune.id, &RuneState::Failed);
+        let _ = self.db.update_task_state(&task.id, &TaskState::Failed);
 
-        // Skip all downstream runes
-        self.skip_downstream(&rune.id);
+        // Skip all downstream tasks
+        self.skip_downstream(&task.id);
 
         // Check if scroll is done
-        let runes = match self.db.get_runes_for_scroll(&rune.scroll_id) {
+        let tasks = match self.db.get_tasks_for_scroll(&task.scroll_id) {
             Ok(r) => r,
             Err(_) => return,
         };
 
-        let all_terminal = runes.iter().all(|r| {
+        let all_terminal = tasks.iter().all(|r| {
             matches!(
                 r.state,
-                RuneState::Complete | RuneState::Failed | RuneState::Skipped
+                TaskState::Complete | TaskState::Failed | TaskState::Skipped
             )
         });
 
         if all_terminal {
             let _ = self
                 .db
-                .update_scroll_state(&rune.scroll_id, &ScrollState::Failed);
-            info!(scroll_id = %rune.scroll_id, "Scroll failed");
+                .update_scroll_state(&task.scroll_id, &ScrollState::Failed);
+            info!(scroll_id = %task.scroll_id, "Scroll failed");
         } else {
-            // There may still be independent runes that can run
-            let _ = self.schedule_runes(&rune.scroll_id).await;
+            // There may still be independent tasks that can run
+            let _ = self.schedule_tasks(&task.scroll_id).await;
         }
     }
 
-    fn skip_downstream(&self, rune_id: &str) {
-        let dependents = match self.db.get_rune_dependents(rune_id) {
+    fn skip_downstream(&self, task_id: &str) {
+        let dependents = match self.db.get_task_dependents(task_id) {
             Ok(d) => d,
             Err(_) => return,
         };
 
         for dep_id in dependents {
-            let _ = self.db.update_rune_state(&dep_id, &RuneState::Skipped);
+            let _ = self.db.update_task_state(&dep_id, &TaskState::Skipped);
             self.skip_downstream(&dep_id);
         }
     }
 
-    async fn schedule_runes(&self, scroll_id: &str) -> anyhow::Result<()> {
+    async fn schedule_tasks(&self, scroll_id: &str) -> anyhow::Result<()> {
         let scroll = self
             .db
             .get_scroll(scroll_id)?
@@ -384,75 +384,74 @@ impl ScrollKeeper {
             return Ok(());
         }
 
-        let active_count = self.db.count_active_runes(scroll_id)?;
+        let active_count = self.db.count_active_tasks(scroll_id)?;
         let available_slots = (scroll.max_concurrency as usize).saturating_sub(active_count);
 
         if available_slots == 0 {
             return Ok(());
         }
 
-        let ready_runes = self.db.find_ready_runes(scroll_id)?;
-        if ready_runes.is_empty() {
+        let ready_tasks = self.db.find_ready_tasks(scroll_id)?;
+        if ready_tasks.is_empty() {
             return Ok(());
         }
 
-        // Get currently active runes for conflict checking
-        let all_runes = self.db.get_runes_for_scroll(scroll_id)?;
-        let active_runes: Vec<&Rune> = all_runes
+        // Get currently active tasks for conflict checking
+        let all_tasks = self.db.get_tasks_for_scroll(scroll_id)?;
+        let active_tasks: Vec<&Task> = all_tasks
             .iter()
-            .filter(|r| r.state == RuneState::Active)
+            .filter(|r| r.state == TaskState::Active)
             .collect();
 
         let mut spawned = 0;
-        for rune in &ready_runes {
+        for task in &ready_tasks {
             if spawned >= available_slots {
                 break;
             }
 
-            // Check for file conflicts with active runes
-            let has_conflict = active_runes.iter().any(|active| {
-                RuneConflict::detect(active, rune).is_some()
+            // Check for file conflicts with active tasks
+            let has_conflict = active_tasks.iter().any(|active| {
+                TaskConflict::detect(active, task).is_some()
             });
 
             if has_conflict {
                 info!(
-                    rune = %rune.name,
-                    "Delaying rune due to file conflict with active rune"
+                    task = %task.name,
+                    "Delaying task due to file conflict with active task"
                 );
                 continue;
             }
 
-            // Spawn agent for this rune
-            let cwd = rune
-                .cwd
-                .as_ref()
-                .map(PathBuf::from);
+            // Spawn agent for this task
+            let cwd_opt = task.cwd.as_ref().map(PathBuf::from);
+            let cwd = self.manager.resolve_cwd(cwd_opt);
 
             match self
                 .manager
-                .summon(
-                    rune.task.clone(),
-                    Some(rune.name.clone()),
-                    rune.model.clone(),
-                    cwd,
-                    rune.provider.clone(),
+                .enqueue(
+                    &task.prompt,
+                    Some(task.name.clone()),
+                    task.model.clone(),
+                    task.provider.clone(),
+                    &cwd,
+                    crate::daemon::agent_manager::Lane::Scroll,
                 )
                 .await
             {
                 Ok(agent) => {
-                    self.db.update_rune_agent(&rune.id, &agent.id)?;
+                    self.db.update_task_agent(&task.id, &agent.id)?;
                     info!(
                         scroll_id = %scroll_id,
-                        rune = %rune.name,
+                        task = %task.name,
                         agent_id = %agent.id,
-                        "Rune spawned"
+                        "Task spawned"
                     );
                     spawned += 1;
                 }
                 Err(e) => {
-                    error!(rune = %rune.name, error = %e, "Failed to spawn rune");
-                    self.db.update_rune_state(&rune.id, &RuneState::Failed)?;
-                    self.skip_downstream(&rune.id);
+                    error!(task = %task.name, error = %e, "Failed to spawn task");
+                    self.db.update_task_state(&task.id, &TaskState::Failed)?;
+                    self.skip_downstream(&task.id);
                 }
             }
         }
@@ -462,11 +461,11 @@ impl ScrollKeeper {
 
     fn validate_dag(&self, scroll_id: &str) -> anyhow::Result<()> {
         let edges = self.db.get_all_dependencies_for_scroll(scroll_id)?;
-        let runes = self.db.get_runes_for_scroll(scroll_id)?;
+        let tasks = self.db.get_tasks_for_scroll(scroll_id)?;
 
         // Build adjacency list
         let mut adj: HashMap<String, Vec<String>> = HashMap::new();
-        let all_ids: HashSet<String> = runes.iter().map(|r| r.id.clone()).collect();
+        let all_ids: HashSet<String> = tasks.iter().map(|r| r.id.clone()).collect();
 
         for id in &all_ids {
             adj.entry(id.clone()).or_default();
@@ -518,11 +517,11 @@ impl ScrollKeeper {
         Ok(())
     }
 
-    fn detect_all_conflicts(&self, runes: &[Rune]) -> Vec<RuneConflict> {
+    fn detect_all_conflicts(&self, tasks: &[Task]) -> Vec<TaskConflict> {
         let mut conflicts = Vec::new();
-        for i in 0..runes.len() {
-            for j in (i + 1)..runes.len() {
-                if let Some(c) = RuneConflict::detect(&runes[i], &runes[j]) {
+        for i in 0..tasks.len() {
+            for j in (i + 1)..tasks.len() {
+                if let Some(c) = TaskConflict::detect(&tasks[i], &tasks[j]) {
                     conflicts.push(c);
                 }
             }
@@ -533,6 +532,6 @@ impl ScrollKeeper {
 
 pub struct InscribeResult {
     pub scroll: Scroll,
-    pub rune_count: usize,
-    pub conflicts: Vec<RuneConflict>,
+    pub task_count: usize,
+    pub conflicts: Vec<TaskConflict>,
 }

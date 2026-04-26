@@ -4,9 +4,37 @@ use rusqlite::{Connection, params};
 use std::path::Path;
 use std::sync::Mutex;
 
+use crate::shared::protocol::StreamEvent;
 use crate::shared::types::{
-    Agent, AgentEvent, AgentState, Pact, PactState, Rune, RuneId, RuneState, Scroll, ScrollState,
+    Agent, AgentEvent, AgentId, AgentState, Mail, MailState, Pact, PactState, Scroll,
+    ScrollState, Subscription, Task, TaskId, TaskState,
 };
+
+/// One row in the `task_queue` table — work that has been requested but not
+/// yet dispatched to an executor. Lives alongside the `agents` row whose `id`
+/// it shares.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct QueueRow {
+    pub id: AgentId,
+    pub lane: String,
+    pub priority: i64,
+    pub enqueued_at: DateTime<Utc>,
+    pub provider_name: Option<String>,
+    pub cwd: String,
+    pub model: Option<String>,
+    pub task_text: String,
+    pub block_reason: Option<String>,
+}
+
+/// Summary of daemon restart-recovery: which mid-flight agents were flipped
+/// to `Failed` (with their prior state, so callers can publish accurate
+/// `StateChange` events) and how many `Queued` agents survived for the
+/// scheduler to discover on its first tick.
+#[derive(Debug, Clone, Default)]
+pub struct RecoveryReport {
+    pub failed: Vec<(AgentId, AgentState)>,
+    pub queued_remaining: usize,
+}
 
 pub struct Database {
     conn: Mutex<Connection>,
@@ -21,6 +49,19 @@ impl Database {
         };
         db.migrate()?;
         Ok(db)
+    }
+
+    /// Test-only helper: run a closure with locked access to the underlying
+    /// connection. Used by integration tests to inspect schema/contents
+    /// without exposing every read query as a public API.
+    #[doc(hidden)]
+    #[allow(dead_code)]
+    pub fn with_test_conn<F, T>(&self, f: F) -> T
+    where
+        F: FnOnce(&Connection) -> T,
+    {
+        let conn = self.conn.lock().unwrap();
+        f(&conn)
     }
 
     /// Open an in-memory database (for tests).
@@ -50,7 +91,8 @@ impl Database {
                 session_id  TEXT,
                 exit_code   INTEGER,
                 created_at  TEXT NOT NULL,
-                updated_at  TEXT NOT NULL
+                updated_at  TEXT NOT NULL,
+                worker_id   TEXT
             );
 
             CREATE TABLE IF NOT EXISTS agent_events (
@@ -88,6 +130,14 @@ impl Database {
             conn.execute_batch("ALTER TABLE agents ADD COLUMN provider TEXT;")?;
         }
 
+        // Migration: add worker_id column if missing.
+        let has_worker_id: bool = conn
+            .prepare("SELECT worker_id FROM agents LIMIT 0")
+            .is_ok();
+        if !has_worker_id {
+            conn.execute_batch("ALTER TABLE agents ADD COLUMN worker_id TEXT;")?;
+        }
+
         // Scroll tables
         conn.execute_batch(
             "
@@ -101,11 +151,11 @@ impl Database {
                 updated_at      TEXT NOT NULL
             );
 
-            CREATE TABLE IF NOT EXISTS runes (
+            CREATE TABLE IF NOT EXISTS tasks (
                 id              TEXT PRIMARY KEY,
                 scroll_id       TEXT NOT NULL REFERENCES scrolls(id),
                 name            TEXT NOT NULL,
-                task            TEXT NOT NULL,
+                prompt          TEXT NOT NULL,
                 state           TEXT NOT NULL DEFAULT 'blocked',
                 agent_id        TEXT,
                 provider        TEXT,
@@ -117,25 +167,116 @@ impl Database {
                 updated_at      TEXT NOT NULL
             );
 
-            CREATE INDEX IF NOT EXISTS idx_runes_scroll_id ON runes(scroll_id);
-            CREATE INDEX IF NOT EXISTS idx_runes_agent_id ON runes(agent_id);
+            CREATE INDEX IF NOT EXISTS idx_tasks_scroll_id ON tasks(scroll_id);
+            CREATE INDEX IF NOT EXISTS idx_tasks_agent_id ON tasks(agent_id);
 
-            CREATE TABLE IF NOT EXISTS rune_dependencies (
-                rune_id         TEXT NOT NULL REFERENCES runes(id),
-                depends_on_id   TEXT NOT NULL REFERENCES runes(id),
-                PRIMARY KEY (rune_id, depends_on_id)
+            CREATE TABLE IF NOT EXISTS task_dependencies (
+                task_id         TEXT NOT NULL REFERENCES tasks(id),
+                depends_on_id   TEXT NOT NULL REFERENCES tasks(id),
+                PRIMARY KEY (task_id, depends_on_id)
             );
+
+            CREATE TABLE IF NOT EXISTS events (
+                id          INTEGER PRIMARY KEY,
+                agent_id    TEXT,
+                scroll_id   TEXT,
+                seq         INTEGER NOT NULL,
+                kind        TEXT NOT NULL,
+                payload     TEXT NOT NULL,
+                ts          TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_events_agent_seq  ON events(agent_id, seq);
+            CREATE INDEX IF NOT EXISTS idx_events_scroll_seq ON events(scroll_id, seq);
+
+            CREATE TABLE IF NOT EXISTS task_queue (
+                id              TEXT PRIMARY KEY,
+                lane            TEXT NOT NULL,
+                priority        INTEGER NOT NULL DEFAULT 0,
+                enqueued_at     TEXT NOT NULL,
+                provider_name   TEXT,
+                cwd             TEXT NOT NULL,
+                model           TEXT,
+                task_text       TEXT NOT NULL,
+                block_reason    TEXT,
+                FOREIGN KEY (id) REFERENCES agents(id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_task_queue_dispatch
+                ON task_queue (lane, priority DESC, enqueued_at, id);
+
+            CREATE TABLE IF NOT EXISTS mail (
+                id              TEXT PRIMARY KEY,
+                recipient_id    TEXT NOT NULL,
+                sender_id       TEXT,
+                topic           TEXT,
+                body            TEXT NOT NULL,
+                in_reply_to     TEXT,
+                state           TEXT NOT NULL,
+                fail_reason     TEXT,
+                created_at      INTEGER NOT NULL,
+                delivered_at    INTEGER,
+                seq             INTEGER NOT NULL,
+                wake_eligible   INTEGER NOT NULL DEFAULT 1
+            );
+            CREATE INDEX IF NOT EXISTS mail_by_recipient ON mail (recipient_id, seq);
+            CREATE INDEX IF NOT EXISTS mail_pending_wake ON mail (recipient_id, state) WHERE state = 'Pending' AND wake_eligible = 1;
+
+            CREATE TABLE IF NOT EXISTS subscriptions (
+                id              TEXT PRIMARY KEY,
+                subscriber_id   TEXT NOT NULL,
+                topic           TEXT NOT NULL,
+                created_at      INTEGER NOT NULL,
+                UNIQUE (subscriber_id, topic)
+            );
+            CREATE INDEX IF NOT EXISTS subs_by_topic ON subscriptions (topic);
             ",
         )?;
 
         Ok(())
     }
 
+    /// Append a stream event to the durable log. Returns the new row's id.
+    /// Computes `seq` per (agent_id) when present, else per (scroll_id), else 0.
+    pub fn append_event(&self, event: &StreamEvent) -> Result<i64> {
+        let agent_id = event.agent_id();
+        let scroll_id = event.scroll_id();
+        let kind = event.kind();
+        let payload = serde_json::to_string(event)?;
+        let ts = Utc::now().to_rfc3339();
+
+        let mut conn = self.conn.lock().unwrap();
+        let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+
+        let seq: i64 = if let Some(aid) = agent_id {
+            tx.query_row(
+                "SELECT COALESCE(MAX(seq) + 1, 0) FROM events WHERE agent_id = ?1",
+                params![aid],
+                |r| r.get(0),
+            )?
+        } else if let Some(sid) = scroll_id {
+            tx.query_row(
+                "SELECT COALESCE(MAX(seq) + 1, 0) FROM events WHERE scroll_id = ?1",
+                params![sid],
+                |r| r.get(0),
+            )?
+        } else {
+            0
+        };
+
+        tx.execute(
+            "INSERT INTO events (agent_id, scroll_id, seq, kind, payload, ts) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![agent_id, scroll_id, seq, kind, payload, ts],
+        )?;
+        let id = tx.last_insert_rowid();
+        tx.commit()?;
+        Ok(id)
+    }
+
     pub fn insert_agent(&self, agent: &Agent) -> Result<()> {
         let conn = self.conn.lock().unwrap();
         conn.execute(
-            "INSERT INTO agents (id, name, state, task, model, provider, cwd, pid, session_id, exit_code, created_at, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+            "INSERT INTO agents (id, name, state, task, model, provider, cwd, pid, session_id, exit_code, created_at, updated_at, worker_id)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
             params![
                 agent.id,
                 agent.name,
@@ -149,6 +290,7 @@ impl Database {
                 agent.exit_code,
                 agent.created_at.to_rfc3339(),
                 agent.updated_at.to_rfc3339(),
+                agent.worker_id,
             ],
         )?;
         Ok(())
@@ -179,6 +321,16 @@ impl Database {
         Ok(())
     }
 
+    pub fn update_agent_worker_id(&self, id: &str, worker_id: Option<&str>) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        let now = Utc::now().to_rfc3339();
+        conn.execute(
+            "UPDATE agents SET worker_id = ?1, updated_at = ?2 WHERE id = ?3",
+            params![worker_id, now, id],
+        )?;
+        Ok(())
+    }
+
     pub fn update_agent_pid(&self, id: &str, pid: u32) -> Result<()> {
         let conn = self.conn.lock().unwrap();
         let now = Utc::now().to_rfc3339();
@@ -192,7 +344,7 @@ impl Database {
     pub fn get_agent(&self, id: &str) -> Result<Option<Agent>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, name, state, task, model, provider, cwd, pid, session_id, exit_code, created_at, updated_at
+            "SELECT id, name, state, task, model, provider, cwd, pid, session_id, exit_code, created_at, updated_at, worker_id
              FROM agents WHERE id = ?1",
         )?;
         let mut rows = stmt.query(params![id])?;
@@ -205,9 +357,9 @@ impl Database {
     pub fn list_agents(&self, state_filter: Option<&str>) -> Result<Vec<Agent>> {
         let conn = self.conn.lock().unwrap();
         let query = match state_filter {
-            Some(_) => "SELECT id, name, state, task, model, provider, cwd, pid, session_id, exit_code, created_at, updated_at
+            Some(_) => "SELECT id, name, state, task, model, provider, cwd, pid, session_id, exit_code, created_at, updated_at, worker_id
                         FROM agents WHERE state = ?1 ORDER BY created_at DESC",
-            None => "SELECT id, name, state, task, model, provider, cwd, pid, session_id, exit_code, created_at, updated_at
+            None => "SELECT id, name, state, task, model, provider, cwd, pid, session_id, exit_code, created_at, updated_at, worker_id
                      FROM agents ORDER BY created_at DESC",
         };
         let mut stmt = conn.prepare(query)?;
@@ -437,96 +589,96 @@ impl Database {
         Ok(())
     }
 
-    // --- Rune methods ---
+    // --- Task methods ---
 
-    pub fn insert_rune(&self, rune: &Rune) -> Result<()> {
+    pub fn insert_task(&self, task: &Task) -> Result<()> {
         let conn = self.conn.lock().unwrap();
-        let file_patterns_json = serde_json::to_string(&rune.file_patterns)?;
+        let file_patterns_json = serde_json::to_string(&task.file_patterns)?;
         conn.execute(
-            "INSERT INTO runes (id, scroll_id, name, task, state, agent_id, provider, model, cwd, file_patterns, order_index, created_at, updated_at)
+            "INSERT INTO tasks (id, scroll_id, name, prompt, state, agent_id, provider, model, cwd, file_patterns, order_index, created_at, updated_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
             params![
-                rune.id,
-                rune.scroll_id,
-                rune.name,
-                rune.task,
-                rune.state.as_str(),
-                rune.agent_id,
-                rune.provider,
-                rune.model,
-                rune.cwd,
+                task.id,
+                task.scroll_id,
+                task.name,
+                task.prompt,
+                task.state.as_str(),
+                task.agent_id,
+                task.provider,
+                task.model,
+                task.cwd,
                 file_patterns_json,
-                rune.order_index,
-                rune.created_at.to_rfc3339(),
-                rune.updated_at.to_rfc3339(),
+                task.order_index,
+                task.created_at.to_rfc3339(),
+                task.updated_at.to_rfc3339(),
             ],
         )?;
         Ok(())
     }
 
-    pub fn insert_rune_dependency(&self, rune_id: &str, depends_on_id: &str) -> Result<()> {
+    pub fn insert_task_dependency(&self, task_id: &str, depends_on_id: &str) -> Result<()> {
         let conn = self.conn.lock().unwrap();
         conn.execute(
-            "INSERT INTO rune_dependencies (rune_id, depends_on_id) VALUES (?1, ?2)",
-            params![rune_id, depends_on_id],
+            "INSERT INTO task_dependencies (task_id, depends_on_id) VALUES (?1, ?2)",
+            params![task_id, depends_on_id],
         )?;
         Ok(())
     }
 
-    pub fn get_runes_for_scroll(&self, scroll_id: &str) -> Result<Vec<Rune>> {
+    pub fn get_tasks_for_scroll(&self, scroll_id: &str) -> Result<Vec<Task>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, scroll_id, name, task, state, agent_id, provider, model, cwd, file_patterns, order_index, created_at, updated_at
-             FROM runes WHERE scroll_id = ?1 ORDER BY order_index ASC",
+            "SELECT id, scroll_id, name, prompt, state, agent_id, provider, model, cwd, file_patterns, order_index, created_at, updated_at
+             FROM tasks WHERE scroll_id = ?1 ORDER BY order_index ASC",
         )?;
         let mut rows = stmt.query(params![scroll_id])?;
-        let mut runes = Vec::new();
+        let mut tasks = Vec::new();
         while let Some(row) = rows.next()? {
-            runes.push(row_to_rune(row)?);
+            tasks.push(row_to_task(row)?);
         }
-        Ok(runes)
+        Ok(tasks)
     }
 
-    pub fn get_rune_by_agent_id(&self, agent_id: &str) -> Result<Option<Rune>> {
+    pub fn get_task_by_agent_id(&self, agent_id: &str) -> Result<Option<Task>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, scroll_id, name, task, state, agent_id, provider, model, cwd, file_patterns, order_index, created_at, updated_at
-             FROM runes WHERE agent_id = ?1",
+            "SELECT id, scroll_id, name, prompt, state, agent_id, provider, model, cwd, file_patterns, order_index, created_at, updated_at
+             FROM tasks WHERE agent_id = ?1",
         )?;
         let mut rows = stmt.query(params![agent_id])?;
         match rows.next()? {
-            Some(row) => Ok(Some(row_to_rune(row)?)),
+            Some(row) => Ok(Some(row_to_task(row)?)),
             None => Ok(None),
         }
     }
 
-    pub fn update_rune_state(&self, id: &str, state: &RuneState) -> Result<()> {
+    pub fn update_task_state(&self, id: &str, state: &TaskState) -> Result<()> {
         let conn = self.conn.lock().unwrap();
         let now = Utc::now().to_rfc3339();
         conn.execute(
-            "UPDATE runes SET state = ?1, updated_at = ?2 WHERE id = ?3",
+            "UPDATE tasks SET state = ?1, updated_at = ?2 WHERE id = ?3",
             params![state.as_str(), now, id],
         )?;
         Ok(())
     }
 
-    pub fn update_rune_agent(&self, rune_id: &str, agent_id: &str) -> Result<()> {
+    pub fn update_task_agent(&self, task_id: &str, agent_id: &str) -> Result<()> {
         let conn = self.conn.lock().unwrap();
         let now = Utc::now().to_rfc3339();
         conn.execute(
-            "UPDATE runes SET agent_id = ?1, state = 'active', updated_at = ?2 WHERE id = ?3",
-            params![agent_id, now, rune_id],
+            "UPDATE tasks SET agent_id = ?1, state = 'active', updated_at = ?2 WHERE id = ?3",
+            params![agent_id, now, task_id],
         )?;
         Ok(())
     }
 
-    /// Get rune IDs that a rune depends on
-    pub fn get_rune_dependencies(&self, rune_id: &str) -> Result<Vec<RuneId>> {
+    /// Get task IDs that a task depends on
+    pub fn get_task_dependencies(&self, task_id: &str) -> Result<Vec<TaskId>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT depends_on_id FROM rune_dependencies WHERE rune_id = ?1",
+            "SELECT depends_on_id FROM task_dependencies WHERE task_id = ?1",
         )?;
-        let mut rows = stmt.query(params![rune_id])?;
+        let mut rows = stmt.query(params![task_id])?;
         let mut deps = Vec::new();
         while let Some(row) = rows.next()? {
             deps.push(row.get(0)?);
@@ -534,13 +686,13 @@ impl Database {
         Ok(deps)
     }
 
-    /// Get rune IDs that depend on a given rune (downstream)
-    pub fn get_rune_dependents(&self, rune_id: &str) -> Result<Vec<RuneId>> {
+    /// Get task IDs that depend on a given task (downstream)
+    pub fn get_task_dependents(&self, task_id: &str) -> Result<Vec<TaskId>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT rune_id FROM rune_dependencies WHERE depends_on_id = ?1",
+            "SELECT task_id FROM task_dependencies WHERE depends_on_id = ?1",
         )?;
-        let mut rows = stmt.query(params![rune_id])?;
+        let mut rows = stmt.query(params![task_id])?;
         let mut deps = Vec::new();
         while let Some(row) = rows.next()? {
             deps.push(row.get(0)?);
@@ -548,46 +700,575 @@ impl Database {
         Ok(deps)
     }
 
-    /// Find blocked runes in a scroll where all dependencies are complete
-    pub fn find_ready_runes(&self, scroll_id: &str) -> Result<Vec<Rune>> {
+    /// Find blocked tasks in a scroll where all dependencies are complete
+    pub fn find_ready_tasks(&self, scroll_id: &str) -> Result<Vec<Task>> {
         let conn = self.conn.lock().unwrap();
-        // Find runes that are blocked and have all dependencies in 'complete' state
+        // Find tasks that are blocked and have all dependencies in 'complete' state
         let mut stmt = conn.prepare(
-            "SELECT r.id, r.scroll_id, r.name, r.task, r.state, r.agent_id, r.provider, r.model, r.cwd, r.file_patterns, r.order_index, r.created_at, r.updated_at
-             FROM runes r
+            "SELECT r.id, r.scroll_id, r.name, r.prompt, r.state, r.agent_id, r.provider, r.model, r.cwd, r.file_patterns, r.order_index, r.created_at, r.updated_at
+             FROM tasks r
              WHERE r.scroll_id = ?1 AND r.state = 'blocked'
              AND NOT EXISTS (
-                 SELECT 1 FROM rune_dependencies rd
-                 JOIN runes dep ON dep.id = rd.depends_on_id
-                 WHERE rd.rune_id = r.id AND dep.state != 'complete'
+                 SELECT 1 FROM task_dependencies rd
+                 JOIN tasks dep ON dep.id = rd.depends_on_id
+                 WHERE rd.task_id = r.id AND dep.state != 'complete'
              )",
         )?;
         let mut rows = stmt.query(params![scroll_id])?;
-        let mut runes = Vec::new();
+        let mut tasks = Vec::new();
         while let Some(row) = rows.next()? {
-            runes.push(row_to_rune(row)?);
+            tasks.push(row_to_task(row)?);
         }
-        Ok(runes)
+        Ok(tasks)
     }
 
-    /// Count active runes in a scroll
-    pub fn count_active_runes(&self, scroll_id: &str) -> Result<usize> {
+    /// Count active tasks in a scroll
+    pub fn count_active_tasks(&self, scroll_id: &str) -> Result<usize> {
         let conn = self.conn.lock().unwrap();
         let count: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM runes WHERE scroll_id = ?1 AND state = 'active'",
+            "SELECT COUNT(*) FROM tasks WHERE scroll_id = ?1 AND state = 'active'",
             params![scroll_id],
             |row| row.get(0),
         )?;
         Ok(count as usize)
     }
 
-    /// Get all dependency edges for a scroll (for cycle detection)
-    pub fn get_all_dependencies_for_scroll(&self, scroll_id: &str) -> Result<Vec<(RuneId, RuneId)>> {
+    // --- task_queue methods ---
+
+    /// Insert a new row into `task_queue`. The corresponding `agents` row must
+    /// already exist (foreign-key constraint).
+    pub fn enqueue_task(&self, row: &QueueRow) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO task_queue
+                (id, lane, priority, enqueued_at, provider_name, cwd, model, task_text, block_reason)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            params![
+                row.id,
+                row.lane,
+                row.priority,
+                row.enqueued_at.to_rfc3339(),
+                row.provider_name,
+                row.cwd,
+                row.model,
+                row.task_text,
+                row.block_reason,
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// List every queued row in dispatch order (ad-hoc lane first, then by
+    /// priority DESC, then FIFO by `enqueued_at`, then by id).
+    pub fn list_queue(&self) -> Result<Vec<QueueRow>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT rd.rune_id, rd.depends_on_id
-             FROM rune_dependencies rd
-             JOIN runes r ON r.id = rd.rune_id
+            "SELECT id, lane, priority, enqueued_at, provider_name, cwd, model, task_text, block_reason
+             FROM task_queue
+             ORDER BY CASE lane WHEN 'adhoc' THEN 0 ELSE 1 END,
+                      priority DESC, enqueued_at ASC, id ASC",
+        )?;
+        let mut rows = stmt.query([])?;
+        let mut out = Vec::new();
+        while let Some(row) = rows.next()? {
+            out.push(row_to_queue_row(row)?);
+        }
+        Ok(out)
+    }
+
+    /// List queued rows restricted to a single lane, in dispatch order.
+    pub fn list_queue_by_lane(&self, lane: &str) -> Result<Vec<QueueRow>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT id, lane, priority, enqueued_at, provider_name, cwd, model, task_text, block_reason
+             FROM task_queue
+             WHERE lane = ?1
+             ORDER BY priority DESC, enqueued_at ASC, id ASC",
+        )?;
+        let mut rows = stmt.query(params![lane])?;
+        let mut out = Vec::new();
+        while let Some(row) = rows.next()? {
+            out.push(row_to_queue_row(row)?);
+        }
+        Ok(out)
+    }
+
+    /// Return the next row that should be dispatched, honoring lane order
+    /// (ad-hoc first), then priority, then FIFO. Does not mutate state.
+    pub fn peek_next_dispatch(&self) -> Result<Option<QueueRow>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT id, lane, priority, enqueued_at, provider_name, cwd, model, task_text, block_reason
+             FROM task_queue
+             ORDER BY CASE lane WHEN 'adhoc' THEN 0 ELSE 1 END,
+                      priority DESC, enqueued_at ASC, id ASC
+             LIMIT 1",
+        )?;
+        let mut rows = stmt.query([])?;
+        match rows.next()? {
+            Some(row) => Ok(Some(row_to_queue_row(row)?)),
+            None => Ok(None),
+        }
+    }
+
+    /// Atomically remove the queue row for `id` and flip the matching agent
+    /// to `summoning`. Returns `true` if the queue row existed and was
+    /// claimed; `false` if it was already gone (raced with another claim or
+    /// a `banish`).
+    pub fn claim_for_dispatch(&self, id: &AgentId) -> Result<bool> {
+        let mut conn = self.conn.lock().unwrap();
+        let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        let deleted = tx.execute("DELETE FROM task_queue WHERE id = ?1", params![id])?;
+        if deleted == 0 {
+            tx.rollback()?;
+            return Ok(false);
+        }
+        let now = Utc::now().to_rfc3339();
+        tx.execute(
+            "UPDATE agents SET state = 'summoning', updated_at = ?1 WHERE id = ?2",
+            params![now, id],
+        )?;
+        tx.commit()?;
+        Ok(true)
+    }
+
+    /// Re-insert a previously claimed row, preserving its original
+    /// `enqueued_at` so fairness ordering is not lost. Sets the matching
+    /// agent's state back to `queued`.
+    pub fn requeue(&self, row: &QueueRow) -> Result<()> {
+        let mut conn = self.conn.lock().unwrap();
+        let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        tx.execute(
+            "INSERT INTO task_queue
+                (id, lane, priority, enqueued_at, provider_name, cwd, model, task_text, block_reason)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            params![
+                row.id,
+                row.lane,
+                row.priority,
+                row.enqueued_at.to_rfc3339(),
+                row.provider_name,
+                row.cwd,
+                row.model,
+                row.task_text,
+                row.block_reason,
+            ],
+        )?;
+        let now = Utc::now().to_rfc3339();
+        tx.execute(
+            "UPDATE agents SET state = 'queued', updated_at = ?1 WHERE id = ?2",
+            params![now, row.id],
+        )?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// Remove the queue row for `id`, if it exists. Returns `true` when a
+    /// row was actually deleted, `false` when it was already gone (idempotent).
+    pub fn delete_from_queue(&self, id: &AgentId) -> Result<bool> {
+        let conn = self.conn.lock().unwrap();
+        let n = conn.execute("DELETE FROM task_queue WHERE id = ?1", params![id])?;
+        Ok(n > 0)
+    }
+
+    /// Update or clear the `block_reason` for a queued row.
+    pub fn set_block_reason(&self, id: &AgentId, reason: Option<&str>) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE task_queue SET block_reason = ?1 WHERE id = ?2",
+            params![reason, id],
+        )?;
+        Ok(())
+    }
+
+    /// On daemon startup, mark every agent that was mid-flight (`Active` or
+    /// `Summoning`) as `Failed` — their child processes are gone — and report
+    /// what was changed plus how many `Queued` agents survived for the
+    /// scheduler to pick up. `Complete`/`Failed`/`Banished` rows and `Queued`
+    /// rows are left untouched.
+    pub fn restart_recovery(&self) -> Result<RecoveryReport> {
+        let mut conn = self.conn.lock().unwrap();
+        let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+
+        let failed: Vec<(AgentId, AgentState)> = {
+            let mut stmt = tx.prepare(
+                "SELECT id, state FROM agents WHERE state IN ('active', 'summoning')",
+            )?;
+            let rows = stmt.query_map([], |row| {
+                let id: String = row.get(0)?;
+                let state: String = row.get(1)?;
+                Ok((id, state))
+            })?;
+            rows.filter_map(|r| r.ok())
+                .map(|(id, s)| {
+                    let parsed = s.parse().unwrap_or(AgentState::Failed);
+                    (id, parsed)
+                })
+                .collect()
+        };
+
+        let now = Utc::now().to_rfc3339();
+        tx.execute(
+            "UPDATE agents SET state = 'failed', updated_at = ?1 \
+             WHERE state IN ('active', 'summoning')",
+            params![now],
+        )?;
+
+        let queued_remaining: i64 = tx.query_row(
+            "SELECT COUNT(*) FROM agents WHERE state = 'queued'",
+            [],
+            |r| r.get(0),
+        )?;
+
+        tx.commit()?;
+        Ok(RecoveryReport {
+            failed,
+            queued_remaining: queued_remaining as usize,
+        })
+    }
+
+    /// Number of rows currently in `task_queue`.
+    pub fn count_queued(&self) -> Result<usize> {
+        let conn = self.conn.lock().unwrap();
+        let n: i64 = conn.query_row("SELECT COUNT(*) FROM task_queue", [], |r| r.get(0))?;
+        Ok(n as usize)
+    }
+
+    /// Number of agents currently mid-flight (Active or Summoning) — the
+    /// scheduler's `in_flight` count for capacity decisions.
+    pub fn count_in_flight_agents(&self) -> Result<usize> {
+        let conn = self.conn.lock().unwrap();
+        let n: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM agents WHERE state IN ('active', 'summoning')",
+            [],
+            |r| r.get(0),
+        )?;
+        Ok(n as usize)
+    }
+
+    // --- Mail methods ---
+
+    /// Insert a mail row, computing `seq` per `recipient_id` inside an
+    /// IMMEDIATE transaction so concurrent inserts to the same recipient
+    /// serialize. Returns `Err` if `recipient_id` is empty.
+    pub fn insert_mail(&self, mail: &Mail) -> Result<()> {
+        if mail.recipient_id.is_empty() {
+            anyhow::bail!("recipient_id must not be empty");
+        }
+        let mut conn = self.conn.lock().unwrap();
+        let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        let seq: i64 = tx.query_row(
+            "SELECT COALESCE(MAX(seq) + 1, 0) FROM mail WHERE recipient_id = ?1",
+            params![mail.recipient_id],
+            |r| r.get(0),
+        )?;
+        tx.execute(
+            "INSERT INTO mail (id, recipient_id, sender_id, topic, body, in_reply_to, state, fail_reason, created_at, delivered_at, seq, wake_eligible)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+            params![
+                mail.id,
+                mail.recipient_id,
+                mail.sender_id,
+                mail.topic,
+                mail.body,
+                mail.in_reply_to,
+                mail.state.as_str(),
+                mail.fail_reason,
+                mail.created_at,
+                mail.delivered_at,
+                seq,
+                if mail.wake_eligible { 1i64 } else { 0i64 },
+            ],
+        )?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// Insert a mail row but use a caller-provided `seq` value. Used by topic
+    /// fanout when inserting multiple rows in a single transaction.
+    fn insert_mail_with_seq_in_tx(tx: &rusqlite::Transaction<'_>, mail: &Mail, seq: i64) -> Result<()> {
+        tx.execute(
+            "INSERT INTO mail (id, recipient_id, sender_id, topic, body, in_reply_to, state, fail_reason, created_at, delivered_at, seq, wake_eligible)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+            params![
+                mail.id,
+                mail.recipient_id,
+                mail.sender_id,
+                mail.topic,
+                mail.body,
+                mail.in_reply_to,
+                mail.state.as_str(),
+                mail.fail_reason,
+                mail.created_at,
+                mail.delivered_at,
+                seq,
+                if mail.wake_eligible { 1i64 } else { 0i64 },
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// Insert multiple mail rows for distinct recipients in a single
+    /// IMMEDIATE transaction. Each row's `seq` is computed per recipient.
+    /// Used for topic fanout so a partial fanout cannot be observed.
+    pub fn insert_mail_batch(&self, mails: &[Mail]) -> Result<()> {
+        if mails.is_empty() {
+            return Ok(());
+        }
+        let mut conn = self.conn.lock().unwrap();
+        let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        for m in mails {
+            if m.recipient_id.is_empty() {
+                anyhow::bail!("recipient_id must not be empty");
+            }
+            let seq: i64 = tx.query_row(
+                "SELECT COALESCE(MAX(seq) + 1, 0) FROM mail WHERE recipient_id = ?1",
+                params![m.recipient_id],
+                |r| r.get(0),
+            )?;
+            Self::insert_mail_with_seq_in_tx(&tx, m, seq)?;
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    pub fn list_mail_by_recipient(
+        &self,
+        recipient_id: &str,
+        after_seq: Option<i64>,
+        state_filter: Option<MailState>,
+        limit: u32,
+    ) -> Result<Vec<Mail>> {
+        let limit = limit.clamp(1, 1000) as i64;
+        let conn = self.conn.lock().unwrap();
+        let mut sql = String::from(
+            "SELECT id, recipient_id, sender_id, topic, body, in_reply_to, state, fail_reason, created_at, delivered_at, seq, wake_eligible \
+             FROM mail WHERE recipient_id = ?1",
+        );
+        if after_seq.is_some() {
+            sql.push_str(" AND seq > ?2");
+        }
+        if state_filter.is_some() {
+            if after_seq.is_some() {
+                sql.push_str(" AND state = ?3");
+            } else {
+                sql.push_str(" AND state = ?2");
+            }
+        }
+        sql.push_str(" ORDER BY seq ASC LIMIT ");
+        sql.push_str(&limit.to_string());
+
+        let mut stmt = conn.prepare(&sql)?;
+        let mut out = Vec::new();
+        let mut push = |row: &rusqlite::Row| -> Result<()> {
+            out.push(row_to_mail(row)?);
+            Ok(())
+        };
+        match (after_seq, state_filter) {
+            (None, None) => {
+                let mut rows = stmt.query(params![recipient_id])?;
+                while let Some(row) = rows.next()? {
+                    push(row)?;
+                }
+            }
+            (Some(s), None) => {
+                let mut rows = stmt.query(params![recipient_id, s])?;
+                while let Some(row) = rows.next()? {
+                    push(row)?;
+                }
+            }
+            (None, Some(st)) => {
+                let mut rows = stmt.query(params![recipient_id, st.as_str()])?;
+                while let Some(row) = rows.next()? {
+                    push(row)?;
+                }
+            }
+            (Some(s), Some(st)) => {
+                let mut rows = stmt.query(params![recipient_id, s, st.as_str()])?;
+                while let Some(row) = rows.next()? {
+                    push(row)?;
+                }
+            }
+        }
+        Ok(out)
+    }
+
+    pub fn get_mail(&self, id: &str) -> Result<Option<Mail>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT id, recipient_id, sender_id, topic, body, in_reply_to, state, fail_reason, created_at, delivered_at, seq, wake_eligible \
+             FROM mail WHERE id = ?1",
+        )?;
+        let mut rows = stmt.query(params![id])?;
+        match rows.next()? {
+            Some(row) => Ok(Some(row_to_mail(row)?)),
+            None => Ok(None),
+        }
+    }
+
+    /// Find a mail row by short id prefix. Returns `Err` if multiple match,
+    /// `Ok(None)` if none match.
+    pub fn get_mail_by_prefix(&self, prefix: &str) -> Result<Option<Mail>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT id, recipient_id, sender_id, topic, body, in_reply_to, state, fail_reason, created_at, delivered_at, seq, wake_eligible \
+             FROM mail WHERE id LIKE ?1 || '%' LIMIT 2",
+        )?;
+        let mut rows = stmt.query(params![prefix])?;
+        let first = match rows.next()? {
+            Some(r) => row_to_mail(r)?,
+            None => return Ok(None),
+        };
+        if rows.next()?.is_some() {
+            anyhow::bail!("Ambiguous mail prefix '{}'", prefix);
+        }
+        Ok(Some(first))
+    }
+
+    pub fn set_mail_state(
+        &self,
+        id: &str,
+        new_state: MailState,
+        fail_reason: Option<&str>,
+    ) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        let now = unix_now();
+        let delivered_at: Option<i64> = match new_state {
+            MailState::Delivered | MailState::Failed => Some(now),
+            MailState::Pending => None,
+        };
+        let n = conn.execute(
+            "UPDATE mail SET state = ?1, fail_reason = COALESCE(?2, fail_reason), delivered_at = COALESCE(?3, delivered_at) WHERE id = ?4",
+            params![new_state.as_str(), fail_reason, delivered_at, id],
+        )?;
+        if n == 0 {
+            anyhow::bail!("mail not found: {}", id);
+        }
+        Ok(())
+    }
+
+    pub fn list_pending_wake_eligible(&self, recipient_id: &str) -> Result<Vec<Mail>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT id, recipient_id, sender_id, topic, body, in_reply_to, state, fail_reason, created_at, delivered_at, seq, wake_eligible \
+             FROM mail WHERE recipient_id = ?1 AND state = 'Pending' AND wake_eligible = 1 ORDER BY seq ASC",
+        )?;
+        let mut rows = stmt.query(params![recipient_id])?;
+        let mut out = Vec::new();
+        while let Some(row) = rows.next()? {
+            out.push(row_to_mail(row)?);
+        }
+        Ok(out)
+    }
+
+    /// Returns distinct recipient ids that have at least one Pending,
+    /// wake-eligible mail row. Used by the scheduler's mail-wake branch.
+    pub fn list_recipients_with_pending_wake_eligible_mail(&self) -> Result<Vec<AgentId>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT recipient_id, MIN(seq) FROM mail \
+             WHERE state = 'Pending' AND wake_eligible = 1 \
+             GROUP BY recipient_id ORDER BY MIN(seq) ASC",
+        )?;
+        let mut rows = stmt.query([])?;
+        let mut out = Vec::new();
+        while let Some(row) = rows.next()? {
+            out.push(row.get(0)?);
+        }
+        Ok(out)
+    }
+
+    // --- Subscription methods ---
+
+    /// Insert a subscription. On UNIQUE conflict (subscriber_id, topic),
+    /// returns the existing subscription's id. Sets `sub.id` to whatever id
+    /// ends up in the DB. Returns the (possibly existing) id.
+    pub fn insert_subscription(&self, sub: &Subscription) -> Result<String> {
+        let mut conn = self.conn.lock().unwrap();
+        let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        let existing: Option<String> = tx
+            .query_row(
+                "SELECT id FROM subscriptions WHERE subscriber_id = ?1 AND topic = ?2",
+                params![sub.subscriber_id, sub.topic],
+                |r| r.get(0),
+            )
+            .ok();
+        if let Some(id) = existing {
+            tx.commit()?;
+            return Ok(id);
+        }
+        tx.execute(
+            "INSERT INTO subscriptions (id, subscriber_id, topic, created_at) VALUES (?1, ?2, ?3, ?4)",
+            params![sub.id, sub.subscriber_id, sub.topic, sub.created_at],
+        )?;
+        tx.commit()?;
+        Ok(sub.id.clone())
+    }
+
+    pub fn delete_subscription(&self, id: &str) -> Result<bool> {
+        let conn = self.conn.lock().unwrap();
+        let n = conn.execute("DELETE FROM subscriptions WHERE id = ?1", params![id])?;
+        Ok(n > 0)
+    }
+
+    pub fn list_subscribers_for_topic(&self, topic: &str) -> Result<Vec<Subscription>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT id, subscriber_id, topic, created_at FROM subscriptions WHERE topic = ?1 ORDER BY created_at ASC, id ASC",
+        )?;
+        let mut rows = stmt.query(params![topic])?;
+        let mut out = Vec::new();
+        while let Some(row) = rows.next()? {
+            out.push(Subscription {
+                id: row.get(0)?,
+                subscriber_id: row.get(1)?,
+                topic: row.get(2)?,
+                created_at: row.get(3)?,
+            });
+        }
+        Ok(out)
+    }
+
+    pub fn list_subscriptions_by_subscriber(&self, agent_id: &str) -> Result<Vec<Subscription>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT id, subscriber_id, topic, created_at FROM subscriptions WHERE subscriber_id = ?1 ORDER BY topic ASC",
+        )?;
+        let mut rows = stmt.query(params![agent_id])?;
+        let mut out = Vec::new();
+        while let Some(row) = rows.next()? {
+            out.push(Subscription {
+                id: row.get(0)?,
+                subscriber_id: row.get(1)?,
+                topic: row.get(2)?,
+                created_at: row.get(3)?,
+            });
+        }
+        Ok(out)
+    }
+
+    pub fn list_topics_with_counts(&self) -> Result<Vec<(String, u32)>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT topic, COUNT(*) FROM subscriptions GROUP BY topic ORDER BY topic ASC",
+        )?;
+        let mut rows = stmt.query([])?;
+        let mut out = Vec::new();
+        while let Some(row) = rows.next()? {
+            let topic: String = row.get(0)?;
+            let n: i64 = row.get(1)?;
+            out.push((topic, n as u32));
+        }
+        Ok(out)
+    }
+
+    /// Get all dependency edges for a scroll (for cycle detection)
+    pub fn get_all_dependencies_for_scroll(&self, scroll_id: &str) -> Result<Vec<(TaskId, TaskId)>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT rd.task_id, rd.depends_on_id
+             FROM task_dependencies rd
+             JOIN tasks r ON r.id = rd.task_id
              WHERE r.scroll_id = ?1",
         )?;
         let mut rows = stmt.query(params![scroll_id])?;
@@ -597,6 +1278,31 @@ impl Database {
         }
         Ok(edges)
     }
+}
+
+/// Current unix epoch seconds. Used for `mail.created_at` / `mail.delivered_at`
+/// and for `subscriptions.created_at`.
+pub fn unix_now() -> i64 {
+    Utc::now().timestamp()
+}
+
+fn row_to_mail(row: &rusqlite::Row) -> Result<Mail> {
+    let state_str: String = row.get(6)?;
+    let wake_eligible: i64 = row.get(11)?;
+    Ok(Mail {
+        id: row.get(0)?,
+        recipient_id: row.get(1)?,
+        sender_id: row.get(2)?,
+        topic: row.get(3)?,
+        body: row.get(4)?,
+        in_reply_to: row.get(5)?,
+        state: state_str.parse().unwrap_or(MailState::Failed),
+        fail_reason: row.get(7)?,
+        created_at: row.get(8)?,
+        delivered_at: row.get(9)?,
+        seq: row.get(10)?,
+        wake_eligible: wake_eligible != 0,
+    })
 }
 
 /// Parse an RFC3339 timestamp from a DB column, returning a proper error instead of panicking.
@@ -622,18 +1328,18 @@ fn row_to_scroll(row: &rusqlite::Row) -> Result<Scroll> {
     })
 }
 
-fn row_to_rune(row: &rusqlite::Row) -> Result<Rune> {
+fn row_to_task(row: &rusqlite::Row) -> Result<Task> {
     let state_str: String = row.get(4)?;
     let file_patterns_json: String = row.get(9)?;
     let created_str: String = row.get(11)?;
     let updated_str: String = row.get(12)?;
 
-    Ok(Rune {
+    Ok(Task {
         id: row.get(0)?,
         scroll_id: row.get(1)?,
         name: row.get(2)?,
-        task: row.get(3)?,
-        state: state_str.parse().unwrap_or(RuneState::Failed),
+        prompt: row.get(3)?,
+        state: state_str.parse().unwrap_or(TaskState::Failed),
         agent_id: row.get(5)?,
         provider: row.get(6)?,
         model: row.get(7)?,
@@ -662,6 +1368,21 @@ fn row_to_pact(row: &rusqlite::Row) -> Result<Pact> {
     })
 }
 
+fn row_to_queue_row(row: &rusqlite::Row) -> Result<QueueRow> {
+    let enqueued_str: String = row.get(3)?;
+    Ok(QueueRow {
+        id: row.get(0)?,
+        lane: row.get(1)?,
+        priority: row.get(2)?,
+        enqueued_at: parse_timestamp(&enqueued_str)?,
+        provider_name: row.get(4)?,
+        cwd: row.get(5)?,
+        model: row.get(6)?,
+        task_text: row.get(7)?,
+        block_reason: row.get(8)?,
+    })
+}
+
 fn row_to_agent(row: &rusqlite::Row) -> Result<Agent> {
     let state_str: String = row.get(2)?;
     let cwd_str: String = row.get(6)?;
@@ -681,6 +1402,7 @@ fn row_to_agent(row: &rusqlite::Row) -> Result<Agent> {
         exit_code: row.get(9)?,
         created_at: parse_timestamp(&created_str)?,
         updated_at: parse_timestamp(&updated_str)?,
+        worker_id: row.get::<_, Option<String>>(12)?,
     })
 }
 
@@ -708,6 +1430,7 @@ mod tests {
             exit_code: None,
             created_at: Utc::now(),
             updated_at: Utc::now(),
+            worker_id: None,
         }
     }
 
@@ -723,12 +1446,12 @@ mod tests {
         }
     }
 
-    fn make_rune(id: &str, scroll_id: &str, state: RuneState) -> Rune {
-        Rune {
+    fn make_task(id: &str, scroll_id: &str, state: TaskState) -> Task {
+        Task {
             id: id.to_string(),
             scroll_id: scroll_id.to_string(),
-            name: format!("Rune {}", id),
-            task: "test".to_string(),
+            name: format!("Task {}", id),
+            prompt: "test".to_string(),
             state,
             agent_id: None,
             provider: None,
@@ -897,61 +1620,61 @@ mod tests {
     }
 
     #[test]
-    fn rune_dependencies_and_ready() {
+    fn task_dependencies_and_ready() {
         let db = test_db();
         db.insert_scroll(&make_scroll("scr22222")).unwrap();
 
-        let rune_a = make_rune("rune_a01", "scr22222", RuneState::Complete);
-        let rune_b = make_rune("rune_b01", "scr22222", RuneState::Blocked);
-        db.insert_rune(&rune_a).unwrap();
-        db.insert_rune(&rune_b).unwrap();
-        db.insert_rune_dependency("rune_b01", "rune_a01").unwrap();
+        let task_a = make_task("task_a01", "scr22222", TaskState::Complete);
+        let task_b = make_task("task_b01", "scr22222", TaskState::Blocked);
+        db.insert_task(&task_a).unwrap();
+        db.insert_task(&task_b).unwrap();
+        db.insert_task_dependency("task_b01", "task_a01").unwrap();
 
         // A is complete -> B is ready
-        let ready = db.find_ready_runes("scr22222").unwrap();
+        let ready = db.find_ready_tasks("scr22222").unwrap();
         assert_eq!(ready.len(), 1);
-        assert_eq!(ready[0].id, "rune_b01");
+        assert_eq!(ready[0].id, "task_b01");
     }
 
     #[test]
-    fn rune_blocked_by_incomplete_dep() {
+    fn task_blocked_by_incomplete_dep() {
         let db = test_db();
         db.insert_scroll(&make_scroll("scr33333")).unwrap();
 
-        let rune_a = make_rune("blk_a001", "scr33333", RuneState::Active);
-        let rune_b = make_rune("blk_b001", "scr33333", RuneState::Blocked);
-        db.insert_rune(&rune_a).unwrap();
-        db.insert_rune(&rune_b).unwrap();
-        db.insert_rune_dependency("blk_b001", "blk_a001").unwrap();
+        let task_a = make_task("blk_a001", "scr33333", TaskState::Active);
+        let task_b = make_task("blk_b001", "scr33333", TaskState::Blocked);
+        db.insert_task(&task_a).unwrap();
+        db.insert_task(&task_b).unwrap();
+        db.insert_task_dependency("blk_b001", "blk_a001").unwrap();
 
-        assert!(db.find_ready_runes("scr33333").unwrap().is_empty());
+        assert!(db.find_ready_tasks("scr33333").unwrap().is_empty());
     }
 
     #[test]
-    fn count_active_runes() {
+    fn count_active_tasks() {
         let db = test_db();
         db.insert_scroll(&make_scroll("scr44444")).unwrap();
 
-        db.insert_rune(&make_rune("cnt_a001", "scr44444", RuneState::Active)).unwrap();
-        db.insert_rune(&make_rune("cnt_b001", "scr44444", RuneState::Active)).unwrap();
-        db.insert_rune(&make_rune("cnt_c001", "scr44444", RuneState::Complete)).unwrap();
+        db.insert_task(&make_task("cnt_a001", "scr44444", TaskState::Active)).unwrap();
+        db.insert_task(&make_task("cnt_b001", "scr44444", TaskState::Active)).unwrap();
+        db.insert_task(&make_task("cnt_c001", "scr44444", TaskState::Complete)).unwrap();
 
-        assert_eq!(db.count_active_runes("scr44444").unwrap(), 2);
+        assert_eq!(db.count_active_tasks("scr44444").unwrap(), 2);
     }
 
     #[test]
-    fn rune_agent_lookup() {
+    fn task_agent_lookup() {
         let db = test_db();
         db.insert_scroll(&make_scroll("scr55555")).unwrap();
-        db.insert_rune(&make_rune("lkp_a001", "scr55555", RuneState::Ready)).unwrap();
+        db.insert_task(&make_task("lkp_a001", "scr55555", TaskState::Ready)).unwrap();
 
-        db.update_rune_agent("lkp_a001", "myagent1").unwrap();
+        db.update_task_agent("lkp_a001", "myagent1").unwrap();
 
-        let found = db.get_rune_by_agent_id("myagent1").unwrap().unwrap();
+        let found = db.get_task_by_agent_id("myagent1").unwrap().unwrap();
         assert_eq!(found.id, "lkp_a001");
-        assert_eq!(found.state, RuneState::Active); // update_rune_agent sets active
+        assert_eq!(found.state, TaskState::Active); // update_task_agent sets active
 
-        assert!(db.get_rune_by_agent_id("nonexist").unwrap().is_none());
+        assert!(db.get_task_by_agent_id("nonexist").unwrap().is_none());
     }
 
     #[test]
@@ -973,16 +1696,16 @@ mod tests {
     }
 
     #[test]
-    fn rune_dependents() {
+    fn task_dependents() {
         let db = test_db();
         db.insert_scroll(&make_scroll("scr66666")).unwrap();
-        db.insert_rune(&make_rune("dep_a001", "scr66666", RuneState::Complete)).unwrap();
-        db.insert_rune(&make_rune("dep_b001", "scr66666", RuneState::Blocked)).unwrap();
-        db.insert_rune(&make_rune("dep_c001", "scr66666", RuneState::Blocked)).unwrap();
-        db.insert_rune_dependency("dep_b001", "dep_a001").unwrap();
-        db.insert_rune_dependency("dep_c001", "dep_a001").unwrap();
+        db.insert_task(&make_task("dep_a001", "scr66666", TaskState::Complete)).unwrap();
+        db.insert_task(&make_task("dep_b001", "scr66666", TaskState::Blocked)).unwrap();
+        db.insert_task(&make_task("dep_c001", "scr66666", TaskState::Blocked)).unwrap();
+        db.insert_task_dependency("dep_b001", "dep_a001").unwrap();
+        db.insert_task_dependency("dep_c001", "dep_a001").unwrap();
 
-        let dependents = db.get_rune_dependents("dep_a001").unwrap();
+        let dependents = db.get_task_dependents("dep_a001").unwrap();
         assert_eq!(dependents.len(), 2);
         assert!(dependents.contains(&"dep_b001".to_string()));
         assert!(dependents.contains(&"dep_c001".to_string()));
@@ -992,9 +1715,9 @@ mod tests {
     fn all_dependencies_for_scroll() {
         let db = test_db();
         db.insert_scroll(&make_scroll("scr77777")).unwrap();
-        db.insert_rune(&make_rune("edg_a001", "scr77777", RuneState::Complete)).unwrap();
-        db.insert_rune(&make_rune("edg_b001", "scr77777", RuneState::Blocked)).unwrap();
-        db.insert_rune_dependency("edg_b001", "edg_a001").unwrap();
+        db.insert_task(&make_task("edg_a001", "scr77777", TaskState::Complete)).unwrap();
+        db.insert_task(&make_task("edg_b001", "scr77777", TaskState::Blocked)).unwrap();
+        db.insert_task_dependency("edg_b001", "edg_a001").unwrap();
 
         let edges = db.get_all_dependencies_for_scroll("scr77777").unwrap();
         assert_eq!(edges.len(), 1);

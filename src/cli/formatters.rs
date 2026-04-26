@@ -1,15 +1,43 @@
+use chrono::Utc;
 use colored::Colorize;
 
-use crate::shared::types::{AgentState, AgentSummary};
+use crate::shared::protocol::QueueEntry;
+use crate::shared::types::{AgentState, AgentSummary, Mail};
 
 pub fn format_state(state: &AgentState) -> String {
     match state {
+        AgentState::Queued => "queued".cyan().to_string(),
         AgentState::Summoning => "summoning".yellow().to_string(),
         AgentState::Active => "active".green().bold().to_string(),
         AgentState::Complete => "complete".blue().to_string(),
         AgentState::Failed => "failed".red().to_string(),
         AgentState::Banished => "banished".magenta().to_string(),
     }
+}
+
+/// Render the `grim circle` table as plain text. Includes a `WORKER` column.
+/// Worker ids are truncated to the first 6 chars; `local` for None.
+pub fn circle_text(agents: &[AgentSummary]) -> String {
+    let mut out = String::new();
+    out.push_str("ID        STATE     WORKER   TASK\n");
+    for a in agents {
+        let worker = match &a.worker_id {
+            Some(w) => {
+                let truncated: String = w.chars().take(6).collect();
+                format!("{:<8}", truncated)
+            }
+            None => "local   ".to_string(),
+        };
+        let task = a.task.as_deref().unwrap_or("");
+        out.push_str(&format!(
+            "{:<10}{:<10}{} {}\n",
+            a.id,
+            a.state.as_str(),
+            worker,
+            task,
+        ));
+    }
+    out
 }
 
 pub fn format_age(secs: i64) -> String {
@@ -68,6 +96,67 @@ pub fn format_circle(agents: &[AgentSummary]) {
     }
 }
 
+/// Render a block_reason value into the column shown by `grim queue`.
+fn block_reason_text(reason: Option<&str>) -> &'static str {
+    match reason {
+        Some("capacity") => "capacity",
+        Some("no_eligible_worker") => "no worker",
+        Some(_) => "other",
+        None => "-",
+    }
+}
+
+pub fn format_queue(entries: &[QueueEntry]) -> String {
+    if entries.is_empty() {
+        return "No queued work.\n".to_string();
+    }
+
+    let mut out = String::new();
+    out.push_str(&format!(
+        "{:<10} {:<8} {:<6} {:<14} {}\n",
+        "ID", "LANE", "AGE", "PROVIDER", "BLOCK",
+    ));
+    for e in entries {
+        let id_short: String = e.id.chars().take(8).collect();
+        let provider = e.provider.as_deref().unwrap_or("-");
+        let block = block_reason_text(e.block_reason.as_deref());
+        out.push_str(&format!(
+            "{:<10} {:<8} {:<6} {:<14} {}\n",
+            id_short,
+            e.lane,
+            format_age(e.age_seconds as i64),
+            provider,
+            block,
+        ));
+    }
+    out
+}
+
+/// Render a mail listing. Columns: SEQ  ID  FROM  TOPIC  STATE  AGE  PREVIEW.
+pub fn format_mail_list(mails: &[Mail]) -> String {
+    let mut out = String::new();
+    out.push_str("SEQ  ID  FROM  TOPIC  STATE  AGE  PREVIEW\n");
+    let now = Utc::now().timestamp();
+    for m in mails {
+        let from = match &m.sender_id {
+            Some(id) => {
+                let prefix: String = id.chars().take(8).collect();
+                format!("agent://{}", prefix)
+            }
+            None => "-".to_string(),
+        };
+        let topic = m.topic.as_deref().unwrap_or("-");
+        let age = format_age((now - m.created_at).max(0));
+        let preview: String = m.body.chars().take(60).collect();
+        let preview = preview.replace('\n', " ");
+        out.push_str(&format!(
+            "{}  {}  {}  {}  {}  {}  {}\n",
+            m.seq, m.id, from, topic, m.state.as_str(), age, preview,
+        ));
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -101,6 +190,7 @@ mod tests {
     fn format_state_all_variants() {
         // Just ensure they produce non-empty strings (actual colors are terminal-dependent)
         for state in [
+            AgentState::Queued,
             AgentState::Summoning,
             AgentState::Active,
             AgentState::Complete,
@@ -109,5 +199,10 @@ mod tests {
         ] {
             assert!(!format_state(&state).is_empty());
         }
+    }
+
+    #[test]
+    fn format_state_handles_queued() {
+        assert!(format_state(&AgentState::Queued).contains("queued"));
     }
 }

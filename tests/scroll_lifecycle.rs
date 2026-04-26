@@ -18,7 +18,7 @@ use grimoire::shared::types::*;
 /// tests (that would require a real provider), so we create one with defaults.
 async fn setup() -> (Arc<Database>, ScrollKeeper) {
     let db = Arc::new(Database::open_in_memory().unwrap());
-    let event_bus = EventBus::new();
+    let event_bus = EventBus::new(db.clone());
     let config = Config::default();
     let manager =
         grimoire::daemon::agent_manager::AgentManager::new(db.clone(), event_bus, config).await;
@@ -36,18 +36,18 @@ async fn inscribe_basic_scroll() {
 
     let spec_content = r#"# Scroll: Integration Test
 
-## Rune: Database Setup
+## Task: Database Setup
 - files: migrations/, src/db.rs
 
 Create the database schema.
 
-## Rune: API Layer
+## Task: API Layer
 - files: src/api.rs
 - depends: Database Setup
 
 Build REST endpoints.
 
-## Rune: Frontend
+## Task: Frontend
 - files: src/ui.tsx
 - depends: API Layer
 - provider: aider
@@ -56,36 +56,36 @@ Build the frontend.
 "#;
 
     let spec = scroll_parser::parse_scroll(spec_content).unwrap();
-    assert_eq!(spec.runes.len(), 3);
+    assert_eq!(spec.tasks.len(), 3);
 
     let result = keeper.inscribe(spec, Some(2), Some("/tmp/test.md".to_string())).unwrap();
 
     assert_eq!(result.scroll.name, "Integration Test");
     assert_eq!(result.scroll.state, ScrollState::Inscribed);
     assert_eq!(result.scroll.max_concurrency, 2);
-    assert_eq!(result.rune_count, 3);
+    assert_eq!(result.task_count, 3);
     assert!(result.conflicts.is_empty()); // no overlapping files
 
-    // Verify runes in DB
-    let runes = db.get_runes_for_scroll(&result.scroll.id).unwrap();
-    assert_eq!(runes.len(), 3);
+    // Verify tasks in DB
+    let tasks = db.get_tasks_for_scroll(&result.scroll.id).unwrap();
+    assert_eq!(tasks.len(), 3);
 
-    // First rune has no deps → Ready
-    let db_setup = runes.iter().find(|r| r.name == "Database Setup").unwrap();
-    assert_eq!(db_setup.state, RuneState::Ready);
+    // First task has no deps → Ready
+    let db_setup = tasks.iter().find(|r| r.name == "Database Setup").unwrap();
+    assert_eq!(db_setup.state, TaskState::Ready);
     assert_eq!(db_setup.file_patterns, vec!["migrations/", "src/db.rs"]);
 
-    // Second rune depends on first → Blocked
-    let api = runes.iter().find(|r| r.name == "API Layer").unwrap();
-    assert_eq!(api.state, RuneState::Blocked);
-    let api_deps = db.get_rune_dependencies(&api.id).unwrap();
+    // Second task depends on first → Blocked
+    let api = tasks.iter().find(|r| r.name == "API Layer").unwrap();
+    assert_eq!(api.state, TaskState::Blocked);
+    let api_deps = db.get_task_dependencies(&api.id).unwrap();
     assert_eq!(api_deps.len(), 1);
     assert_eq!(api_deps[0], db_setup.id);
 
-    // Third rune has provider override
-    let frontend = runes.iter().find(|r| r.name == "Frontend").unwrap();
+    // Third task has provider override
+    let frontend = tasks.iter().find(|r| r.name == "Frontend").unwrap();
     assert_eq!(frontend.provider.as_deref(), Some("aider"));
-    assert_eq!(frontend.state, RuneState::Blocked);
+    assert_eq!(frontend.state, TaskState::Blocked);
 }
 
 // ---------------------------------------------------------------------------
@@ -98,12 +98,12 @@ async fn inscribe_detects_file_conflicts() {
 
     let spec_content = r#"# Scroll: Conflict Test
 
-## Rune: Task A
+## Task: Task A
 - files: src/shared.rs, src/a.rs
 
 Work on A.
 
-## Rune: Task B
+## Task: Task B
 - files: src/shared.rs, src/b.rs
 
 Work on B.
@@ -117,24 +117,24 @@ Work on B.
 }
 
 // ---------------------------------------------------------------------------
-// Multiple independent runes start as Ready
+// Multiple independent tasks start as Ready
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-async fn independent_runes_all_ready() {
+async fn independent_tasks_all_ready() {
     let (db, keeper) = setup().await;
 
     let spec_content = r#"# Scroll: Parallel
 
-## Rune: Alpha
+## Task: Alpha
 
 Do alpha.
 
-## Rune: Beta
+## Task: Beta
 
 Do beta.
 
-## Rune: Gamma
+## Task: Gamma
 
 Do gamma.
 "#;
@@ -142,10 +142,10 @@ Do gamma.
     let spec = scroll_parser::parse_scroll(spec_content).unwrap();
     let result = keeper.inscribe(spec, None, None).unwrap();
 
-    let runes = db.get_runes_for_scroll(&result.scroll.id).unwrap();
-    assert_eq!(runes.len(), 3);
-    for rune in &runes {
-        assert_eq!(rune.state, RuneState::Ready, "Rune '{}' should be Ready", rune.name);
+    let tasks = db.get_tasks_for_scroll(&result.scroll.id).unwrap();
+    assert_eq!(tasks.len(), 3);
+    for task in &tasks {
+        assert_eq!(task.state, TaskState::Ready, "Task '{}' should be Ready", task.name);
     }
 }
 
@@ -159,21 +159,21 @@ async fn diamond_dependency_graph() {
 
     let spec_content = r#"# Scroll: Diamond
 
-## Rune: A
+## Task: A
 
 Root task.
 
-## Rune: B
+## Task: B
 - depends: A
 
 B after A.
 
-## Rune: C
+## Task: C
 - depends: A
 
 C after A.
 
-## Rune: D
+## Task: D
 - depends: B, C
 
 D after both B and C.
@@ -182,32 +182,32 @@ D after both B and C.
     let spec = scroll_parser::parse_scroll(spec_content).unwrap();
     let result = keeper.inscribe(spec, None, None).unwrap();
 
-    let runes = db.get_runes_for_scroll(&result.scroll.id).unwrap();
-    assert_eq!(runes.len(), 4);
+    let tasks = db.get_tasks_for_scroll(&result.scroll.id).unwrap();
+    assert_eq!(tasks.len(), 4);
 
-    let a = runes.iter().find(|r| r.name == "A").unwrap();
-    let b = runes.iter().find(|r| r.name == "B").unwrap();
-    let c = runes.iter().find(|r| r.name == "C").unwrap();
-    let d = runes.iter().find(|r| r.name == "D").unwrap();
+    let a = tasks.iter().find(|r| r.name == "A").unwrap();
+    let b = tasks.iter().find(|r| r.name == "B").unwrap();
+    let c = tasks.iter().find(|r| r.name == "C").unwrap();
+    let d = tasks.iter().find(|r| r.name == "D").unwrap();
 
-    assert_eq!(a.state, RuneState::Ready);
-    assert_eq!(b.state, RuneState::Blocked);
-    assert_eq!(c.state, RuneState::Blocked);
-    assert_eq!(d.state, RuneState::Blocked);
+    assert_eq!(a.state, TaskState::Ready);
+    assert_eq!(b.state, TaskState::Blocked);
+    assert_eq!(c.state, TaskState::Blocked);
+    assert_eq!(d.state, TaskState::Blocked);
 
     // D depends on both B and C
-    let d_deps = db.get_rune_dependencies(&d.id).unwrap();
+    let d_deps = db.get_task_dependencies(&d.id).unwrap();
     assert_eq!(d_deps.len(), 2);
     assert!(d_deps.contains(&b.id));
     assert!(d_deps.contains(&c.id));
 
     // A has two dependents: B and C
-    let a_dependents = db.get_rune_dependents(&a.id).unwrap();
+    let a_dependents = db.get_task_dependents(&a.id).unwrap();
     assert_eq!(a_dependents.len(), 2);
 
     // Simulate A completes → B and C should become ready
-    db.update_rune_state(&a.id, &RuneState::Complete).unwrap();
-    let ready = db.find_ready_runes(&result.scroll.id).unwrap();
+    db.update_task_state(&a.id, &TaskState::Complete).unwrap();
+    let ready = db.find_ready_tasks(&result.scroll.id).unwrap();
     assert_eq!(ready.len(), 2);
     let ready_names: Vec<&str> = ready.iter().map(|r| r.name.as_str()).collect();
     assert!(ready_names.contains(&"B"));
@@ -217,9 +217,9 @@ D after both B and C.
     assert!(!ready_names.contains(&"D"));
 
     // Complete B and C → D becomes ready
-    db.update_rune_state(&b.id, &RuneState::Complete).unwrap();
-    db.update_rune_state(&c.id, &RuneState::Complete).unwrap();
-    let ready = db.find_ready_runes(&result.scroll.id).unwrap();
+    db.update_task_state(&b.id, &TaskState::Complete).unwrap();
+    db.update_task_state(&c.id, &TaskState::Complete).unwrap();
+    let ready = db.find_ready_tasks(&result.scroll.id).unwrap();
     assert_eq!(ready.len(), 1);
     assert_eq!(ready[0].name, "D");
 }
@@ -234,16 +234,16 @@ async fn scroll_status_counts() {
 
     let spec_content = r#"# Scroll: Status Test
 
-## Rune: A
+## Task: A
 
 Do A.
 
-## Rune: B
+## Task: B
 - depends: A
 
 Do B.
 
-## Rune: C
+## Task: C
 - depends: A
 
 Do C.
@@ -262,13 +262,13 @@ Do C.
     assert_eq!(status.failed, 0);
 
     // Complete A
-    let runes = db.get_runes_for_scroll(scroll_id).unwrap();
-    let a = runes.iter().find(|r| r.name == "A").unwrap();
-    db.update_rune_state(&a.id, &RuneState::Complete).unwrap();
+    let tasks = db.get_tasks_for_scroll(scroll_id).unwrap();
+    let a = tasks.iter().find(|r| r.name == "A").unwrap();
+    db.update_task_state(&a.id, &TaskState::Complete).unwrap();
 
     let status = keeper.status(scroll_id).unwrap();
     assert_eq!(status.complete, 1);
     // B and C are still blocked in state but their deps are met
-    // (find_ready_runes would find them, but their RuneState is still Blocked)
+    // (find_ready_tasks would find them, but their TaskState is still Blocked)
     assert_eq!(status.blocked, 2);
 }

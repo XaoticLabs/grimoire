@@ -2,6 +2,8 @@ use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU32, Ordering};
 
 use super::constants;
 
@@ -13,6 +15,36 @@ pub struct Config {
     pub agent: AgentConfig,
     #[serde(default)]
     pub providers: HashMap<String, ProviderConfig>,
+    #[serde(default)]
+    pub worker: Option<WorkerConfig>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkerConfig {
+    /// Required. Bearer token validated on every Register.
+    pub secret: String,
+    #[serde(default = "default_worker_listen_addr")]
+    pub listen_addr: std::net::SocketAddr,
+    #[serde(default = "default_heartbeat_timeout")]
+    pub heartbeat_timeout_secs: u64,
+    #[serde(default = "default_heartbeat_interval_hint")]
+    pub heartbeat_interval_hint_secs: u64,
+    #[serde(default)]
+    pub tls_cert_path: Option<PathBuf>,
+    #[serde(default)]
+    pub tls_key_path: Option<PathBuf>,
+}
+
+fn default_worker_listen_addr() -> std::net::SocketAddr {
+    "127.0.0.1:7878".parse().unwrap()
+}
+
+fn default_heartbeat_timeout() -> u64 {
+    30
+}
+
+fn default_heartbeat_interval_hint() -> u64 {
+    5
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -32,6 +64,8 @@ pub struct DaemonConfig {
     pub socket_path: Option<PathBuf>,
     #[serde(default = "default_log_level")]
     pub log_level: String,
+    #[serde(default = "default_max_concurrent")]
+    pub max_concurrent_agents: u32,
 }
 
 impl Default for DaemonConfig {
@@ -40,8 +74,13 @@ impl Default for DaemonConfig {
             port: default_port(),
             socket_path: None,
             log_level: default_log_level(),
+            max_concurrent_agents: default_max_concurrent(),
         }
     }
+}
+
+fn default_max_concurrent() -> u32 {
+    8
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -106,5 +145,18 @@ impl Config {
             .claude_binary
             .clone()
             .unwrap_or_else(|| "claude".to_string())
+    }
+
+    /// Build a fresh `Arc<AtomicU32>` initialized from the current
+    /// `daemon.max_concurrent_agents` value. The daemon clones this handle
+    /// to share with the scheduler; reloads call [`Config::apply_max_concurrent`]
+    /// to update the live value without restart.
+    pub fn max_concurrent_atomic(&self) -> Arc<AtomicU32> {
+        Arc::new(AtomicU32::new(self.daemon.max_concurrent_agents))
+    }
+
+    /// Update an existing shared atomic to reflect the current config value.
+    pub fn apply_max_concurrent(&self, atomic: &AtomicU32) {
+        atomic.store(self.daemon.max_concurrent_agents, Ordering::Relaxed);
     }
 }

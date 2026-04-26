@@ -58,6 +58,27 @@ impl ProviderRegistry {
     pub fn list(&self) -> Vec<String> {
         self.providers.keys().cloned().collect()
     }
+
+    /// Test helper: registry with a single provider named `true_provider` that
+    /// spawns `/bin/true`.
+    pub fn test_with_true_provider() -> Self {
+        let mut providers: HashMap<String, Arc<dyn Provider>> = HashMap::new();
+        providers.insert(
+            "true_provider".to_string(),
+            Arc::new(PlainTextProvider::new(
+                "true_provider".to_string(),
+                crate::shared::config::ProviderConfig {
+                    binary: "true".to_string(),
+                    args_template: vec![],
+                    env: HashMap::new(),
+                },
+            )),
+        );
+        Self {
+            providers,
+            default: "true_provider".to_string(),
+        }
+    }
 }
 
 #[cfg(test)]

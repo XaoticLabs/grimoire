@@ -1,0 +1,104 @@
+syntax = "proto3";
+package grimoire.worker;
+
+service WorkerControl {
+  rpc Channel(stream WorkerMessage) returns (stream DaemonMessage);
+}
+
+message WorkerMessage {
+  oneof kind {
+    Register register = 1;
+    Heartbeat heartbeat = 2;
+    TaskAccepted task_accepted = 3;
+    TaskRejected task_rejected = 4;
+    TaskEvent task_event = 5;
+    TaskFinished task_finished = 6;
+  }
+}
+
+message DaemonMessage {
+  oneof kind {
+    Ack ack = 1;
+    AssignTask assign_task = 2;
+    CancelTask cancel_task = 3;
+    Ping ping = 4;
+  }
+}
+
+message Register {
+  string worker_id = 1;
+  string bearer_token = 2;
+  string worker_version = 3;
+  uint32 max_concurrent = 4;
+  repeated ProviderCap providers = 5;
+  repeated string tags = 6;
+}
+
+message ProviderCap {
+  string name = 1;
+  string version = 2;
+}
+
+message Heartbeat {
+  uint32 in_flight = 1;
+  uint64 seq = 2;
+}
+
+message AssignTask {
+  string agent_id = 1;
+  string task = 2;
+  string provider_constraint = 3;
+  string provider_name = 4;
+  string cwd = 5;
+  optional string model = 6;
+  map<string, string> env = 7;
+
+  // Wrapped as a oneof so callers can distinguish "absent" from "empty
+  // string" via the `assign_task::OptionalResumeSessionId` enum.
+  oneof optional_resume_session_id {
+    string resume_session_id = 8;
+  }
+
+  // Nested marker type so callers can refer to `assign_task::OptionalModel`
+  // for sanity-checking namespace generation. Not used at runtime.
+  message OptionalModel {}
+}
+
+message CancelTask { string agent_id = 1; }
+message Ping {}
+message Ack { string ref_id = 1; }
+
+message TaskAccepted {
+  string agent_id = 1;
+  uint32 pid = 2;
+}
+
+message TaskRejected {
+  string agent_id = 1;
+  string reason = 2;
+}
+
+message TaskEvent {
+  string agent_id = 1;
+  EventKind kind = 2;
+  string payload = 3;
+
+  enum EventKind {
+    STDOUT = 0;
+    STDERR = 1;
+  }
+}
+
+message TaskFinished {
+  string agent_id = 1;
+  TaskState state = 2;
+  optional int32 exit_code = 3;
+  optional string session_id = 4;
+  optional string error_reason = 5;
+}
+
+enum TaskState {
+  COMPLETE = 0;
+  FAILED = 1;
+  BANISHED = 2;
+}

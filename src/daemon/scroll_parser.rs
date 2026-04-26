@@ -4,13 +4,13 @@ use anyhow::{Result, anyhow};
 #[derive(Debug)]
 pub struct ScrollSpec {
     pub name: String,
-    pub runes: Vec<RuneSpec>,
+    pub tasks: Vec<TaskSpec>,
 }
 
 #[derive(Debug)]
-pub struct RuneSpec {
+pub struct TaskSpec {
     pub name: String,
-    pub task: String,
+    pub prompt: String,
     pub provider: Option<String>,
     pub model: Option<String>,
     pub cwd: Option<String>,
@@ -24,7 +24,7 @@ pub struct RuneSpec {
 /// ```markdown
 /// # Scroll: My Project
 ///
-/// ## Rune: Task Name
+/// ## Task: Task Name
 /// - files: src/foo.rs, src/bar.rs
 /// - depends: Other Task, Another Task
 /// - provider: claude
@@ -52,60 +52,60 @@ pub fn parse_scroll(content: &str) -> Result<ScrollSpec> {
         return Err(anyhow!("Scroll name cannot be empty"));
     }
 
-    // Split into rune sections on ## Rune: headings
-    let mut runes = Vec::new();
-    let mut current_rune: Option<(String, Vec<&str>)> = None;
+    // Split into task sections on ## Task: headings
+    let mut tasks = Vec::new();
+    let mut current_task: Option<(String, Vec<&str>)> = None;
 
     for line in &lines {
-        if let Some(rune_name) = line
-            .strip_prefix("## Rune:")
-            .or_else(|| line.strip_prefix("## Rune: "))
+        if let Some(task_name) = line
+            .strip_prefix("## Task:")
+            .or_else(|| line.strip_prefix("## Task: "))
         {
-            // Save previous rune
-            if let Some((name, body)) = current_rune.take() {
-                runes.push(parse_rune_section(&name, &body)?);
+            // Save previous task
+            if let Some((name, body)) = current_task.take() {
+                tasks.push(parse_task_section(&name, &body)?);
             }
-            current_rune = Some((rune_name.trim().to_string(), Vec::new()));
-        } else if let Some((_, ref mut body)) = current_rune {
+            current_task = Some((task_name.trim().to_string(), Vec::new()));
+        } else if let Some((_, ref mut body)) = current_task {
             body.push(line);
         }
     }
 
-    // Save last rune
-    if let Some((name, body)) = current_rune {
-        runes.push(parse_rune_section(&name, &body)?);
+    // Save last task
+    if let Some((name, body)) = current_task {
+        tasks.push(parse_task_section(&name, &body)?);
     }
 
-    if runes.is_empty() {
-        return Err(anyhow!("Scroll must contain at least one '## Rune:' section"));
+    if tasks.is_empty() {
+        return Err(anyhow!("Scroll must contain at least one '## Task:' section"));
     }
 
     // Validate dependency references
-    let rune_names: Vec<&str> = runes.iter().map(|r| r.name.as_str()).collect();
-    for rune in &runes {
-        for dep in &rune.depends_on {
-            if !rune_names.contains(&dep.as_str()) {
+    let task_names: Vec<&str> = tasks.iter().map(|r| r.name.as_str()).collect();
+    for task in &tasks {
+        for dep in &task.depends_on {
+            if !task_names.contains(&dep.as_str()) {
                 return Err(anyhow!(
-                    "Rune '{}' depends on '{}' which doesn't exist. Available: {:?}",
-                    rune.name,
+                    "Task '{}' depends on '{}' which doesn't exist. Available: {:?}",
+                    task.name,
                     dep,
-                    rune_names
+                    task_names
                 ));
             }
         }
     }
 
     // Check for self-dependencies
-    for rune in &runes {
-        if rune.depends_on.contains(&rune.name) {
-            return Err(anyhow!("Rune '{}' cannot depend on itself", rune.name));
+    for task in &tasks {
+        if task.depends_on.contains(&task.name) {
+            return Err(anyhow!("Task '{}' cannot depend on itself", task.name));
         }
     }
 
-    Ok(ScrollSpec { name, runes })
+    Ok(ScrollSpec { name, tasks })
 }
 
-fn parse_rune_section(name: &str, body: &[&str]) -> Result<RuneSpec> {
+fn parse_task_section(name: &str, body: &[&str]) -> Result<TaskSpec> {
     let mut provider = None;
     let mut model = None;
     let mut cwd = None;
@@ -155,17 +155,17 @@ fn parse_rune_section(name: &str, body: &[&str]) -> Result<RuneSpec> {
         }
     }
 
-    let task = task_lines.join("\n").trim().to_string();
-    if task.is_empty() {
+    let prompt = task_lines.join("\n").trim().to_string();
+    if prompt.is_empty() {
         return Err(anyhow!(
-            "Rune '{}' has no task text. Add task description after the metadata lines.",
+            "Task '{}' has no task text. Add task description after the metadata lines.",
             name
         ));
     }
 
-    Ok(RuneSpec {
+    Ok(TaskSpec {
         name: name.to_string(),
-        task,
+        prompt,
         provider,
         model,
         cwd,
@@ -182,19 +182,19 @@ mod tests {
     fn test_parse_basic_scroll() {
         let content = r#"# Scroll: Test Project
 
-## Rune: Setup Database
+## Task: Setup Database
 - files: src/db.rs, migrations/
 - depends: (none)
 
 Create the database schema with users and sessions tables.
 
-## Rune: API Routes
+## Task: API Routes
 - files: src/routes.rs
 - depends: Setup Database
 
 Implement REST API endpoints for user management.
 
-## Rune: Frontend
+## Task: Frontend
 - provider: aider
 - files: frontend/src/App.tsx
 - depends: API Routes
@@ -204,25 +204,25 @@ Build the frontend login page.
 
         let spec = parse_scroll(content).unwrap();
         assert_eq!(spec.name, "Test Project");
-        assert_eq!(spec.runes.len(), 3);
+        assert_eq!(spec.tasks.len(), 3);
 
-        assert_eq!(spec.runes[0].name, "Setup Database");
-        assert_eq!(spec.runes[0].file_patterns, vec!["src/db.rs", "migrations/"]);
-        assert!(spec.runes[0].depends_on.is_empty());
+        assert_eq!(spec.tasks[0].name, "Setup Database");
+        assert_eq!(spec.tasks[0].file_patterns, vec!["src/db.rs", "migrations/"]);
+        assert!(spec.tasks[0].depends_on.is_empty());
 
-        assert_eq!(spec.runes[1].name, "API Routes");
-        assert_eq!(spec.runes[1].depends_on, vec!["Setup Database"]);
+        assert_eq!(spec.tasks[1].name, "API Routes");
+        assert_eq!(spec.tasks[1].depends_on, vec!["Setup Database"]);
 
-        assert_eq!(spec.runes[2].name, "Frontend");
-        assert_eq!(spec.runes[2].provider.as_deref(), Some("aider"));
-        assert_eq!(spec.runes[2].depends_on, vec!["API Routes"]);
+        assert_eq!(spec.tasks[2].name, "Frontend");
+        assert_eq!(spec.tasks[2].provider.as_deref(), Some("aider"));
+        assert_eq!(spec.tasks[2].depends_on, vec!["API Routes"]);
     }
 
     #[test]
     fn test_invalid_dependency() {
         let content = r#"# Scroll: Bad Deps
 
-## Rune: Task A
+## Task: Task A
 - depends: Task C
 
 Do something.
@@ -244,7 +244,7 @@ Do something.
     fn test_all_metadata() {
         let content = r#"# Scroll: Full Meta
 
-## Rune: Task A
+## Task: Task A
 - files: src/a.rs, src/b.rs
 - depends: (none)
 - provider: codex
@@ -254,39 +254,39 @@ Do something.
 Do task A with all metadata.
 "#;
         let spec = parse_scroll(content).unwrap();
-        let rune = &spec.runes[0];
-        assert_eq!(rune.provider.as_deref(), Some("codex"));
-        assert_eq!(rune.model.as_deref(), Some("gpt-4"));
-        assert_eq!(rune.cwd.as_deref(), Some("/home/user"));
-        assert_eq!(rune.file_patterns, vec!["src/a.rs", "src/b.rs"]);
+        let task = &spec.tasks[0];
+        assert_eq!(task.provider.as_deref(), Some("codex"));
+        assert_eq!(task.model.as_deref(), Some("gpt-4"));
+        assert_eq!(task.cwd.as_deref(), Some("/home/user"));
+        assert_eq!(task.file_patterns, vec!["src/a.rs", "src/b.rs"]);
     }
 
     #[test]
     fn test_multi_dependency() {
         let content = r#"# Scroll: Multi Dep
 
-## Rune: A
+## Task: A
 
 Do A.
 
-## Rune: B
+## Task: B
 
 Do B.
 
-## Rune: C
+## Task: C
 - depends: A, B
 
 Do C after both A and B.
 "#;
         let spec = parse_scroll(content).unwrap();
-        assert_eq!(spec.runes[2].depends_on, vec!["A", "B"]);
+        assert_eq!(spec.tasks[2].depends_on, vec!["A", "B"]);
     }
 
     #[test]
     fn test_self_dependency() {
         let content = r#"# Scroll: Self Dep
 
-## Rune: A
+## Task: A
 - depends: A
 
 Do A.
@@ -303,35 +303,35 @@ Do A.
     }
 
     #[test]
-    fn test_duplicate_rune_names() {
+    fn test_duplicate_task_names() {
         let content = r#"# Scroll: Dup Names
 
-## Rune: Task A
+## Task: Task A
 
 Do A.
 
-## Rune: Task A
+## Task: Task A
 
 Do A again.
 "#;
-        // Duplicate names are allowed by the parser (distinct rune IDs assigned later)
+        // Duplicate names are allowed by the parser (distinct task IDs assigned later)
         let spec = parse_scroll(content).unwrap();
-        assert_eq!(spec.runes.len(), 2);
+        assert_eq!(spec.tasks.len(), 2);
     }
 
     #[test]
     fn test_empty_scroll_name() {
-        let content = "# Scroll:\n\n## Rune: A\n\nDo A.\n";
+        let content = "# Scroll:\n\n## Task: A\n\nDo A.\n";
         let result = parse_scroll(content);
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("empty"));
     }
 
     #[test]
-    fn test_rune_no_task_text() {
+    fn test_task_no_task_text() {
         let content = r#"# Scroll: No Task
 
-## Rune: Empty
+## Task: Empty
 - files: src/foo.rs
 "#;
         let result = parse_scroll(content);

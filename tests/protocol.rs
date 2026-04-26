@@ -144,6 +144,7 @@ fn stream_event_agent_created_roundtrip() {
         exit_code: None,
         created_at: Utc::now(),
         updated_at: Utc::now(),
+        worker_id: None,
     };
 
     let event = StreamEvent::AgentCreated { agent };
@@ -173,18 +174,18 @@ fn stream_event_scroll_progress_json_shape() {
 }
 
 #[test]
-fn stream_event_rune_state_change_json_shape() {
-    let event = StreamEvent::RuneStateChange {
+fn stream_event_task_state_change_json_shape() {
+    let event = StreamEvent::TaskStateChange {
         scroll_id: "s1".to_string(),
-        rune_id: "r1".to_string(),
-        rune_name: "Database Setup".to_string(),
-        old_state: RuneState::Blocked,
-        new_state: RuneState::Ready,
+        task_id: "r1".to_string(),
+        task_name: "Database Setup".to_string(),
+        old_state: TaskState::Blocked,
+        new_state: TaskState::Ready,
     };
 
     let json: serde_json::Value = serde_json::to_value(&event).unwrap();
-    assert_eq!(json["type"], "rune_state_change");
-    assert_eq!(json["rune_name"], "Database Setup");
+    assert_eq!(json["type"], "task_state_change");
+    assert_eq!(json["task_name"], "Database Setup");
     assert_eq!(json["old_state"], "blocked");
     assert_eq!(json["new_state"], "ready");
 }
@@ -226,6 +227,41 @@ fn scroll_inscribe_params_roundtrip() {
 }
 
 // ---------------------------------------------------------------------------
+// AgentState::Queued serde
+// ---------------------------------------------------------------------------
+
+#[test]
+fn agent_state_queued_serde_roundtrip() {
+    let json = serde_json::to_string(&AgentState::Queued).unwrap();
+    assert_eq!(json, "\"queued\"");
+    let parsed: AgentState = serde_json::from_str(&json).unwrap();
+    assert_eq!(parsed, AgentState::Queued);
+}
+
+#[test]
+fn agent_in_queued_state_roundtrips() {
+    let agent = Agent {
+        id: "qid12345".to_string(),
+        name: None,
+        state: AgentState::Queued,
+        task: Some("waiting".to_string()),
+        model: None,
+        provider: None,
+        cwd: PathBuf::from("/tmp"),
+        pid: None,
+        session_id: None,
+        exit_code: None,
+        created_at: Utc::now(),
+        updated_at: Utc::now(),
+        worker_id: None,
+    };
+
+    let json = serde_json::to_string(&agent).unwrap();
+    let parsed: Agent = serde_json::from_str(&json).unwrap();
+    assert_eq!(parsed.state, AgentState::Queued);
+}
+
+// ---------------------------------------------------------------------------
 // All StreamEvent variants deserialize from JSON
 // ---------------------------------------------------------------------------
 
@@ -235,7 +271,9 @@ fn all_stream_event_variants_from_json() {
         r#"{"type":"output","agent_id":"a","stream":"stdout","line":"hi"}"#,
         r#"{"type":"state_change","agent_id":"a","old_state":"active","new_state":"complete"}"#,
         r#"{"type":"scroll_progress","scroll_id":"s","total":1,"complete":0,"active":0,"blocked":1,"failed":0,"skipped":0}"#,
-        r#"{"type":"rune_state_change","scroll_id":"s","rune_id":"r","rune_name":"R","old_state":"blocked","new_state":"ready"}"#,
+        r#"{"type":"task_state_change","scroll_id":"s","task_id":"r","task_name":"R","old_state":"blocked","new_state":"ready"}"#,
+        r#"{"type":"agent_queued","agent_id":"a","lane":"adhoc","block_reason":null}"#,
+        r#"{"type":"worker_registered","worker_id":"w1"}"#,
     ];
 
     for json in cases {
@@ -246,3 +284,163 @@ fn all_stream_event_variants_from_json() {
         let _ = event.agent_id();
     }
 }
+
+// ---------------------------------------------------------------------------
+// StreamEvent::AgentQueued + StreamEvent::WorkerRegistered (durable work queue)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn agent_queued_event_serde_roundtrip() {
+    let event = StreamEvent::AgentQueued {
+        agent_id: "abc12345".to_string(),
+        lane: "adhoc".to_string(),
+        block_reason: Some("capacity".to_string()),
+    };
+    let json = serde_json::to_string(&event).unwrap();
+    let parsed: StreamEvent = serde_json::from_str(&json).unwrap();
+    match parsed {
+        StreamEvent::AgentQueued { agent_id, lane, block_reason } => {
+            assert_eq!(agent_id, "abc12345");
+            assert_eq!(lane, "adhoc");
+            assert_eq!(block_reason.as_deref(), Some("capacity"));
+        }
+        other => panic!("expected AgentQueued, got {other:?}"),
+    }
+
+    // None for block_reason should also roundtrip.
+    let event = StreamEvent::AgentQueued {
+        agent_id: "x".to_string(),
+        lane: "scroll".to_string(),
+        block_reason: None,
+    };
+    let json = serde_json::to_string(&event).unwrap();
+    let parsed: StreamEvent = serde_json::from_str(&json).unwrap();
+    match parsed {
+        StreamEvent::AgentQueued { lane, block_reason, .. } => {
+            assert_eq!(lane, "scroll");
+            assert!(block_reason.is_none());
+        }
+        other => panic!("expected AgentQueued, got {other:?}"),
+    }
+}
+
+#[test]
+fn worker_registered_event_serde_roundtrip() {
+    let event = StreamEvent::WorkerRegistered {
+        worker_id: "worker-1".to_string(),
+    };
+    let json = serde_json::to_string(&event).unwrap();
+    let parsed: StreamEvent = serde_json::from_str(&json).unwrap();
+    match parsed {
+        StreamEvent::WorkerRegistered { worker_id } => {
+            assert_eq!(worker_id, "worker-1");
+        }
+        other => panic!("expected WorkerRegistered, got {other:?}"),
+    }
+}
+
+#[test]
+fn agent_queued_kind_string() {
+    let event = StreamEvent::AgentQueued {
+        agent_id: "a".to_string(),
+        lane: "adhoc".to_string(),
+        block_reason: None,
+    };
+    assert_eq!(event.kind(), "agent_queued");
+}
+
+#[test]
+fn worker_registered_kind_string() {
+    let event = StreamEvent::WorkerRegistered {
+        worker_id: "w".to_string(),
+    };
+    assert_eq!(event.kind(), "worker_registered");
+}
+
+// ---------------------------------------------------------------------------
+// StatusResponse / DaemonStatusResult — queue-distinct counts (Task 10)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn status_response_queued_count_serde() {
+    let resp = StatusResponse {
+        agents: vec![],
+        pacts: vec![],
+        workers: vec![],
+        uptime_secs: 0,
+        active_count: 2,
+        queued_count: 3,
+        max_concurrent_agents: 8,
+    };
+    let json = serde_json::to_value(&resp).unwrap();
+    assert_eq!(json["queued_count"].as_u64(), Some(3));
+    assert_eq!(json["active_count"].as_u64(), Some(2));
+    assert_eq!(json["max_concurrent_agents"].as_u64(), Some(8));
+
+    let parsed: StatusResponse = serde_json::from_value(json).unwrap();
+    assert_eq!(parsed.queued_count, 3);
+    assert_eq!(parsed.active_count, 2);
+    assert_eq!(parsed.max_concurrent_agents, 8);
+}
+
+#[test]
+fn daemon_status_result_includes_queued_and_cap() {
+    let result = DaemonStatusResult {
+        uptime_secs: 0,
+        agent_count: 5,
+        active_count: 2,
+        queued_count: 3,
+        max_concurrent_agents: 8,
+    };
+    let json = serde_json::to_value(&result).unwrap();
+    assert_eq!(json["queued_count"].as_u64(), Some(3));
+    assert_eq!(json["max_concurrent_agents"].as_u64(), Some(8));
+}
+
+
+// ---------------------------------------------------------------------------
+// QueueListResponse / QueueEntry (Task 11)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn queue_list_response_serde_roundtrip() {
+    let resp = QueueListResponse {
+        entries: vec![QueueEntry {
+            id: "abc12345".to_string(),
+            lane: "adhoc".to_string(),
+            age_seconds: 12,
+            provider: Some("claude".to_string()),
+            cwd: "/tmp".to_string(),
+            model: None,
+            block_reason: Some("capacity".to_string()),
+            task_text: "do thing".to_string(),
+        }],
+    };
+    let json = serde_json::to_string(&resp).unwrap();
+    let parsed: QueueListResponse = serde_json::from_str(&json).unwrap();
+    assert_eq!(parsed.entries.len(), 1);
+    let e = &parsed.entries[0];
+    assert_eq!(e.id, "abc12345");
+    assert_eq!(e.lane, "adhoc");
+    assert_eq!(e.age_seconds, 12);
+    assert_eq!(e.provider.as_deref(), Some("claude"));
+    assert_eq!(e.block_reason.as_deref(), Some("capacity"));
+}
+
+#[test]
+fn queue_entry_block_reason_optional() {
+    let entry = QueueEntry {
+        id: "x".into(),
+        lane: "scroll".into(),
+        age_seconds: 0,
+        provider: None,
+        cwd: "/tmp".into(),
+        model: None,
+        block_reason: None,
+        task_text: "t".into(),
+    };
+    let json = serde_json::to_value(&entry).unwrap();
+    assert!(json["block_reason"].is_null());
+    assert!(json["provider"].is_null());
+}
+

@@ -27,11 +27,11 @@ pub async fn run(spec: String, concurrency: u32, activate: bool) -> Result<()> {
     let result: ScrollInscribeResult = serde_json::from_value(response.result.unwrap())?;
 
     println!(
-        "{} Scroll '{}' inscribed (id: {}, {} runes)",
+        "{} Scroll '{}' inscribed (id: {}, {} tasks)",
         "✓".green(),
         result.name.bold(),
         result.id,
-        result.rune_count,
+        result.task_count,
     );
 
     if !result.conflicts.is_empty() {
@@ -40,13 +40,13 @@ pub async fn run(spec: String, concurrency: u32, activate: bool) -> Result<()> {
         for conflict in &result.conflicts {
             println!(
                 "  {} <-> {} ({})",
-                conflict.rune_a_name,
-                conflict.rune_b_name,
+                conflict.task_a_name,
+                conflict.task_b_name,
                 conflict.overlapping_patterns.join(", ")
             );
         }
         println!(
-            "  Conflicting runes will be serialized (not run in parallel)."
+            "  Conflicting tasks will be serialized (not run in parallel)."
         );
     }
 

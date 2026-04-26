@@ -1,13 +1,18 @@
-use anyhow::Result;
+use std::pin::Pin;
 use std::sync::Arc;
-use tokio::io::{AsyncBufReadExt, AsyncRead, BufReader};
+
+use anyhow::Result;
+use async_stream::stream;
+use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Child;
+use tokio_stream::{Stream, StreamExt};
 use tracing::{error, info, warn};
 
 use crate::shared::protocol::StreamEvent;
 use crate::shared::types::{AgentEvent, AgentId, AgentState};
 
 use super::event_bus::EventBus;
+use super::persistence::Database;
 use super::provider::Provider;
 
 pub struct SpawnedAgent {
@@ -19,42 +24,103 @@ pub struct MonitorResult {
     pub state: AgentState,
     pub exit_code: Option<i32>,
     pub session_id: Option<String>,
+    pub error_reason: Option<String>,
 }
 
-async fn monitor_stream(
-    stream: Option<impl AsyncRead + Unpin>,
-    stream_name: &'static str,
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LineSource {
+    Stdout,
+    Stderr,
+}
+
+impl LineSource {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Stdout => "stdout",
+            Self::Stderr => "stderr",
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct LineEvent {
+    pub source: LineSource,
+    pub line: String,
+}
+
+pub type CapturedSessionId = Option<String>;
+
+/// Persist a single output line as an `AgentEvent` row. Shared between the
+/// local consume_lines path and the future RemoteExecutor.
+pub fn persist_event(
+    db: &Database,
+    agent_id: &str,
+    source: LineSource,
+    line: &str,
+) -> Result<()> {
+    let event = AgentEvent {
+        id: None,
+        agent_id: agent_id.to_string(),
+        event_type: source.as_str().to_string(),
+        payload: line.to_string(),
+        created_at: chrono::Utc::now(),
+    };
+    db.insert_event(&event).map(|_| ())
+}
+
+/// Publish a single output line as a `StreamEvent::Output`. Shared between the
+/// local consume_lines path and the future RemoteExecutor.
+pub fn publish_output(event_bus: &EventBus, agent_id: &str, source: LineSource, line: &str) {
+    event_bus.publish(StreamEvent::Output {
+        agent_id: agent_id.to_string(),
+        stream: source.as_str().to_string(),
+        line: line.to_string(),
+    });
+}
+
+/// Drain a stream of `LineEvent`s, persisting each line and publishing it on
+/// the bus. Optionally extracts the agent's session id via the provider.
+pub async fn consume_lines<S>(
     agent_id: AgentId,
+    mut lines: S,
     event_bus: EventBus,
-    db: Arc<crate::daemon::persistence::Database>,
-    session_extractor: Option<(Arc<dyn Provider>, Arc<tokio::sync::Mutex<Option<String>>>)>,
-) {
-    let Some(stream) = stream else { return };
-    let reader = BufReader::new(stream);
-    let mut lines = reader.lines();
-    while let Ok(Some(line)) = lines.next_line().await {
-        if let Some((ref provider, ref session_id)) = session_extractor {
-            if let Some(sid) = provider.extract_session_id(&line) {
-                *session_id.lock().await = Some(sid);
+    db: Arc<Database>,
+    provider: Option<Arc<dyn Provider>>,
+) -> CapturedSessionId
+where
+    S: Stream<Item = LineEvent> + Unpin,
+{
+    let mut session_id: Option<String> = None;
+    while let Some(LineEvent { source, line }) = lines.next().await {
+        if let Some(p) = &provider {
+            if let Some(sid) = p.extract_session_id(&line) {
+                session_id = Some(sid);
             }
         }
-
-        let event = AgentEvent {
-            id: None,
-            agent_id: agent_id.clone(),
-            event_type: stream_name.to_string(),
-            payload: line.clone(),
-            created_at: chrono::Utc::now(),
-        };
-        if let Err(e) = db.insert_event(&event) {
-            error!("Failed to persist {} event: {}", stream_name, e);
+        if let Err(e) = persist_event(&db, &agent_id, source, &line) {
+            error!(?source, error = %e, "failed to persist event");
         }
+        publish_output(&event_bus, &agent_id, source, &line);
+    }
+    session_id
+}
 
-        event_bus.publish(StreamEvent::Output {
-            agent_id: agent_id.clone(),
-            stream: stream_name.to_string(),
-            line,
-        });
+fn line_stream<R>(
+    reader: Option<R>,
+    source: LineSource,
+) -> Pin<Box<dyn Stream<Item = LineEvent> + Send>>
+where
+    R: tokio::io::AsyncRead + Unpin + Send + 'static,
+{
+    match reader {
+        None => Box::pin(tokio_stream::empty()),
+        Some(reader) => Box::pin(stream! {
+            let buf = BufReader::new(reader);
+            let mut lines = buf.lines();
+            while let Ok(Some(line)) = lines.next_line().await {
+                yield LineEvent { source, line };
+            }
+        }),
     }
 }
 
@@ -63,40 +129,25 @@ pub async fn monitor_agent(
     agent_id: AgentId,
     mut child: Child,
     event_bus: EventBus,
-    db: Arc<crate::daemon::persistence::Database>,
-    provider: Arc<dyn Provider>,
+    db: Arc<Database>,
+    provider: Option<Arc<dyn Provider>>,
 ) -> MonitorResult {
     let stdout = child.stdout.take();
     let stderr = child.stderr.take();
 
-    let session_id = Arc::new(tokio::sync::Mutex::new(None::<String>));
+    let merged = line_stream(stdout, LineSource::Stdout)
+        .merge(line_stream(stderr, LineSource::Stderr));
 
-    let stdout_handle = tokio::spawn(monitor_stream(
-        stdout,
-        "stdout",
+    let consume = tokio::spawn(consume_lines(
         agent_id.clone(),
-        event_bus.clone(),
-        db.clone(),
-        Some((provider.clone(), session_id.clone())),
+        merged,
+        event_bus,
+        db,
+        provider,
     ));
 
-    let stderr_handle = tokio::spawn(monitor_stream(
-        stderr,
-        "stderr",
-        agent_id.clone(),
-        event_bus.clone(),
-        db.clone(),
-        None,
-    ));
-
-    // Wait for process to exit
     let exit_status = child.wait().await;
-
-    // Wait for output readers to finish
-    let _ = stdout_handle.await;
-    let _ = stderr_handle.await;
-
-    let captured_session_id = session_id.lock().await.clone();
+    let captured_session_id = consume.await.unwrap_or(None);
 
     match exit_status {
         Ok(status) => {
@@ -107,6 +158,7 @@ pub async fn monitor_agent(
                     state: AgentState::Complete,
                     exit_code: code,
                     session_id: captured_session_id,
+                    error_reason: None,
                 }
             } else {
                 warn!(agent_id = %agent_id, code = ?code, "Agent failed");
@@ -114,6 +166,7 @@ pub async fn monitor_agent(
                     state: AgentState::Failed,
                     exit_code: code,
                     session_id: captured_session_id,
+                    error_reason: None,
                 }
             }
         }
@@ -123,6 +176,7 @@ pub async fn monitor_agent(
                 state: AgentState::Failed,
                 exit_code: None,
                 session_id: captured_session_id,
+                error_reason: Some(format!("wait_failed: {}", e)),
             }
         }
     }
