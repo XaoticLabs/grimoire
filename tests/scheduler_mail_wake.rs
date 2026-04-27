@@ -102,11 +102,20 @@ impl Executor for StubExecutor {
     }
 }
 
-fn seed_complete_with_session(db: &Database, id: &str, session_id: Option<&str>) -> AgentId {
+fn seed_dormant_with_session(db: &Database, id: &str, session_id: Option<&str>) -> AgentId {
+    // After T1, the wake-mail filter requires Dormant agents. A Dormant
+    // agent always has a session_id in production; for the "no session"
+    // negative test we still seed Complete (which is *not* a wake candidate
+    // either, exercising the same skip path).
+    let state = if session_id.is_some() {
+        AgentState::Dormant
+    } else {
+        AgentState::Complete
+    };
     let agent = Agent {
         id: id.to_string(),
         name: None,
-        state: AgentState::Complete,
+        state,
         task: Some("seed".into()),
         model: None,
         provider: Some("claude".into()),
@@ -117,12 +126,18 @@ fn seed_complete_with_session(db: &Database, id: &str, session_id: Option<&str>)
         created_at: Utc::now(),
         updated_at: Utc::now(),
         worker_id: None,
+        restart_policy: grimoire::shared::types::RestartPolicy::Never,
+        restart_count: 0,
     };
     db.insert_agent(&agent).unwrap();
     if let Some(sid) = session_id {
         db.update_agent_session_id(id, sid).unwrap();
     }
     id.to_string()
+}
+
+fn seed_complete_with_session(db: &Database, id: &str, session_id: Option<&str>) -> AgentId {
+    seed_dormant_with_session(db, id, session_id)
 }
 
 fn make_pending_mail(id: &str, recipient: &str, body: &str, wake_eligible: bool) -> Mail {
@@ -264,6 +279,65 @@ async fn invoke_failure_leaves_mail_pending() {
 
     assert_eq!(
         db.get_mail("mailerr1").unwrap().unwrap().state,
+        MailState::Pending
+    );
+}
+
+#[tokio::test]
+async fn dormant_agent_with_pending_mail_is_woken() {
+    let db = Arc::new(Database::open_in_memory().unwrap());
+    let bus = EventBus::new(db.clone());
+    let waker = Arc::new(RecordingWaker::default());
+
+    let agent_id = seed_dormant_with_session(&db, "drmnt001", Some("sess-d"));
+    db.insert_mail(&make_pending_mail("maildrm1", &agent_id, "wakey", true))
+        .unwrap();
+
+    let sched = build_scheduler(db.clone(), bus, waker.clone(), 4);
+    sched.tick_now().await.unwrap();
+
+    let calls = waker.calls.lock().await.clone();
+    assert_eq!(calls.len(), 1);
+    assert_eq!(calls[0].0, agent_id);
+    assert_eq!(calls[0].1, "wakey");
+}
+
+#[tokio::test]
+async fn complete_agent_no_longer_woken_by_mail() {
+    // After T1, the scheduler's mail-wake filter requires Dormant. A pure
+    // Complete agent (even with session_id) is not a wake candidate.
+    let db = Arc::new(Database::open_in_memory().unwrap());
+    let bus = EventBus::new(db.clone());
+    let waker = Arc::new(RecordingWaker::default());
+    let id = "compl001".to_string();
+    let agent = Agent {
+        id: id.clone(),
+        name: None,
+        state: AgentState::Complete, // explicitly NOT Dormant
+        task: Some("seed".into()),
+        model: None,
+        provider: Some("claude".into()),
+        cwd: PathBuf::from("/tmp"),
+        pid: None,
+        session_id: Some("sess-c".into()),
+        exit_code: Some(0),
+        created_at: Utc::now(),
+        updated_at: Utc::now(),
+        worker_id: None,
+        restart_policy: grimoire::shared::types::RestartPolicy::Never,
+        restart_count: 0,
+    };
+    db.insert_agent(&agent).unwrap();
+    db.update_agent_session_id(&id, "sess-c").unwrap();
+    db.insert_mail(&make_pending_mail("compmail1", &id, "x", true))
+        .unwrap();
+
+    let sched = build_scheduler(db.clone(), bus, waker.clone(), 4);
+    sched.tick_now().await.unwrap();
+
+    assert!(waker.calls.lock().await.is_empty());
+    assert_eq!(
+        db.get_mail("compmail1").unwrap().unwrap().state,
         MailState::Pending
     );
 }

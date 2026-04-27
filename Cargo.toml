@@ -47,6 +47,12 @@ tonic = { version = "0.12", features = ["tls", "tls-roots"] }
 prost = "0.13"
 semver = "1"
 
+# Wake-source runtime support
+cron = "0.12"
+notify = "6"
+globset = "0.4"
+walkdir = "2"
+
 [build-dependencies]
 tonic-build = "0.12"
 

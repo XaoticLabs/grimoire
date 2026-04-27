@@ -66,6 +66,13 @@ pub struct DaemonConfig {
     pub log_level: String,
     #[serde(default = "default_max_concurrent")]
     pub max_concurrent_agents: u32,
+    /// Daemon-wide cap on supervisor restarts per minute (token bucket).
+    #[serde(default = "default_restart_rate_per_min")]
+    pub restart_rate_per_min: u32,
+    /// Tree-depth cap for supervisor escalation chains. Not user-configurable
+    /// in v1; exposed for tests.
+    #[serde(default = "default_tree_depth_cap")]
+    pub tree_depth_cap: u32,
 }
 
 impl Default for DaemonConfig {
@@ -75,12 +82,22 @@ impl Default for DaemonConfig {
             socket_path: None,
             log_level: default_log_level(),
             max_concurrent_agents: default_max_concurrent(),
+            restart_rate_per_min: default_restart_rate_per_min(),
+            tree_depth_cap: default_tree_depth_cap(),
         }
     }
 }
 
 fn default_max_concurrent() -> u32 {
     8
+}
+
+fn default_restart_rate_per_min() -> u32 {
+    30
+}
+
+fn default_tree_depth_cap() -> u32 {
+    3
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

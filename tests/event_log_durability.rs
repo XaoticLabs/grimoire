@@ -98,6 +98,8 @@ async fn publish_scenario(bus: &EventBus, db: &Database) {
         created_at: chrono::Utc::now(),
         updated_at: chrono::Utc::now(),
         worker_id: None,
+        restart_policy: grimoire::shared::types::RestartPolicy::Never,
+        restart_count: 0,
     };
     bus.publish(StreamEvent::AgentCreated { agent });
     // 2 more Outputs for "A"

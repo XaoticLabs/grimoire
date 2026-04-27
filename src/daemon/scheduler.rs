@@ -24,6 +24,7 @@ use tracing::{debug, error, warn};
 
 use crate::daemon::event_bus::EventBus;
 use crate::daemon::persistence::{Database, QueueRow};
+use crate::daemon::supervisor::{RestartDispatcher, Supervisor};
 use crate::daemon::worker_registry::WorkerRegistry;
 use crate::shared::protocol::StreamEvent;
 use crate::shared::types::{AgentState, MailState};
@@ -82,6 +83,8 @@ pub struct Scheduler {
     tick_lock: Mutex<()>,
     mail_waker: Option<Arc<dyn MailWaker>>,
     state_lookup: Option<Arc<dyn AgentStateLookup>>,
+    supervisor: Option<Arc<Supervisor>>,
+    restart_dispatcher: Option<Arc<dyn RestartDispatcher>>,
 }
 
 impl Scheduler {
@@ -101,6 +104,8 @@ impl Scheduler {
             tick_lock: Mutex::new(()),
             mail_waker: None,
             state_lookup: None,
+            supervisor: None,
+            restart_dispatcher: None,
         }
     }
 
@@ -114,6 +119,18 @@ impl Scheduler {
     ) -> Self {
         self.mail_waker = Some(waker);
         self.state_lookup = Some(lookup);
+        self
+    }
+
+    /// Wire the supervisor + restart dispatcher. When set, every `tick_now()`
+    /// pulls due restarts from the supervisor's pending heap.
+    pub fn with_supervision(
+        mut self,
+        supervisor: Arc<Supervisor>,
+        dispatcher: Arc<dyn RestartDispatcher>,
+    ) -> Self {
+        self.supervisor = Some(supervisor);
+        self.restart_dispatcher = Some(dispatcher);
         self
     }
 
@@ -133,6 +150,12 @@ impl Scheduler {
         // Mail-wake branch runs before the queue dispatch loop so a wake
         // and a queued dispatch can't race for the same slot.
         in_flight = self.tick_mail_wake(in_flight, cap).await?;
+        if in_flight >= cap {
+            return Ok(());
+        }
+
+        // Supervision branch: drain due pending restarts.
+        in_flight = self.tick_supervision(in_flight, cap).await?;
         if in_flight >= cap {
             return Ok(());
         }
@@ -264,8 +287,41 @@ impl Scheduler {
             StreamEvent::WorkerRegistered { .. } => true,
             StreamEvent::StateChange { new_state, .. } => new_state.is_terminal(),
             StreamEvent::MailReceived { .. } => true,
+            StreamEvent::RestartScheduled { .. } => true,
             _ => false,
         }
+    }
+
+    /// Drain due pending restarts and dispatch them under the cap. Returns
+    /// the updated in-flight count.
+    async fn tick_supervision(&self, mut in_flight: usize, cap: usize) -> Result<usize> {
+        let (sup, dispatcher) = match (&self.supervisor, &self.restart_dispatcher) {
+            (Some(s), Some(d)) => (s, d),
+            _ => return Ok(in_flight),
+        };
+        if in_flight >= cap {
+            return Ok(in_flight);
+        }
+        let now = chrono::Utc::now();
+        let due = sup.drain_due(now).await;
+        for entry in due {
+            if in_flight >= cap {
+                sup.requeue(entry).await;
+                continue;
+            }
+            match dispatcher
+                .restart_dispatch(&entry.agent_id, entry.attempt)
+                .await
+            {
+                Ok(()) => {
+                    in_flight += 1;
+                }
+                Err(e) => {
+                    warn!(agent_id = %entry.agent_id, error = %e, "restart_dispatch failed");
+                }
+            }
+        }
+        Ok(in_flight)
     }
 
     /// Process mail-wake candidates. Returns the updated in-flight count.
@@ -286,8 +342,11 @@ impl Scheduler {
                 Some(s) => s,
                 None => continue,
             };
-            // Only Complete agents with a session_id can be woken.
-            if state_session.0 != AgentState::Complete {
+            // Only Dormant agents with a session_id can be woken. Complete
+            // is the truly-finished state and is no longer a wake candidate;
+            // boot-time migration promotes Complete-with-session agents to
+            // Dormant so existing DBs continue to behave the same way.
+            if state_session.0 != AgentState::Dormant {
                 continue;
             }
             let _session_id = match state_session.1 {

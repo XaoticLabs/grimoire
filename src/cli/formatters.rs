@@ -2,7 +2,29 @@ use chrono::Utc;
 use colored::Colorize;
 
 use crate::shared::protocol::QueueEntry;
-use crate::shared::types::{AgentState, AgentSummary, Mail};
+use crate::shared::types::{Agent, AgentState, AgentSummary, Mail, RestartPolicy};
+
+/// Render an agent's `RESTART` column for `grim circle`.
+/// Shows `<used>/<max>` for `OnFailure`, `-` for `Never`.
+pub fn format_restart_column(agent: &Agent) -> String {
+    match agent.restart_policy {
+        RestartPolicy::Never => "-".to_string(),
+        RestartPolicy::OnFailure => {
+            // We don't have max_restarts on AgentSummary, so this column
+            // shows just the lifetime count. Callers wanting the cap can
+            // call `format_restart_with_cap` with a SupervisionConfig.
+            format!("{}", agent.restart_count)
+        }
+    }
+}
+
+/// Render `<used>/<max>` for an agent given its supervision config.
+pub fn format_restart_with_cap(used: u32, max: Option<u32>) -> String {
+    match max {
+        Some(m) => format!("{}/{}", used, m),
+        None => format!("{}", used),
+    }
+}
 
 pub fn format_state(state: &AgentState) -> String {
     match state {
@@ -12,6 +34,8 @@ pub fn format_state(state: &AgentState) -> String {
         AgentState::Complete => "complete".blue().to_string(),
         AgentState::Failed => "failed".red().to_string(),
         AgentState::Banished => "banished".magenta().to_string(),
+        AgentState::Dormant => "dormant".bright_blue().to_string(),
+        AgentState::Restarting => "restarting".yellow().to_string(),
     }
 }
 
@@ -53,21 +77,23 @@ pub fn format_age(secs: i64) -> String {
 }
 
 pub fn format_circle(agents: &[AgentSummary]) {
+    println!("{}", format_circle_text(agents));
+}
+
+/// Pure text rendering for tests / non-tty consumers.
+pub fn format_circle_text(agents: &[AgentSummary]) -> String {
+    let mut out = String::new();
     if agents.is_empty() {
-        println!("{}", "No agents in the circle.".dimmed());
-        return;
+        out.push_str("No agents in the circle.\n");
+        return out;
     }
 
-    // Header
-    println!(
-        "{:<10} {:<12} {:<8} {:<6} {}",
-        "ID".bold(),
-        "NAME".bold(),
-        "STATE".bold(),
-        "AGE".bold(),
-        "TASK".bold(),
-    );
-    println!("{}", "─".repeat(70).dimmed());
+    out.push_str(&format!(
+        "{:<10} {:<12} {:<10} {:<8} {:<6} {}\n",
+        "ID", "NAME", "STATE", "RESTART", "AGE", "TASK",
+    ));
+    out.push_str(&"-".repeat(70));
+    out.push('\n');
 
     for agent in agents {
         let name = agent
@@ -84,16 +110,23 @@ pub fn format_circle(agents: &[AgentSummary]) {
             .chars()
             .take(35)
             .collect::<String>();
-
-        println!(
-            "{:<10} {:<12} {:<8} {:<6} {}",
-            agent.id.dimmed(),
+        let restart_col = match agent.restart_policy {
+            RestartPolicy::Never => "-".to_string(),
+            RestartPolicy::OnFailure => {
+                format_restart_with_cap(agent.restart_count, agent.max_restarts)
+            }
+        };
+        out.push_str(&format!(
+            "{:<10} {:<12} {:<10} {:<8} {:<6} {}\n",
+            agent.id,
             name,
-            format_state(&agent.state),
-            format_age(agent.age_secs).dimmed(),
+            agent.state.as_str(),
+            restart_col,
+            format_age(agent.age_secs),
             task,
-        );
+        ));
     }
+    out
 }
 
 /// Render a block_reason value into the column shown by `grim queue`.
@@ -129,6 +162,34 @@ pub fn format_queue(entries: &[QueueEntry]) -> String {
             block,
         ));
     }
+    out
+}
+
+/// Render the supervision block shown by `grim status <id>` for an agent
+/// with an active restart policy. Returns an empty string for `Never`.
+pub fn format_status_supervision_block(
+    agent: &Agent,
+    cfg: Option<&crate::shared::types::SupervisionConfig>,
+    escalation_depth: u32,
+) -> String {
+    if agent.restart_policy == RestartPolicy::Never {
+        return String::new();
+    }
+    let mut out = String::new();
+    let max_window = cfg
+        .and_then(|c| c.max_restarts.zip(c.window_secs))
+        .map(|(m, w)| format!("{}/{}s", m, w))
+        .unwrap_or_else(|| "?".into());
+    out.push_str(&format!(
+        "restart-policy: {} ({})\n",
+        agent.restart_policy.as_str(),
+        max_window
+    ));
+    out.push_str(&format!("restart-count: {}\n", agent.restart_count));
+    if let Some(addr) = cfg.and_then(|c| c.escalate_to.as_deref()) {
+        out.push_str(&format!("escalate-to: {}\n", addr));
+    }
+    out.push_str(&format!("escalation-depth: {}\n", escalation_depth));
     out
 }
 
@@ -196,6 +257,7 @@ mod tests {
             AgentState::Complete,
             AgentState::Failed,
             AgentState::Banished,
+            AgentState::Dormant,
         ] {
             assert!(!format_state(&state).is_empty());
         }

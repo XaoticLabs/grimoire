@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
-use super::types::{Agent, AgentEvent, AgentId, AgentState, AgentSummary, Mail, MailState, TaskConflict, TaskState, ScrollId};
+use super::types::{Agent, AgentEvent, AgentId, AgentState, AgentSummary, Mail, MailState, TaskConflict, TaskState, ScrollId, WakeSource};
 
 /// JSON-RPC request from CLI to daemon
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -54,6 +54,19 @@ pub struct SummonParams {
     pub model: Option<String>,
     pub provider: Option<String>,
     pub cwd: Option<PathBuf>,
+    #[serde(default)]
+    pub keep_alive: Option<bool>,
+    /// "never" | "on_failure" (default: never)
+    #[serde(default)]
+    pub restart_policy: Option<String>,
+    #[serde(default)]
+    pub max_restarts: Option<u32>,
+    #[serde(default)]
+    pub restart_window_secs: Option<u32>,
+    /// Address: `agent://<id>` or `topic://<name>`. Reserved sender prefixes
+    /// (`supervisor://`, `wake://`) are rejected at `mail.send`.
+    #[serde(default)]
+    pub escalate_to: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -256,6 +269,52 @@ pub struct MailTopicsResult {
     pub topics: Vec<TopicCount>,
 }
 
+// --- Wake-source params/results ---
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WakeAddParams {
+    pub agent_id: AgentId,
+    pub kind: String,
+    pub config: serde_json::Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WakeAddResult {
+    pub wake_id: String,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct WakeListParams {
+    #[serde(default)]
+    pub agent_id: Option<AgentId>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct WakeListResult {
+    pub sources: Vec<WakeSource>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WakeRemoveParams {
+    pub wake_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WakeRemoveResult {
+    pub success: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WakeTestParams {
+    pub wake_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WakeTestResult {
+    pub success: bool,
+    pub mail_id: String,
+}
+
 // --- Streaming events (sent over bind/SSE) ---
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -331,6 +390,59 @@ pub enum StreamEvent {
         sender_id: Option<AgentId>,
         reason: String,
     },
+    #[serde(rename = "wake_source_registered")]
+    WakeSourceRegistered {
+        wake_id: String,
+        agent_id: AgentId,
+        kind: String,
+    },
+    #[serde(rename = "wake_source_fired")]
+    WakeSourceFired {
+        wake_id: String,
+        agent_id: AgentId,
+        mail_id: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        via: Option<String>,
+    },
+    #[serde(rename = "wake_source_failed")]
+    WakeSourceFailed {
+        wake_id: String,
+        agent_id: AgentId,
+        reason: String,
+    },
+    #[serde(rename = "wake_source_retired")]
+    WakeSourceRetired {
+        wake_id: String,
+        agent_id: AgentId,
+        reason: String,
+    },
+    #[serde(rename = "restart_scheduled")]
+    RestartScheduled {
+        agent_id: AgentId,
+        attempt: u32,
+        max: u32,
+        fire_at_unix: i64,
+        rate_limited: bool,
+    },
+    #[serde(rename = "restarted")]
+    Restarted {
+        agent_id: AgentId,
+        attempt: u32,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        mail_id: Option<String>,
+    },
+    #[serde(rename = "restart_budget_exhausted")]
+    RestartBudgetExhausted {
+        agent_id: AgentId,
+        /// "budget_spent" | "tree_depth_exceeded"
+        reason: String,
+    },
+    #[serde(rename = "escalated")]
+    Escalated {
+        agent_id: AgentId,
+        target: String,
+        fanout_count: u32,
+    },
 }
 
 impl StreamEvent {
@@ -352,6 +464,14 @@ impl StreamEvent {
                 recipient_id,
                 ..
             } => sender_id.as_deref().or(Some(recipient_id.as_str())),
+            Self::WakeSourceRegistered { agent_id, .. }
+            | Self::WakeSourceFired { agent_id, .. }
+            | Self::WakeSourceFailed { agent_id, .. }
+            | Self::WakeSourceRetired { agent_id, .. } => Some(agent_id),
+            Self::RestartScheduled { agent_id, .. }
+            | Self::Restarted { agent_id, .. }
+            | Self::RestartBudgetExhausted { agent_id, .. }
+            | Self::Escalated { agent_id, .. } => Some(agent_id),
             Self::ScrollProgress { .. }
             | Self::TaskStateChange { .. }
             | Self::WorkerRegistered { .. } => None,
@@ -385,6 +505,14 @@ impl StreamEvent {
             Self::MailReceived { .. } => "mail_received",
             Self::MailDelivered { .. } => "mail_delivered",
             Self::MailFailed { .. } => "mail_failed",
+            Self::WakeSourceRegistered { .. } => "wake_source_registered",
+            Self::WakeSourceFired { .. } => "wake_source_fired",
+            Self::WakeSourceFailed { .. } => "wake_source_failed",
+            Self::WakeSourceRetired { .. } => "wake_source_retired",
+            Self::RestartScheduled { .. } => "restart_scheduled",
+            Self::Restarted { .. } => "restarted",
+            Self::RestartBudgetExhausted { .. } => "restart_budget_exhausted",
+            Self::Escalated { .. } => "escalated",
         }
     }
 }
@@ -460,6 +588,8 @@ mod tests {
             created_at: Utc::now(),
             updated_at: Utc::now(),
             worker_id: None,
+            restart_policy: crate::shared::types::RestartPolicy::Never,
+            restart_count: 0,
         };
         assert_eq!(StreamEvent::AgentCreated { agent }.agent_id(), Some("test1234"));
 

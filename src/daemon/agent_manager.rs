@@ -9,7 +9,9 @@ use tracing::{error, info};
 
 use crate::shared::config::Config;
 use crate::shared::protocol::StreamEvent;
-use crate::shared::types::{Agent, AgentId, AgentState, AgentSummary};
+use crate::shared::types::{
+    Agent, AgentId, AgentState, AgentSummary, RestartHistoryOutcome, RestartPolicy,
+};
 
 use super::event_bus::EventBus;
 use super::executor::{ExecuteRequest, Executor, ExecutorHandle, LocalExecutor};
@@ -17,6 +19,8 @@ use super::persistence::{Database, QueueRow};
 use super::process_manager;
 use super::provider_registry::ProviderRegistry;
 use super::scheduler::{Dispatcher, MailWaker};
+use super::supervisor::{RestartDispatcher, Supervisor};
+use super::wake_registry::WakeRegistry;
 
 /// Which queue lane an enqueued agent belongs to. Drives dispatch ordering:
 /// the scheduler drains `Adhoc` before `Scroll` on each tick.
@@ -53,6 +57,12 @@ pub struct AgentManager {
     /// `Arc<Self>`-flavored `dispatch_internal`. Set at construction via
     /// `Arc::new_cyclic`.
     weak_self: Weak<Self>,
+    /// Set by daemon boot once the wake registry exists. Banish cascades
+    /// retire any registered wake sources for the agent.
+    wake_registry: Mutex<Option<Arc<WakeRegistry>>>,
+    /// Set by daemon boot once the supervisor exists. Banish cascades
+    /// cancel any pending restart for the agent and clear supervision config.
+    supervisor: Mutex<Option<Arc<Supervisor>>>,
 }
 
 impl AgentManager {
@@ -91,6 +101,8 @@ impl AgentManager {
             registry,
             executor,
             weak_self: weak.clone(),
+            wake_registry: Mutex::new(None),
+            supervisor: Mutex::new(None),
         });
 
         if let Err(e) = manager.reload_from_db().await {
@@ -126,6 +138,18 @@ impl AgentManager {
         Ok(())
     }
 
+    /// Inject the wake registry — banish cascades retire wake sources
+    /// through it. Called once by daemon boot wiring.
+    pub async fn set_wake_registry(&self, registry: Arc<WakeRegistry>) {
+        *self.wake_registry.lock().await = Some(registry);
+    }
+
+    /// Inject the supervisor — banish cascades cancel pending restarts
+    /// through it. Called once by daemon boot wiring.
+    pub async fn set_supervisor(&self, supervisor: Arc<Supervisor>) {
+        *self.supervisor.lock().await = Some(supervisor);
+    }
+
     /// Resolve an optional caller-provided cwd to a concrete path, falling back
     /// to config defaults and then process cwd.
     pub fn resolve_cwd(&self, cwd: Option<PathBuf>) -> PathBuf {
@@ -148,7 +172,7 @@ impl AgentManager {
         let bus = self.event_bus.clone();
         let manager = self.clone();
         tokio::spawn(async move {
-            let result = match completion.await {
+            let mut result = match completion.await {
                 Ok(r) => r,
                 Err(e) => {
                     error!(agent_id = %agent_id, error = %e, "executor completion task panicked");
@@ -167,8 +191,47 @@ impl AgentManager {
                 }
             }
 
+            // T8: keep-alive agents that complete normally with a session
+            // land in Dormant instead of Complete.
+            if matches!(result.state, AgentState::Complete) {
+                let keep_alive = db.get_keep_alive(&agent_id).unwrap_or(false);
+                if keep_alive {
+                    if result.session_id.is_some() {
+                        result.state = AgentState::Dormant;
+                    } else {
+                        tracing::warn!(
+                            agent_id = %agent_id,
+                            "keep_alive set but no session_id; completing as Complete"
+                        );
+                    }
+                }
+            }
+
             if let Err(e) = db.update_agent_state(&agent_id, &result.state, result.exit_code) {
                 error!(agent_id = %agent_id, error = %e, "Failed to update agent state");
+            }
+
+            // Supervision history reconciliation: if there's a scheduled
+            // history row for this agent, flip it based on the final state.
+            match result.state {
+                AgentState::Complete => {
+                    let n = db
+                        .update_latest_scheduled_outcome(
+                            &agent_id,
+                            RestartHistoryOutcome::Succeeded,
+                        )
+                        .unwrap_or(0);
+                    if n > 0 {
+                        let _ = db.bump_restart_count(&agent_id);
+                    }
+                }
+                AgentState::Failed => {
+                    let _ = db.update_latest_scheduled_outcome(
+                        &agent_id,
+                        RestartHistoryOutcome::FailedAgain,
+                    );
+                }
+                _ => {}
             }
 
             let mut agents = manager.agents.lock().await;
@@ -201,6 +264,21 @@ impl AgentManager {
         cwd: &Path,
         lane: Lane,
     ) -> Result<Agent> {
+        self.enqueue_with_options(task, name, model, provider_name, cwd, lane, false, None)
+            .await
+    }
+
+    pub async fn enqueue_with_options(
+        self: &Arc<Self>,
+        task: &str,
+        name: Option<String>,
+        model: Option<String>,
+        provider_name: Option<String>,
+        cwd: &Path,
+        lane: Lane,
+        keep_alive: bool,
+        supervision: Option<crate::shared::types::SupervisionConfig>,
+    ) -> Result<Agent> {
         let provider_name =
             provider_name.unwrap_or_else(|| self.registry.default_name().to_string());
 
@@ -223,9 +301,18 @@ impl AgentManager {
             created_at: now,
             updated_at: now,
             worker_id: None,
+            restart_policy: RestartPolicy::Never,
+            restart_count: 0,
         };
 
         self.db.insert_agent(&agent)?;
+        if keep_alive {
+            // Persist the flag so completion path can branch later.
+            let _ = self.db.set_keep_alive(&agent.id, true);
+        }
+        if let Some(cfg) = &supervision {
+            let _ = self.db.set_supervision(&agent.id, cfg);
+        }
 
         let row = QueueRow {
             id: agent_id.clone(),
@@ -327,6 +414,8 @@ impl AgentManager {
                         created_at: row.enqueued_at,
                         updated_at: Utc::now(),
                         worker_id: None,
+                        restart_policy: RestartPolicy::Never,
+                        restart_count: 0,
                     },
                     cancel: None,
                     completion_handle: None,
@@ -343,6 +432,84 @@ impl AgentManager {
         Ok(())
     }
 
+    /// Restart-dispatch path. Resumes the agent's session under the same
+    /// `Active` state used by ad-hoc dispatch. Caller (the supervisor +
+    /// scheduler) is responsible for ensuring `agent.state == Restarting`
+    /// before invoking this.
+    pub(crate) async fn restart_dispatch(
+        self: &Arc<Self>,
+        agent_id: &str,
+        attempt: u32,
+    ) -> Result<()> {
+        let agent = self
+            .db
+            .get_agent(agent_id)?
+            .ok_or_else(|| anyhow!("agent not found: {}", agent_id))?;
+        if agent.state != AgentState::Restarting {
+            return Err(anyhow!(
+                "restart_dispatch: agent {} not in Restarting (state: {})",
+                agent_id,
+                agent.state
+            ));
+        }
+        let task = agent.task.clone().unwrap_or_default();
+        let provider_name = agent
+            .provider
+            .clone()
+            .unwrap_or_else(|| self.registry.default_name().to_string());
+        let cwd = agent.cwd.clone();
+        let model = agent.model.clone();
+        let resume_session_id = agent.session_id.clone();
+
+        let req = ExecuteRequest {
+            agent_id: agent_id.to_string(),
+            task,
+            provider_name,
+            cwd,
+            model,
+            resume_session_id,
+        };
+        let handle = self.executor.start(req).await?;
+        let ExecutorHandle {
+            pid,
+            cancel,
+            completion,
+            worker_id: _,
+        } = handle;
+        if let Some(p) = pid {
+            self.db.update_agent_pid(agent_id, p)?;
+        }
+        self.db
+            .update_agent_state(agent_id, &AgentState::Active, None)?;
+        self.event_bus.publish(StreamEvent::StateChange {
+            agent_id: agent_id.to_string(),
+            old_state: AgentState::Restarting,
+            new_state: AgentState::Active,
+        });
+        let completion_handle = self.watch_completion(agent_id.to_string(), completion);
+        {
+            let mut agents = self.agents.lock().await;
+            let managed = agents
+                .entry(agent_id.to_string())
+                .or_insert_with(|| ManagedAgent {
+                    agent: agent.clone(),
+                    cancel: None,
+                    completion_handle: None,
+                });
+            managed.agent.state = AgentState::Active;
+            managed.agent.pid = pid;
+            managed.cancel = Some(cancel);
+            managed.completion_handle = Some(completion_handle);
+        }
+        self.event_bus.publish(StreamEvent::Restarted {
+            agent_id: agent_id.to_string(),
+            attempt,
+            mail_id: None,
+        });
+        info!(id = %agent_id, attempt = attempt, "Agent restarted");
+        Ok(())
+    }
+
     pub async fn invoke(
         self: &Arc<Self>,
         id: &str,
@@ -355,10 +522,11 @@ impl AgentManager {
                 .get(id)
                 .ok_or_else(|| anyhow!("Agent not found: {}", id))?;
 
-            if managed.agent.state == AgentState::Queued {
+            if managed.agent.state != AgentState::Dormant {
                 return Err(anyhow!(
-                    "Agent {} has not started yet (state: queued)",
-                    id
+                    "Agent {} is not dormant (state: {})",
+                    id,
+                    managed.agent.state
                 ));
             }
 
@@ -396,7 +564,7 @@ impl AgentManager {
 
         self.event_bus.publish(StreamEvent::StateChange {
             agent_id: id.to_string(),
-            old_state: AgentState::Complete,
+            old_state: AgentState::Dormant,
             new_state: AgentState::Active,
         });
 
@@ -444,6 +612,29 @@ impl AgentManager {
     }
 
     pub async fn banish(&self, id: &str) -> Result<bool> {
+        let result = self.banish_inner(id).await?;
+        if result {
+            // Cascade: retire wake sources after the state flip. Errors are
+            // logged but don't fail the banish (banish must always succeed).
+            if let Some(reg) = self.wake_registry.lock().await.clone() {
+                if let Err(e) = reg.retire_for_agent(id).await {
+                    tracing::warn!(agent_id = %id, error = %e, "wake source retire on banish failed");
+                }
+            }
+            // Cascade: cancel any pending restart and clear supervision.
+            if let Some(sup) = self.supervisor.lock().await.clone() {
+                if let Err(e) = sup.cancel_pending(id).await {
+                    tracing::warn!(agent_id = %id, error = %e, "supervisor cancel_pending on banish failed");
+                }
+            }
+            if let Err(e) = self.db.clear_supervision(id) {
+                tracing::warn!(agent_id = %id, error = %e, "clear_supervision on banish failed");
+            }
+        }
+        Ok(result)
+    }
+
+    async fn banish_inner(&self, id: &str) -> Result<bool> {
         let mut agents = self.agents.lock().await;
         let Some(managed) = agents.get_mut(id) else {
             return Ok(false);
@@ -493,27 +684,62 @@ impl AgentManager {
                 info!(id = %id, "Agent banished");
                 Ok(true)
             }
-            _ => Ok(false),
+            AgentState::Dormant => {
+                // No live process — just retire the agent.
+                managed.agent.state = AgentState::Banished;
+                self.db
+                    .update_agent_state(id, &AgentState::Banished, None)?;
+                self.event_bus.publish(StreamEvent::StateChange {
+                    agent_id: id.to_string(),
+                    old_state: AgentState::Dormant,
+                    new_state: AgentState::Banished,
+                });
+                info!(id = %id, "Dormant agent banished");
+                Ok(true)
+            }
+            AgentState::Restarting => {
+                // No live process and no executor handle — supervisor's
+                // pending heap is cancelled by the outer cascade.
+                managed.agent.state = AgentState::Banished;
+                self.db
+                    .update_agent_state(id, &AgentState::Banished, None)?;
+                self.event_bus.publish(StreamEvent::StateChange {
+                    agent_id: id.to_string(),
+                    old_state: AgentState::Restarting,
+                    new_state: AgentState::Banished,
+                });
+                info!(id = %id, "Restarting agent banished");
+                Ok(true)
+            }
+            AgentState::Complete | AgentState::Failed | AgentState::Banished => Ok(false),
         }
     }
 
     pub async fn circle(&self, state_filter: Option<&str>) -> Result<Vec<AgentSummary>> {
         let agents = self.db.list_agents(state_filter)?;
         let now = Utc::now();
-        Ok(agents
-            .into_iter()
-            .map(|a| {
-                let age = now.signed_duration_since(a.created_at).num_seconds();
-                AgentSummary {
-                    id: a.id,
-                    name: a.name,
-                    state: a.state,
-                    task: a.task,
-                    age_secs: age,
-                    worker_id: a.worker_id,
-                }
-            })
-            .collect())
+        let mut out = Vec::with_capacity(agents.len());
+        for a in agents {
+            let age = now.signed_duration_since(a.created_at).num_seconds();
+            let max_restarts = self
+                .db
+                .get_supervision(&a.id)
+                .ok()
+                .flatten()
+                .and_then(|c| c.max_restarts);
+            out.push(AgentSummary {
+                id: a.id,
+                name: a.name,
+                state: a.state,
+                task: a.task,
+                age_secs: age,
+                worker_id: a.worker_id,
+                restart_policy: a.restart_policy,
+                restart_count: a.restart_count,
+                max_restarts,
+            });
+        }
+        Ok(out)
     }
 
     pub async fn get_agent(&self, id: &str) -> Result<Option<Agent>> {
@@ -539,7 +765,9 @@ impl AgentManager {
     }
 
     /// Test helper: insert an agent with a known session_id so `invoke` can be
-    /// driven without a prior real `summon`.
+    /// driven without a prior real `summon`. Agents are seeded as `Dormant`
+    /// (the post-completion-with-session state introduced by Task 1) so the
+    /// invoke path matches production semantics.
     pub async fn seed_agent_for_test_with_session(
         self: &Arc<Self>,
         session_id: &str,
@@ -549,7 +777,7 @@ impl AgentManager {
         let agent = Agent {
             id: agent_id.clone(),
             name: None,
-            state: AgentState::Complete,
+            state: AgentState::Dormant,
             task: Some("seed".to_string()),
             model: None,
             provider: Some(self.registry.default_name().to_string()),
@@ -560,6 +788,8 @@ impl AgentManager {
             created_at: now,
             updated_at: now,
             worker_id: None,
+            restart_policy: RestartPolicy::Never,
+            restart_count: 0,
         };
         self.db.insert_agent(&agent)?;
         self.db.update_agent_session_id(&agent_id, session_id)?;
@@ -595,5 +825,16 @@ impl MailWaker for AgentManager {
             .upgrade()
             .ok_or_else(|| anyhow!("agent manager has been dropped"))?;
         arc.invoke(agent_id, prompt, None).await
+    }
+}
+
+#[async_trait]
+impl RestartDispatcher for AgentManager {
+    async fn restart_dispatch(&self, agent_id: &str, attempt: u32) -> Result<()> {
+        let arc = self
+            .weak_self
+            .upgrade()
+            .ok_or_else(|| anyhow!("agent manager has been dropped"))?;
+        arc.restart_dispatch(agent_id, attempt).await
     }
 }

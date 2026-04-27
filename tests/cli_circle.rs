@@ -4,7 +4,7 @@
 // formatter helper not yet implemented.
 
 use grimoire::cli::formatters;
-use grimoire::shared::types::{AgentState, AgentSummary};
+use grimoire::shared::types::{AgentState, AgentSummary, RestartPolicy};
 
 fn summary(id: &str, worker_id: Option<&str>) -> AgentSummary {
     AgentSummary {
@@ -14,6 +14,9 @@ fn summary(id: &str, worker_id: Option<&str>) -> AgentSummary {
         task: Some("noop".into()),
         age_secs: 0,
         worker_id: worker_id.map(|s| s.to_string()),
+        restart_policy: RestartPolicy::Never,
+        restart_count: 0,
+        max_restarts: None,
     }
 }
 

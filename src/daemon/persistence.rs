@@ -6,8 +6,10 @@ use std::sync::Mutex;
 
 use crate::shared::protocol::StreamEvent;
 use crate::shared::types::{
-    Agent, AgentEvent, AgentId, AgentState, Mail, MailState, Pact, PactState, Scroll,
-    ScrollState, Subscription, Task, TaskId, TaskState,
+    Agent, AgentEvent, AgentId, AgentState, Mail, MailState, Pact, PactState,
+    RestartHistoryOutcome, RestartPolicy, Scroll, ScrollState, Subscription,
+    SupervisionConfig, Task, TaskId, TaskState, WakeSource, WakeSourceKind,
+    WakeSourceState,
 };
 
 /// One row in the `task_queue` table — work that has been requested but not
@@ -228,8 +230,101 @@ impl Database {
                 UNIQUE (subscriber_id, topic)
             );
             CREATE INDEX IF NOT EXISTS subs_by_topic ON subscriptions (topic);
+
+            CREATE TABLE IF NOT EXISTS wake_sources (
+                id              TEXT PRIMARY KEY,
+                agent_id        TEXT NOT NULL,
+                kind            TEXT NOT NULL,
+                config_json     TEXT NOT NULL,
+                state           TEXT NOT NULL,
+                fail_reason     TEXT,
+                last_fired_at   INTEGER,
+                fire_count      INTEGER NOT NULL DEFAULT 0,
+                created_at      INTEGER NOT NULL,
+                FOREIGN KEY(agent_id) REFERENCES agents(id)
+            );
+            CREATE INDEX IF NOT EXISTS wake_sources_by_agent ON wake_sources(agent_id);
+            CREATE INDEX IF NOT EXISTS wake_sources_armed
+                ON wake_sources(state) WHERE state = 'armed';
+
+            CREATE TABLE IF NOT EXISTS wake_rate_limits (
+                agent_id        TEXT PRIMARY KEY,
+                tokens          REAL NOT NULL,
+                last_refill_at  INTEGER NOT NULL,
+                capacity        INTEGER NOT NULL DEFAULT 60,
+                refill_per_sec  REAL NOT NULL DEFAULT 0.01666666,
+                FOREIGN KEY(agent_id) REFERENCES agents(id)
+            );
+
+            CREATE TABLE IF NOT EXISTS restart_history (
+                id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                agent_id        TEXT NOT NULL REFERENCES agents(id),
+                attempted_at    INTEGER NOT NULL,
+                outcome         TEXT NOT NULL,
+                error_summary   TEXT
+            );
+            CREATE INDEX IF NOT EXISTS restart_history_by_agent_window
+                ON restart_history(agent_id, attempted_at);
+            CREATE INDEX IF NOT EXISTS restart_history_by_time
+                ON restart_history(attempted_at);
             ",
         )?;
+
+        // Migration: add keep_alive column if missing (Task 8 — additive,
+        // landed in this migration block so a fresh DB and an upgraded DB
+        // both end up with the column present).
+        let has_keep_alive: bool = conn
+            .prepare("SELECT keep_alive FROM agents LIMIT 0")
+            .is_ok();
+        if !has_keep_alive {
+            conn.execute_batch(
+                "ALTER TABLE agents ADD COLUMN keep_alive INTEGER NOT NULL DEFAULT 0;",
+            )?;
+        }
+
+        // Supervision columns (Task 1 of supervision-trees).
+        let has_restart_policy: bool = conn
+            .prepare("SELECT restart_policy FROM agents LIMIT 0")
+            .is_ok();
+        if !has_restart_policy {
+            conn.execute_batch(
+                "ALTER TABLE agents ADD COLUMN restart_policy TEXT NOT NULL DEFAULT 'never';",
+            )?;
+        }
+        let has_max_restarts: bool = conn
+            .prepare("SELECT max_restarts FROM agents LIMIT 0")
+            .is_ok();
+        if !has_max_restarts {
+            conn.execute_batch("ALTER TABLE agents ADD COLUMN max_restarts INTEGER;")?;
+        }
+        let has_window_secs: bool = conn
+            .prepare("SELECT restart_window_secs FROM agents LIMIT 0")
+            .is_ok();
+        if !has_window_secs {
+            conn.execute_batch("ALTER TABLE agents ADD COLUMN restart_window_secs INTEGER;")?;
+        }
+        let has_escalate_to: bool = conn
+            .prepare("SELECT escalate_to FROM agents LIMIT 0")
+            .is_ok();
+        if !has_escalate_to {
+            conn.execute_batch("ALTER TABLE agents ADD COLUMN escalate_to TEXT;")?;
+        }
+        let has_restart_count: bool = conn
+            .prepare("SELECT restart_count FROM agents LIMIT 0")
+            .is_ok();
+        if !has_restart_count {
+            conn.execute_batch(
+                "ALTER TABLE agents ADD COLUMN restart_count INTEGER NOT NULL DEFAULT 0;",
+            )?;
+        }
+        let has_escalation_depth: bool = conn
+            .prepare("SELECT escalation_depth FROM agents LIMIT 0")
+            .is_ok();
+        if !has_escalation_depth {
+            conn.execute_batch(
+                "ALTER TABLE agents ADD COLUMN escalation_depth INTEGER NOT NULL DEFAULT 0;",
+            )?;
+        }
 
         Ok(())
     }
@@ -344,7 +439,7 @@ impl Database {
     pub fn get_agent(&self, id: &str) -> Result<Option<Agent>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, name, state, task, model, provider, cwd, pid, session_id, exit_code, created_at, updated_at, worker_id
+            "SELECT id, name, state, task, model, provider, cwd, pid, session_id, exit_code, created_at, updated_at, worker_id, restart_policy, restart_count
              FROM agents WHERE id = ?1",
         )?;
         let mut rows = stmt.query(params![id])?;
@@ -357,9 +452,9 @@ impl Database {
     pub fn list_agents(&self, state_filter: Option<&str>) -> Result<Vec<Agent>> {
         let conn = self.conn.lock().unwrap();
         let query = match state_filter {
-            Some(_) => "SELECT id, name, state, task, model, provider, cwd, pid, session_id, exit_code, created_at, updated_at, worker_id
+            Some(_) => "SELECT id, name, state, task, model, provider, cwd, pid, session_id, exit_code, created_at, updated_at, worker_id, restart_policy, restart_count
                         FROM agents WHERE state = ?1 ORDER BY created_at DESC",
-            None => "SELECT id, name, state, task, model, provider, cwd, pid, session_id, exit_code, created_at, updated_at, worker_id
+            None => "SELECT id, name, state, task, model, provider, cwd, pid, session_id, exit_code, created_at, updated_at, worker_id, restart_policy, restart_count
                      FROM agents ORDER BY created_at DESC",
         };
         let mut stmt = conn.prepare(query)?;
@@ -927,6 +1022,257 @@ impl Database {
         })
     }
 
+    // --- Wake source methods ---
+
+    pub fn insert_wake_source(&self, src: &WakeSource) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO wake_sources \
+                (id, agent_id, kind, config_json, state, fail_reason, last_fired_at, fire_count, created_at) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            params![
+                src.id,
+                src.agent_id,
+                src.kind.as_str(),
+                src.config_json,
+                src.state.as_str(),
+                src.fail_reason,
+                src.last_fired_at,
+                src.fire_count,
+                src.created_at,
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn get_wake_source(&self, id: &str) -> Result<Option<WakeSource>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT id, agent_id, kind, config_json, state, fail_reason, last_fired_at, fire_count, created_at \
+             FROM wake_sources WHERE id = ?1",
+        )?;
+        let mut rows = stmt.query(params![id])?;
+        match rows.next()? {
+            Some(row) => Ok(Some(row_to_wake_source(row)?)),
+            None => Ok(None),
+        }
+    }
+
+    pub fn list_wake_sources_for_agent(&self, agent_id: &str) -> Result<Vec<WakeSource>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT id, agent_id, kind, config_json, state, fail_reason, last_fired_at, fire_count, created_at \
+             FROM wake_sources WHERE agent_id = ?1 ORDER BY created_at DESC, id ASC",
+        )?;
+        let mut rows = stmt.query(params![agent_id])?;
+        let mut out = Vec::new();
+        while let Some(row) = rows.next()? {
+            out.push(row_to_wake_source(row)?);
+        }
+        Ok(out)
+    }
+
+    pub fn list_all_wake_sources(&self) -> Result<Vec<WakeSource>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT id, agent_id, kind, config_json, state, fail_reason, last_fired_at, fire_count, created_at \
+             FROM wake_sources ORDER BY created_at DESC, agent_id ASC, id ASC",
+        )?;
+        let mut rows = stmt.query([])?;
+        let mut out = Vec::new();
+        while let Some(row) = rows.next()? {
+            out.push(row_to_wake_source(row)?);
+        }
+        Ok(out)
+    }
+
+    pub fn list_armed_wake_sources(&self) -> Result<Vec<WakeSource>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT id, agent_id, kind, config_json, state, fail_reason, last_fired_at, fire_count, created_at \
+             FROM wake_sources WHERE state = 'armed' ORDER BY created_at ASC",
+        )?;
+        let mut rows = stmt.query([])?;
+        let mut out = Vec::new();
+        while let Some(row) = rows.next()? {
+            out.push(row_to_wake_source(row)?);
+        }
+        Ok(out)
+    }
+
+    pub fn delete_wake_source(&self, id: &str) -> Result<bool> {
+        let conn = self.conn.lock().unwrap();
+        let n = conn.execute("DELETE FROM wake_sources WHERE id = ?1", params![id])?;
+        Ok(n > 0)
+    }
+
+    pub fn delete_wake_sources_for_agent(&self, agent_id: &str) -> Result<usize> {
+        let conn = self.conn.lock().unwrap();
+        let n = conn.execute(
+            "DELETE FROM wake_sources WHERE agent_id = ?1",
+            params![agent_id],
+        )?;
+        Ok(n)
+    }
+
+    pub fn update_wake_source_state(
+        &self,
+        id: &str,
+        state: WakeSourceState,
+        fail_reason: Option<&str>,
+    ) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE wake_sources SET state = ?1, fail_reason = ?2 WHERE id = ?3",
+            params![state.as_str(), fail_reason, id],
+        )?;
+        Ok(())
+    }
+
+    /// Increment `fire_count` and set `last_fired_at`.
+    pub fn bump_wake_source_fire(&self, id: &str, last_fired_at: i64) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE wake_sources \
+             SET fire_count = fire_count + 1, last_fired_at = ?1 \
+             WHERE id = ?2",
+            params![last_fired_at, id],
+        )?;
+        Ok(())
+    }
+
+    /// Per-agent token-bucket row used by the rate limiter (Task 6).
+    /// Returns `(tokens, last_refill_at, capacity, refill_per_sec)`. If the
+    /// row doesn't exist yet, it is created at full capacity.
+    pub fn get_or_init_rate_limit(
+        &self,
+        agent_id: &str,
+        now: i64,
+    ) -> Result<(f64, i64, i64, f64)> {
+        let mut conn = self.conn.lock().unwrap();
+        let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        let row: Option<(f64, i64, i64, f64)> = tx
+            .query_row(
+                "SELECT tokens, last_refill_at, capacity, refill_per_sec \
+                 FROM wake_rate_limits WHERE agent_id = ?1",
+                params![agent_id],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+            )
+            .ok();
+        let result = if let Some(r) = row {
+            r
+        } else {
+            // Defaults: 60 tokens, 60-per-hour refill.
+            let capacity: i64 = 60;
+            let refill: f64 = 60.0 / 3600.0;
+            tx.execute(
+                "INSERT INTO wake_rate_limits (agent_id, tokens, last_refill_at, capacity, refill_per_sec) \
+                 VALUES (?1, ?2, ?3, ?4, ?5)",
+                params![agent_id, capacity as f64, now, capacity, refill],
+            )?;
+            (capacity as f64, now, capacity, refill)
+        };
+        tx.commit()?;
+        Ok(result)
+    }
+
+    pub fn update_rate_limit_tokens(
+        &self,
+        agent_id: &str,
+        tokens: f64,
+        last_refill_at: i64,
+    ) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE wake_rate_limits SET tokens = ?1, last_refill_at = ?2 WHERE agent_id = ?3",
+            params![tokens, last_refill_at, agent_id],
+        )?;
+        Ok(())
+    }
+
+    pub fn set_rate_limit_capacity(
+        &self,
+        agent_id: &str,
+        capacity: i64,
+        refill_per_sec: f64,
+        now: i64,
+    ) -> Result<()> {
+        let mut conn = self.conn.lock().unwrap();
+        let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        let exists: i64 = tx
+            .query_row(
+                "SELECT COUNT(*) FROM wake_rate_limits WHERE agent_id = ?1",
+                params![agent_id],
+                |r| r.get(0),
+            )
+            .unwrap_or(0);
+        if exists == 0 {
+            tx.execute(
+                "INSERT INTO wake_rate_limits (agent_id, tokens, last_refill_at, capacity, refill_per_sec) \
+                 VALUES (?1, ?2, ?3, ?4, ?5)",
+                params![agent_id, capacity as f64, now, capacity, refill_per_sec],
+            )?;
+        } else {
+            tx.execute(
+                "UPDATE wake_rate_limits SET capacity = ?1, refill_per_sec = ?2 WHERE agent_id = ?3",
+                params![capacity, refill_per_sec, agent_id],
+            )?;
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    // --- keep_alive flag ---
+
+    pub fn get_keep_alive(&self, agent_id: &str) -> Result<bool> {
+        let conn = self.conn.lock().unwrap();
+        let v: i64 = conn.query_row(
+            "SELECT keep_alive FROM agents WHERE id = ?1",
+            params![agent_id],
+            |r| r.get(0),
+        )?;
+        Ok(v != 0)
+    }
+
+    pub fn set_keep_alive(&self, agent_id: &str, keep_alive: bool) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE agents SET keep_alive = ?1 WHERE id = ?2",
+            params![if keep_alive { 1i64 } else { 0i64 }, agent_id],
+        )?;
+        Ok(())
+    }
+
+    /// Promote `Complete` agents that still have a `session_id` to `Dormant`.
+    /// Idempotent: replays are no-ops because the WHERE clause filters
+    /// already-Dormant rows. Returns the IDs that flipped, so the caller can
+    /// emit `StateChange { Complete -> Dormant }` events for each.
+    pub fn migrate_dormant_agents(&self) -> Result<Vec<AgentId>> {
+        let mut conn = self.conn.lock().unwrap();
+        let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+
+        let ids: Vec<AgentId> = {
+            let mut stmt = tx.prepare(
+                "SELECT id FROM agents \
+                 WHERE state = 'complete' AND session_id IS NOT NULL",
+            )?;
+            let rows = stmt.query_map([], |row| row.get::<_, String>(0))?;
+            rows.filter_map(|r| r.ok()).collect()
+        };
+
+        if !ids.is_empty() {
+            let now = Utc::now().to_rfc3339();
+            tx.execute(
+                "UPDATE agents SET state = 'dormant', updated_at = ?1 \
+                 WHERE state = 'complete' AND session_id IS NOT NULL",
+                params![now],
+            )?;
+        }
+
+        tx.commit()?;
+        Ok(ids)
+    }
+
     /// Number of rows currently in `task_queue`.
     pub fn count_queued(&self) -> Result<usize> {
         let conn = self.conn.lock().unwrap();
@@ -1262,6 +1608,231 @@ impl Database {
         Ok(out)
     }
 
+    // --- Supervision methods ---
+
+    pub fn set_supervision(
+        &self,
+        agent_id: &str,
+        cfg: &SupervisionConfig,
+    ) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE agents SET restart_policy = ?1, max_restarts = ?2, \
+             restart_window_secs = ?3, escalate_to = ?4 WHERE id = ?5",
+            params![
+                cfg.policy.as_str(),
+                cfg.max_restarts,
+                cfg.window_secs,
+                cfg.escalate_to,
+                agent_id,
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn get_supervision(&self, agent_id: &str) -> Result<Option<SupervisionConfig>> {
+        let conn = self.conn.lock().unwrap();
+        let row: Option<(String, Option<u32>, Option<u32>, Option<String>)> = conn
+            .query_row(
+                "SELECT restart_policy, max_restarts, restart_window_secs, escalate_to \
+                 FROM agents WHERE id = ?1",
+                params![agent_id],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+            )
+            .ok();
+        Ok(row.map(|(policy, max, window, esc)| SupervisionConfig {
+            policy: policy.parse().unwrap_or(RestartPolicy::Never),
+            max_restarts: max,
+            window_secs: window,
+            escalate_to: esc,
+        }))
+    }
+
+    pub fn clear_supervision(&self, agent_id: &str) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE agents SET restart_policy = 'never', max_restarts = NULL, \
+             restart_window_secs = NULL, escalate_to = NULL WHERE id = ?1",
+            params![agent_id],
+        )?;
+        Ok(())
+    }
+
+    pub fn bump_restart_count(&self, agent_id: &str) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE agents SET restart_count = restart_count + 1 WHERE id = ?1",
+            params![agent_id],
+        )?;
+        Ok(())
+    }
+
+    pub fn get_escalation_depth(&self, agent_id: &str) -> Result<u32> {
+        let conn = self.conn.lock().unwrap();
+        let v: i64 = conn
+            .query_row(
+                "SELECT escalation_depth FROM agents WHERE id = ?1",
+                params![agent_id],
+                |r| r.get(0),
+            )
+            .unwrap_or(0);
+        Ok(v.max(0) as u32)
+    }
+
+    pub fn set_escalation_depth(&self, agent_id: &str, depth: u32) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE agents SET escalation_depth = ?1 WHERE id = ?2",
+            params![depth as i64, agent_id],
+        )?;
+        Ok(())
+    }
+
+    pub fn insert_restart_history_row(
+        &self,
+        agent_id: &str,
+        attempted_at: i64,
+        outcome: RestartHistoryOutcome,
+        error_summary: Option<&str>,
+    ) -> Result<i64> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO restart_history (agent_id, attempted_at, outcome, error_summary) \
+             VALUES (?1, ?2, ?3, ?4)",
+            params![agent_id, attempted_at, outcome.as_str(), error_summary],
+        )?;
+        Ok(conn.last_insert_rowid())
+    }
+
+    pub fn count_restarts_in_window(
+        &self,
+        agent_id: &str,
+        window_start: i64,
+    ) -> Result<u32> {
+        let conn = self.conn.lock().unwrap();
+        let n: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM restart_history \
+             WHERE agent_id = ?1 AND attempted_at >= ?2 \
+             AND outcome IN ('scheduled','failed_again')",
+            params![agent_id, window_start],
+            |r| r.get(0),
+        )?;
+        Ok(n.max(0) as u32)
+    }
+
+    /// Update the most recent `restart_history` row for `agent_id` whose
+    /// `outcome = 'scheduled'`. Returns the number of rows updated.
+    pub fn update_latest_scheduled_outcome(
+        &self,
+        agent_id: &str,
+        new_outcome: RestartHistoryOutcome,
+    ) -> Result<usize> {
+        let conn = self.conn.lock().unwrap();
+        let n = conn.execute(
+            "UPDATE restart_history SET outcome = ?1 \
+             WHERE id = (SELECT id FROM restart_history \
+                         WHERE agent_id = ?2 AND outcome = 'scheduled' \
+                         ORDER BY attempted_at DESC, id DESC LIMIT 1)",
+            params![new_outcome.as_str(), agent_id],
+        )?;
+        Ok(n)
+    }
+
+    /// Time of the most recent `restart_history` row for `agent_id`, or `None`.
+    pub fn latest_restart_history_attempted_at(
+        &self,
+        agent_id: &str,
+    ) -> Result<Option<i64>> {
+        let conn = self.conn.lock().unwrap();
+        let v: Option<i64> = conn
+            .query_row(
+                "SELECT MAX(attempted_at) FROM restart_history WHERE agent_id = ?1",
+                params![agent_id],
+                |r| r.get::<_, Option<i64>>(0),
+            )
+            .ok()
+            .flatten();
+        Ok(v)
+    }
+
+    pub fn list_failed_with_active_policy(&self) -> Result<Vec<AgentId>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT id FROM agents \
+             WHERE state = 'failed' AND restart_policy != 'never'",
+        )?;
+        let mut rows = stmt.query([])?;
+        let mut out = Vec::new();
+        while let Some(row) = rows.next()? {
+            out.push(row.get::<_, String>(0)?);
+        }
+        Ok(out)
+    }
+
+    pub fn mark_torn_restarting_as_failed(&self) -> Result<Vec<AgentId>> {
+        let mut conn = self.conn.lock().unwrap();
+        let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        let ids: Vec<AgentId> = {
+            let mut stmt = tx.prepare("SELECT id FROM agents WHERE state = 'restarting'")?;
+            let rows = stmt.query_map([], |row| row.get::<_, String>(0))?;
+            rows.filter_map(|r| r.ok()).collect()
+        };
+        if !ids.is_empty() {
+            let now = Utc::now().to_rfc3339();
+            tx.execute(
+                "UPDATE agents SET state = 'failed', updated_at = ?1 WHERE state = 'restarting'",
+                params![now],
+            )?;
+        }
+        tx.commit()?;
+        Ok(ids)
+    }
+
+    /// Return `true` if there is an `Escalated` event for `agent_id` whose
+    /// row id is later than the latest `restart_history` row for the agent.
+    /// Used by boot replay to skip re-escalation.
+    pub fn has_escalated_event_after_latest_history(
+        &self,
+        agent_id: &str,
+    ) -> Result<bool> {
+        let conn = self.conn.lock().unwrap();
+        // Find the latest restart_history attempted_at; we'll compare to the
+        // event's `ts` (RFC3339 string). For determinism we lookup the most
+        // recent event by id rather than timestamp.
+        let latest_history_ts: Option<String> = conn
+            .query_row(
+                "SELECT MAX(attempted_at) FROM restart_history WHERE agent_id = ?1",
+                params![agent_id],
+                |r| r.get::<_, Option<i64>>(0),
+            )
+            .ok()
+            .flatten()
+            .map(|t| {
+                chrono::DateTime::<Utc>::from_timestamp(t, 0)
+                    .unwrap_or_else(Utc::now)
+                    .to_rfc3339()
+            });
+        let n: i64 = match latest_history_ts {
+            Some(ts) => conn
+                .query_row(
+                    "SELECT COUNT(*) FROM events \
+                     WHERE agent_id = ?1 AND kind = 'escalated' AND ts > ?2",
+                    params![agent_id, ts],
+                    |r| r.get(0),
+                )
+                .unwrap_or(0),
+            None => conn
+                .query_row(
+                    "SELECT COUNT(*) FROM events \
+                     WHERE agent_id = ?1 AND kind = 'escalated'",
+                    params![agent_id],
+                    |r| r.get(0),
+                )
+                .unwrap_or(0),
+        };
+        Ok(n > 0)
+    }
+
     /// Get all dependency edges for a scroll (for cycle detection)
     pub fn get_all_dependencies_for_scroll(&self, scroll_id: &str) -> Result<Vec<(TaskId, TaskId)>> {
         let conn = self.conn.lock().unwrap();
@@ -1383,11 +1954,30 @@ fn row_to_queue_row(row: &rusqlite::Row) -> Result<QueueRow> {
     })
 }
 
+fn row_to_wake_source(row: &rusqlite::Row) -> Result<WakeSource> {
+    let kind_str: String = row.get(2)?;
+    let state_str: String = row.get(4)?;
+    Ok(WakeSource {
+        id: row.get(0)?,
+        agent_id: row.get(1)?,
+        kind: kind_str.parse().unwrap_or(WakeSourceKind::Cron),
+        config_json: row.get(3)?,
+        state: state_str.parse().unwrap_or(WakeSourceState::Failed),
+        fail_reason: row.get(5)?,
+        last_fired_at: row.get(6)?,
+        fire_count: row.get(7)?,
+        created_at: row.get(8)?,
+    })
+}
+
 fn row_to_agent(row: &rusqlite::Row) -> Result<Agent> {
     let state_str: String = row.get(2)?;
     let cwd_str: String = row.get(6)?;
     let created_str: String = row.get(10)?;
     let updated_str: String = row.get(11)?;
+    let policy_str: String = row.get::<_, Option<String>>(13)?
+        .unwrap_or_else(|| "never".to_string());
+    let restart_count: i64 = row.get::<_, Option<i64>>(14)?.unwrap_or(0);
 
     Ok(Agent {
         id: row.get(0)?,
@@ -1403,6 +1993,8 @@ fn row_to_agent(row: &rusqlite::Row) -> Result<Agent> {
         created_at: parse_timestamp(&created_str)?,
         updated_at: parse_timestamp(&updated_str)?,
         worker_id: row.get::<_, Option<String>>(12)?,
+        restart_policy: policy_str.parse().unwrap_or(RestartPolicy::Never),
+        restart_count: restart_count.max(0) as u32,
     })
 }
 
@@ -1431,6 +2023,8 @@ mod tests {
             created_at: Utc::now(),
             updated_at: Utc::now(),
             worker_id: None,
+            restart_policy: RestartPolicy::Never,
+            restart_count: 0,
         }
     }
 

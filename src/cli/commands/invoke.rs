@@ -3,11 +3,19 @@ use colored::Colorize;
 
 use crate::cli::client::DaemonClient;
 
+/// `grim invoke` is now a thin wrapper over `mail.send --wake-eligible`. The
+/// scheduler's mail-wake path (T1) picks the message up and resumes any
+/// Dormant agent at the recipient address.
 pub async fn run(id: String, message: String) -> Result<()> {
     let mut client = DaemonClient::connect().await?;
 
-    let params = serde_json::json!({ "id": id, "message": message });
-    let response = client.call("agent.invoke", params).await?;
+    let to = format!("agent://{}", id);
+    let params = serde_json::json!({
+        "to": to,
+        "body": message,
+        "wake_eligible": true,
+    });
+    let response = client.call("mail.send", params).await?;
 
     if let Some(error) = response.error {
         eprintln!("{} {}", "Error:".red(), error.message);
@@ -15,7 +23,7 @@ pub async fn run(id: String, message: String) -> Result<()> {
     }
 
     println!(
-        "{} Invoked agent {} with new message",
+        "{} Invoked agent {} (queued via mail-wake)",
         "✓".green(),
         id.bold(),
     );

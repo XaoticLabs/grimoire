@@ -338,16 +338,20 @@ async fn invoke_queued_returns_error_with_clear_message() {
         .await
         .expect_err("invoke on Queued must error");
     let msg = err.to_string();
+    // After Task 1, invoke requires Dormant; a Queued agent now reports
+    // "is not dormant (state: queued)". Either phrasing is acceptable.
     assert!(
-        msg.contains("has not started"),
-        "error message must contain 'has not started', got: {msg}"
+        msg.contains("not dormant") || msg.contains("has not started"),
+        "error message must indicate the agent isn't dormant, got: {msg}"
     );
 }
 
 #[tokio::test]
 async fn invoke_complete_unchanged() {
-    // Regression guard: invoke against a Complete agent (with a real session)
-    // continues to drive the executor exactly as before Task 9.
+    // Regression guard: invoke against a Dormant agent (with a real session)
+    // continues to drive the executor. Pre-Task-1 this seeded Complete; the
+    // helper now seeds Dormant, which is the state Complete-with-session
+    // agents land in after the boot migration.
     let (_, _, manager, log) = fresh_manager().await;
 
     let agent_id = manager

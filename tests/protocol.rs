@@ -145,6 +145,8 @@ fn stream_event_agent_created_roundtrip() {
         created_at: Utc::now(),
         updated_at: Utc::now(),
         worker_id: None,
+        restart_policy: grimoire::shared::types::RestartPolicy::Never,
+        restart_count: 0,
     };
 
     let event = StreamEvent::AgentCreated { agent };
@@ -254,6 +256,8 @@ fn agent_in_queued_state_roundtrips() {
         created_at: Utc::now(),
         updated_at: Utc::now(),
         worker_id: None,
+        restart_policy: grimoire::shared::types::RestartPolicy::Never,
+        restart_count: 0,
     };
 
     let json = serde_json::to_string(&agent).unwrap();

@@ -132,12 +132,22 @@ These are only possible because agents are daemons.
   - Spec: `.claude/specs/agent-messaging-bus-spec.md`. Plan: `.claude/plans/agent-messaging-bus.md`.
 - *Open (v2):* batch direct send (`to: [...]`), per-recipient rate limit / debounce on hot topics, auth on the local UDS so `sender` can be trusted, prefix resolution for `mail.ack` IDs, and a "system" stream for human-originated `MailSent` events.
 
-### 5. Long-lived / dormant agents ("familiars") — *in progress*
+### 5. Long-lived / dormant agents ("familiars") ✅ *implemented (v1)*
 
 - Agents that don't exit after one task. They suspend (serialize context to disk) and wake on: incoming message, cron, file-watch, webhook, or another agent's completion.
 - `invoke` for completed agents already hints at this — formalize into a first-class "dormant" state with wake triggers.
 - This is the _real_ reason to be a daemon. No library-based orchestrator can do this cleanly because its process dies when the script ends.
-- *Status:* the **mail wake trigger** is live (see §4) — a `Complete` agent with a `session_id` is woken automatically when wake-eligible mail lands, with bodies folded into the resume prompt. That's the first wake source. *Open:* a first-class `Dormant` state (vs. overloading `Complete`), cron-trigger source, file-watch trigger, webhook trigger, parent-agent-completion trigger, and a wake-source registry so triggers compose cleanly.
+- *Status (v1):*
+  - First-class `AgentState::Dormant` with `is_terminal()` / `is_final()` split (`src/shared/types.rs`); auto-migration of `Complete`-with-session agents on boot (`tests/dormant_migration.rs`, `tests/dormant_state.rs`).
+  - `WakeRegistry` actor (`src/daemon/wake_registry.rs`) owning a `wake_sources` table and three wake-source kinds: `cron`, `file_watch`, `parent_completion` (`src/daemon/wake_sources/`). All fire through the existing mail bus so the resume path is identical to mail-wake.
+  - `Clock` seam (`src/daemon/clock.rs`, `tests/clock_seam.rs`) for deterministic cron and rate-limit tests.
+  - Per-agent token-bucket rate limit on wake fires (`tests/wake_rate_limit.rs`).
+  - `grim summon --keep-alive` to land in `Dormant` with no sources yet (`src/cli/commands/summon.rs`, `tests/keep_alive_summon.rs`).
+  - `grim wake add/list/remove/test` CLI group (`src/cli/commands/wake.rs`).
+  - `grim banish` cascades to retire all wake sources atomically (`tests/banish_cascade.rs`).
+  - Four new `StreamEvent` variants — `WakeSourceRegistered` / `WakeSourceFired` / `WakeSourceFailed` / `WakeSourceRetired` — flow through `EventBus` and the durable events log (`tests/wake_events.rs`, `tests/wake_schema.rs`, `tests/wake_registry_cron.rs`, `tests/wake_file_watch.rs`, `tests/wake_parent_completion.rs`).
+  - Spec: `.claude/specs/dormant-agents-wake-triggers-spec.md`. Plan: `.claude/plans/dormant-agents-wake-triggers.md`.
+- *Open (v2):* webhook wake source (gated on Part 1 auth-token hardening), dashboard surfacing for wake sources, and tunable file-watch debounce / glob exclusion patterns.
 
 ### 6. Context-as-state, not as prompt
 
@@ -152,11 +162,18 @@ These are only possible because agents are daemons.
 - Agents see each other's file changes in real time. File-watch events become bus events: "agent-2 wrote `src/auth.rs`, agent-5 is subscribed."
 - Generalizes existing scroll conflict detection to the whole fabric.
 
-### 8. Supervision trees (OTP-style)
+### 8. Supervision trees (OTP-style) ✅ *implemented (v1)*
 
 - Borrow from Erlang. Every agent has a supervisor policy: `restart: always | on_failure | never`, `max_restarts: 3 in 60s`, `escalate_to: <parent-id>`.
 - Scrolls become supervision trees naturally. If a child fails too often, the parent agent wakes with the failure and decides: retry with different provider, decompose further, give up.
 - Self-healing agent pipelines — totally unique in the space.
+- *Status (v1):*
+  - `Supervisor` actor (`src/daemon/supervisor.rs`, 631 LoC) owning restart policy, max-restarts window, and escalation routing; integrates with `AgentManager`, scheduler dispatch, and the durable events log.
+  - Schema additions for parent/child links and restart history (`tests/supervision_schema.rs`); supervision-aware state transitions (`tests/supervision_state.rs`); crash-recovery reconciliation on daemon boot (`tests/supervisor_crash_recovery.rs`, `tests/supervisor_history_reconcile.rs`).
+  - Restart / escalate / banish-cascade behavior covered by `tests/supervisor_actor.rs`, `tests/supervisor_dispatch.rs`, `tests/supervisor_escalation.rs`, `tests/supervisor_banish.rs`, `tests/supervisor_evaluate.rs`, `tests/banish_cascade.rs`, `tests/scroll_keeper_supervision.rs`, `tests/supervision_events.rs`.
+  - CLI surface: `grim summon --supervisor …` and `grim circle` supervision view (`tests/cli_summon_supervision.rs`, `tests/cli_circle_supervision.rs`).
+  - Spec: `.claude/specs/supervision-trees-spec.md`. Plan: `.claude/plans/supervision-trees.md`.
+- *Open (v2):* dashboard surfacing of supervision trees, richer escalation policies (route to topic / external webhook), and per-policy budget/cost guards.
 
 ### 9. Time-travel & replay
 
@@ -202,8 +219,8 @@ Six-month spine:
 2. ~~**Work queue + admission control** — cheap once the log exists.~~ ✅ *single-node stage; see Part 2 §2.*
 3. ~~**Agent-to-agent messaging bus** — tiny delta over the log, huge product unlock.~~ ✅ *v1 shipped — see `.claude/specs/agent-messaging-bus-spec.md`.*
 4. ~~**Worker pool protocol** — unlocks scale story and "laptop grid" demo.~~ ✅
-5. **Dormant agents with wake triggers** — THE differentiator. This is what being a daemon is _for_.
-6. **Supervision trees** — layers on top of above; makes scrolls self-healing.
+5. ~~**Dormant agents with wake triggers** — THE differentiator. This is what being a daemon is _for_.~~ ✅ *v1 shipped — see Part 3 §5 / `.claude/specs/dormant-agents-wake-triggers-spec.md`.*
+6. ~~**Supervision trees** — layers on top of above; makes scrolls self-healing.~~ ✅ *v1 shipped — see Part 3 §8 / `.claude/specs/supervision-trees-spec.md`.*
 7. **Shared memory store + workspaces** — enables real multi-agent collaboration.
 8. **Federation** — last, after single-fabric is solid.
 

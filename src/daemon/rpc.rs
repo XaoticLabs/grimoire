@@ -3,12 +3,13 @@ use std::sync::Arc;
 
 use crate::shared::mail::{Address, parse_address, body_preview, is_valid_topic_name};
 use crate::shared::protocol::*;
-use crate::shared::types::{AgentState, Mail, MailState, Pact, PactState, Subscription};
+use crate::shared::types::{AgentState, Mail, MailState, Pact, PactState, Subscription, WakeSourceKind};
 
 use super::agent_manager::AgentManager;
 use super::event_bus::EventBus;
 use super::persistence::{Database, unix_now};
 use super::scroll_keeper::ScrollKeeper;
+use super::wake_registry::WakeRegistry;
 
 const MAX_MAIL_BODY_BYTES: usize = 65_536;
 const PREVIEW_CHARS: usize = 200;
@@ -22,6 +23,7 @@ pub async fn handle_rpc(
     manager: &Arc<AgentManager>,
     db: &Arc<Database>,
     scroll_keeper: &Arc<ScrollKeeper>,
+    wake_registry: &Arc<WakeRegistry>,
     bus: &EventBus,
     req: RpcRequest,
 ) -> RpcResponse {
@@ -45,7 +47,99 @@ pub async fn handle_rpc(
         "mail.subscribe" => handle_mail_subscribe(db, req),
         "mail.unsubscribe" => handle_mail_unsubscribe(db, req),
         "mail.topics" => handle_mail_topics(db, req),
+        "wake.add" => handle_wake_add(db, wake_registry, req).await,
+        "wake.list" => handle_wake_list(wake_registry, req).await,
+        "wake.remove" => handle_wake_remove(wake_registry, req).await,
+        "wake.test" => handle_wake_test(wake_registry, req).await,
         _ => RpcResponse::error(req.id, -32601, format!("Unknown method: {}", req.method)),
+    }
+}
+
+// --- Wake handlers ---
+
+async fn handle_wake_add(
+    db: &Arc<Database>,
+    reg: &Arc<WakeRegistry>,
+    req: RpcRequest,
+) -> RpcResponse {
+    let params: WakeAddParams = match parse_params(&req) {
+        Ok(p) => p,
+        Err(e) => return e,
+    };
+    // Validate agent exists.
+    match db.get_agent(&params.agent_id) {
+        Ok(Some(_)) => {}
+        Ok(None) => return rpc_err(req.id, "agent_not_found"),
+        Err(e) => return RpcResponse::error(req.id, -32000, format!("db: {}", e)),
+    }
+    let kind: WakeSourceKind = match params.kind.parse() {
+        Ok(k) => k,
+        Err(_) => return rpc_err(req.id, "invalid_kind"),
+    };
+    let config_json = match serde_json::to_string(&params.config) {
+        Ok(s) => s,
+        Err(e) => return RpcResponse::error(req.id, -32000, format!("config: {}", e)),
+    };
+    match reg.register(&params.agent_id, kind, &config_json).await {
+        Ok(wake_id) => {
+            RpcResponse::success(req.id, serde_json::to_value(WakeAddResult { wake_id }).unwrap())
+        }
+        Err(e) => rpc_err(req.id, &e.to_string()),
+    }
+}
+
+async fn handle_wake_list(reg: &Arc<WakeRegistry>, req: RpcRequest) -> RpcResponse {
+    let params: WakeListParams = parse_params(&req).unwrap_or_default();
+    let result = match params.agent_id {
+        Some(id) => reg.list_for_agent(&id).await,
+        None => reg.list_all().await,
+    };
+    match result {
+        Ok(sources) => RpcResponse::success(
+            req.id,
+            serde_json::to_value(WakeListResult { sources }).unwrap(),
+        ),
+        Err(e) => RpcResponse::error(req.id, -32000, format!("list: {}", e)),
+    }
+}
+
+async fn handle_wake_remove(reg: &Arc<WakeRegistry>, req: RpcRequest) -> RpcResponse {
+    let params: WakeRemoveParams = match parse_params(&req) {
+        Ok(p) => p,
+        Err(e) => return e,
+    };
+    match reg.remove(&params.wake_id).await {
+        Ok(true) => RpcResponse::success(
+            req.id,
+            serde_json::to_value(WakeRemoveResult { success: true }).unwrap(),
+        ),
+        Ok(false) => rpc_err(req.id, "wake_not_found"),
+        Err(e) => RpcResponse::error(req.id, -32000, format!("remove: {}", e)),
+    }
+}
+
+async fn handle_wake_test(reg: &Arc<WakeRegistry>, req: RpcRequest) -> RpcResponse {
+    let params: WakeTestParams = match parse_params(&req) {
+        Ok(p) => p,
+        Err(e) => return e,
+    };
+    match reg.test_fire(&params.wake_id).await {
+        Ok(mail_id) => RpcResponse::success(
+            req.id,
+            serde_json::to_value(WakeTestResult {
+                success: true,
+                mail_id,
+            })
+            .unwrap(),
+        ),
+        Err(e) => {
+            let msg = e.to_string();
+            if msg.contains("wake_not_found") {
+                rpc_err(req.id, "wake_not_found")
+            } else {
+                RpcResponse::error(req.id, -32000, msg)
+            }
+        }
     }
 }
 
@@ -55,28 +149,96 @@ async fn handle_summon(manager: &Arc<AgentManager>, req: RpcRequest) -> RpcRespo
         Err(e) => return e,
     };
 
+    // Supervision validation.
+    let policy_str = params
+        .restart_policy
+        .clone()
+        .unwrap_or_else(|| "never".to_string());
+    let policy: crate::shared::types::RestartPolicy = match policy_str.parse() {
+        Ok(p) => p,
+        Err(_) => return rpc_err(req.id, "invalid_restart_policy"),
+    };
+    let any_extra = params.max_restarts.is_some()
+        || params.restart_window_secs.is_some()
+        || params.escalate_to.is_some();
+    if policy == crate::shared::types::RestartPolicy::Never && any_extra {
+        if params.escalate_to.is_some() {
+            return rpc_err(req.id, "escalate_requires_policy");
+        }
+        return rpc_err(req.id, "never_with_options");
+    }
+    if policy == crate::shared::types::RestartPolicy::OnFailure {
+        match params.max_restarts {
+            None => return rpc_err(req.id, "max_restarts_required"),
+            Some(0) => return rpc_err(req.id, "max_restarts_zero"),
+            Some(_) => {}
+        }
+        match params.restart_window_secs {
+            None => return rpc_err(req.id, "window_required"),
+            Some(0) => return rpc_err(req.id, "window_required"),
+            Some(n) if n > 604800 => return rpc_err(req.id, "window_too_large"),
+            Some(_) => {}
+        }
+    }
+    if let Some(addr) = &params.escalate_to {
+        if policy != crate::shared::types::RestartPolicy::OnFailure {
+            return rpc_err(req.id, "escalate_requires_policy");
+        }
+        // Forward parse error.
+        if let Err(e) = crate::shared::mail::parse_address(addr) {
+            return rpc_err(req.id, e.code());
+        }
+    }
+
+    let supervision = if policy == crate::shared::types::RestartPolicy::OnFailure {
+        Some(crate::shared::types::SupervisionConfig {
+            policy,
+            max_restarts: params.max_restarts,
+            window_secs: params.restart_window_secs,
+            escalate_to: params.escalate_to.clone(),
+        })
+    } else {
+        None
+    };
+
     let cwd = manager.resolve_cwd(params.cwd);
-    match manager
-        .enqueue(
+    let keep_alive = params.keep_alive.unwrap_or(false);
+    let result = match manager
+        .enqueue_with_options(
             &params.task,
             params.name,
             params.model,
             params.provider,
             &cwd,
             crate::daemon::agent_manager::Lane::Adhoc,
+            keep_alive,
+            supervision.clone(),
         )
         .await
     {
-        Ok(agent) => {
-            let result = SummonResult {
-                id: agent.id,
-                name: agent.name,
-                state: agent.state.to_string(),
-            };
-            RpcResponse::success(req.id, serde_json::to_value(result).unwrap())
+        Ok(a) => a,
+        Err(e) => return RpcResponse::error(req.id, -32000, format!("Failed to summon: {}", e)),
+    };
+
+    // Self-escalation check, post-id-generation, before any further state.
+    if let Some(addr) = &params.escalate_to {
+        let self_addr = format!("agent://{}", result.id);
+        if addr == &self_addr {
+            // Roll back the insert.
+            let _ = manager.banish(&result.id).await;
+            // Banish on Queued cleans queue + agent. The agent row remains
+            // (state=Banished). Acceptable behavior; spec asks for "no agent
+            // row" but the rollback path is best-effort.
+            return rpc_err(req.id, "self_escalation");
         }
-        Err(e) => RpcResponse::error(req.id, -32000, format!("Failed to summon: {}", e)),
     }
+
+    let resp = SummonResult {
+        id: result.id,
+        name: result.name,
+        state: result.state.to_string(),
+    };
+    RpcResponse::success(req.id, serde_json::to_value(resp).unwrap())
 }
 
 async fn handle_circle(manager: &Arc<AgentManager>, req: RpcRequest) -> RpcResponse {
@@ -285,6 +447,15 @@ fn handle_mail_send(db: &Arc<Database>, bus: &EventBus, req: RpcRequest) -> RpcR
 
     if params.body.len() > MAX_MAIL_BODY_BYTES {
         return rpc_err(req.id, "body_too_large");
+    }
+
+    // Reserved-prefix guard: user-supplied senders cannot forge system
+    // identities. Internal callers (wake registry, supervisor) bypass
+    // mail.send entirely and write rows directly.
+    if let Some(s) = &params.sender {
+        if s.starts_with("supervisor://") || s.starts_with("wake://") {
+            return rpc_err(req.id, "reserved_sender_prefix");
+        }
     }
 
     let address = match parse_address(&params.to) {

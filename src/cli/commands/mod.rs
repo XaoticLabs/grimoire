@@ -11,3 +11,4 @@ pub mod scry;
 pub mod status;
 pub mod summon;
 pub mod tome;
+pub mod wake;

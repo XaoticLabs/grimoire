@@ -20,6 +20,8 @@ pub struct AppState {
     pub manager: Arc<AgentManager>,
     pub db: Arc<super::persistence::Database>,
     pub scroll_keeper: Arc<super::scroll_keeper::ScrollKeeper>,
+    pub wake_registry: Arc<super::wake_registry::WakeRegistry>,
+    pub supervisor: Arc<super::supervisor::Supervisor>,
 }
 
 /// Start both UDS and HTTP servers
@@ -27,11 +29,15 @@ pub async fn run(
     manager: Arc<AgentManager>,
     db: Arc<super::persistence::Database>,
     scroll_keeper: Arc<super::scroll_keeper::ScrollKeeper>,
+    wake_registry: Arc<super::wake_registry::WakeRegistry>,
+    supervisor: Arc<super::supervisor::Supervisor>,
 ) -> Result<()> {
     let state = AppState {
         manager: manager.clone(),
         db,
         scroll_keeper,
+        wake_registry,
+        supervisor,
     };
 
     // Start UDS listener
@@ -144,7 +150,15 @@ async fn run_uds_server(state: AppState) -> Result<()> {
                 }
 
                 let bus = state.manager.event_bus();
-                let response = rpc::handle_rpc(&state.manager, &state.db, &state.scroll_keeper, &bus, req).await;
+                let response = rpc::handle_rpc(
+                    &state.manager,
+                    &state.db,
+                    &state.scroll_keeper,
+                    &state.wake_registry,
+                    &bus,
+                    req,
+                )
+                .await;
                 if write_response(&mut writer, &response).await.is_err() {
                     return;
                 }
@@ -207,6 +221,10 @@ async fn http_summon_agent(
     axum::Json(params): axum::Json<SummonParams>,
 ) -> axum::Json<serde_json::Value> {
     let cwd = state.manager.resolve_cwd(params.cwd);
+    let _ = params.restart_policy;
+    let _ = params.max_restarts;
+    let _ = params.restart_window_secs;
+    let _ = params.escalate_to;
     match state
         .manager
         .enqueue(

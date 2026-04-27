@@ -36,6 +36,8 @@ fn make_agent(id: &str) -> Agent {
         created_at: Utc::now(),
         updated_at: Utc::now(),
         worker_id: None,
+        restart_policy: grimoire::shared::types::RestartPolicy::Never,
+        restart_count: 0,
     }
 }
 

@@ -32,6 +32,24 @@ enum Commands {
         /// Provider to use (e.g. claude, codex, aider)
         #[arg(short, long)]
         provider: Option<String>,
+
+        /// Park the agent in Dormant after it finishes its first run, so
+        /// future wake sources or `grim invoke` can resume it.
+        #[arg(short = 'k', long)]
+        keep_alive: bool,
+
+        /// Restart policy: "never" (default) or "on_failure".
+        #[arg(long, default_value = "never")]
+        restart: String,
+
+        /// Restart budget in `<N>/<T>s` format, e.g. `3/60s`.
+        #[arg(long)]
+        max_restarts: Option<String>,
+
+        /// Address (`agent://<id>` or `topic://<name>`) to escalate to when
+        /// the restart budget is exhausted.
+        #[arg(long)]
+        escalate_to: Option<String>,
     },
 
     /// List all agents in the circle
@@ -143,6 +161,12 @@ enum Commands {
         #[command(subcommand)]
         cmd: cli::commands::mail::MailCommand,
     },
+
+    /// Manage agent wake sources (cron / file-watch / parent-completion).
+    Wake {
+        #[command(subcommand)]
+        cmd: cli::commands::wake::WakeCommand,
+    },
 }
 
 #[tokio::main]
@@ -181,8 +205,27 @@ async fn main() {
             }
 
             let result = match cmd {
-                Commands::Summon { task, name, model, provider } => {
-                    cli::commands::summon::run(task, name, model, provider).await
+                Commands::Summon {
+                    task,
+                    name,
+                    model,
+                    provider,
+                    keep_alive,
+                    restart,
+                    max_restarts,
+                    escalate_to,
+                } => {
+                    cli::commands::summon::run(
+                        task,
+                        name,
+                        model,
+                        provider,
+                        keep_alive,
+                        restart,
+                        max_restarts,
+                        escalate_to,
+                    )
+                    .await
                 }
                 Commands::Circle { state } => cli::commands::circle::run(state).await,
                 Commands::Bind { id, tail } => {
@@ -224,6 +267,7 @@ async fn main() {
                 Commands::Tome { key, value } => cli::commands::tome::run(key, value).await,
                 Commands::Scry => cli::commands::scry::run().await,
                 Commands::Mail { cmd } => cli::commands::mail::run(cmd).await,
+                Commands::Wake { cmd } => cli::commands::wake::run(cmd).await,
                 Commands::Daemon => unreachable!(),
             };
 

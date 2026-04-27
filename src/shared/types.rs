@@ -45,6 +45,14 @@ pub enum AgentState {
     Complete,
     Failed,
     Banished,
+    /// Parked: the agent's last run finished, but it has a session_id and
+    /// at least one wake source (or was opted in via `--keep-alive`). Slot
+    /// is free; lifecycle is not final. Wakes back to `Active`.
+    Dormant,
+    /// Transient: the supervisor has decided to restart this agent and a
+    /// `PendingRestart` is queued. Slot is free (no live process), lifecycle
+    /// is not final. Transitions back to `Active` via `restart_dispatch`.
+    Restarting,
 }
 
 impl_state_enum!(AgentState {
@@ -54,11 +62,86 @@ impl_state_enum!(AgentState {
     Complete => "complete",
     Failed => "failed",
     Banished => "banished",
+    Dormant => "dormant",
+    Restarting => "restarting",
 });
 
 impl AgentState {
+    /// Slot accounting predicate: `true` when the agent is not consuming a
+    /// scheduler slot. Includes `Dormant` (parked, no live process) and
+    /// `Restarting` (mid-lifecycle, no live process).
     pub fn is_terminal(&self) -> bool {
+        matches!(
+            self,
+            Self::Complete
+                | Self::Failed
+                | Self::Banished
+                | Self::Dormant
+                | Self::Restarting
+        )
+    }
+
+    /// Lifecycle predicate: `true` only when the agent is truly finished
+    /// and will not transition again. Excludes `Dormant` and `Restarting`,
+    /// which can still transition back to `Active`.
+    pub fn is_final(&self) -> bool {
         matches!(self, Self::Complete | Self::Failed | Self::Banished)
+    }
+
+    /// Whether the supervisor should evaluate restart policy when an agent
+    /// reaches this state. Only `Failed` is considered supervisable.
+    pub fn is_supervisable(&self) -> bool {
+        matches!(self, Self::Failed)
+    }
+}
+
+// --- Supervision config ---
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum RestartPolicy {
+    #[default]
+    Never,
+    OnFailure,
+}
+
+impl_state_enum!(RestartPolicy {
+    Never => "never",
+    OnFailure => "on_failure",
+});
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum RestartHistoryOutcome {
+    Scheduled,
+    Succeeded,
+    FailedAgain,
+    BudgetExhausted,
+}
+
+impl_state_enum!(RestartHistoryOutcome {
+    Scheduled => "scheduled",
+    Succeeded => "succeeded",
+    FailedAgain => "failed_again",
+    BudgetExhausted => "budget_exhausted",
+});
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SupervisionConfig {
+    pub policy: RestartPolicy,
+    pub max_restarts: Option<u32>,
+    pub window_secs: Option<u32>,
+    pub escalate_to: Option<String>,
+}
+
+impl SupervisionConfig {
+    pub fn never() -> Self {
+        Self {
+            policy: RestartPolicy::Never,
+            max_restarts: None,
+            window_secs: None,
+            escalate_to: None,
+        }
     }
 }
 
@@ -78,6 +161,10 @@ pub struct Agent {
     pub updated_at: DateTime<Utc>,
     #[serde(default)]
     pub worker_id: Option<String>,
+    #[serde(default)]
+    pub restart_policy: RestartPolicy,
+    #[serde(default)]
+    pub restart_count: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -98,6 +185,12 @@ pub struct AgentSummary {
     pub age_secs: i64,
     #[serde(default)]
     pub worker_id: Option<String>,
+    #[serde(default)]
+    pub restart_policy: RestartPolicy,
+    #[serde(default)]
+    pub restart_count: u32,
+    #[serde(default)]
+    pub max_restarts: Option<u32>,
 }
 
 // --- Mail ---
@@ -166,6 +259,49 @@ pub struct Pact {
     pub target_id: Option<AgentId>,
     pub created_at: DateTime<Utc>,
     pub fired_at: Option<DateTime<Utc>>,
+}
+
+// --- Wake sources ---
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum WakeSourceKind {
+    Cron,
+    FileWatch,
+    ParentCompletion,
+}
+
+impl_state_enum!(WakeSourceKind {
+    Cron => "cron",
+    FileWatch => "file_watch",
+    ParentCompletion => "parent_completion",
+});
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum WakeSourceState {
+    Armed,
+    Failed,
+    Disabled,
+}
+
+impl_state_enum!(WakeSourceState {
+    Armed => "armed",
+    Failed => "failed",
+    Disabled => "disabled",
+});
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct WakeSource {
+    pub id: String,
+    pub agent_id: AgentId,
+    pub kind: WakeSourceKind,
+    pub config_json: String,
+    pub state: WakeSourceState,
+    pub fail_reason: Option<String>,
+    pub last_fired_at: Option<i64>,
+    pub fire_count: i64,
+    pub created_at: i64,
 }
 
 // --- Scrolls (Spec-based DAG Orchestration) ---
@@ -345,6 +481,30 @@ mod tests {
         assert!(AgentState::Complete.is_terminal());
         assert!(AgentState::Failed.is_terminal());
         assert!(AgentState::Banished.is_terminal());
+        assert!(AgentState::Dormant.is_terminal());
+        assert!(AgentState::Restarting.is_terminal());
+    }
+
+    #[test]
+    fn agent_state_is_final_excludes_dormant() {
+        assert!(!AgentState::Dormant.is_final());
+        assert!(AgentState::Complete.is_final());
+        assert!(AgentState::Failed.is_final());
+        assert!(AgentState::Banished.is_final());
+        assert!(!AgentState::Queued.is_final());
+        assert!(!AgentState::Summoning.is_final());
+        assert!(!AgentState::Active.is_final());
+    }
+
+    #[test]
+    fn agent_state_dormant_serde_roundtrip() {
+        let json = serde_json::to_string(&AgentState::Dormant).unwrap();
+        assert_eq!(json, "\"dormant\"");
+        let parsed: AgentState = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed, AgentState::Dormant);
+        let by_str: AgentState = "dormant".parse().unwrap();
+        assert_eq!(by_str, AgentState::Dormant);
+        assert_eq!(AgentState::Dormant.to_string(), "dormant");
     }
 
     #[test]

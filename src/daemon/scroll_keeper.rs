@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 
 use crate::shared::protocol::StreamEvent;
 use crate::shared::types::{
@@ -60,7 +60,13 @@ impl ScrollKeeper {
                         match new_state {
                             AgentState::Complete => self.handle_agent_completion(agent_id).await,
                             AgentState::Failed | AgentState::Banished => self.handle_agent_failure(agent_id).await,
-                            _ => {}
+                            AgentState::Restarting => {
+                                debug!(agent_id = %agent_id, "scroll-keeper: ignoring transient Restarting state");
+                            }
+                            AgentState::Queued
+                            | AgentState::Summoning
+                            | AgentState::Active
+                            | AgentState::Dormant => {}
                         }
                     }
                     Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
@@ -317,6 +323,19 @@ impl ScrollKeeper {
     }
 
     async fn handle_agent_failure(&self, agent_id: &str) {
+        // If the agent has an active restart policy, defer the failure
+        // handling to the supervisor — it will transition the agent to
+        // Restarting and eventually to terminal Failed if the budget is
+        // exhausted. Without this gate, scroll-keeper could mark the task
+        // failed before the supervisor flips state.
+        if let Ok(Some(cfg)) = self.db.get_supervision(agent_id) {
+            use crate::shared::types::RestartPolicy;
+            if cfg.policy != RestartPolicy::Never {
+                debug!(agent_id = %agent_id, "scroll-keeper: deferring failure handling to supervisor");
+                return;
+            }
+        }
+
         let task = match self.db.get_task_by_agent_id(agent_id) {
             Ok(Some(r)) => r,
             Ok(None) => return,
