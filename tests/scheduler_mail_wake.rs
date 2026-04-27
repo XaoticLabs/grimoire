@@ -128,6 +128,7 @@ fn seed_dormant_with_session(db: &Database, id: &str, session_id: Option<&str>) 
         worker_id: None,
         restart_policy: grimoire::shared::types::RestartPolicy::Never,
         restart_count: 0,
+        workspace_id: None,
     };
     db.insert_agent(&agent).unwrap();
     if let Some(sid) = session_id {
@@ -326,6 +327,7 @@ async fn complete_agent_no_longer_woken_by_mail() {
         worker_id: None,
         restart_policy: grimoire::shared::types::RestartPolicy::Never,
         restart_count: 0,
+        workspace_id: None,
     };
     db.insert_agent(&agent).unwrap();
     db.update_agent_session_id(&id, "sess-c").unwrap();
@@ -351,6 +353,7 @@ async fn should_wake_returns_true_for_mail_received() {
         topic: None,
         body_preview: "hi".into(),
         wake_eligible: true,
+        origin_daemon_id: None,
     };
     assert!(Scheduler::should_wake(&ev));
 }

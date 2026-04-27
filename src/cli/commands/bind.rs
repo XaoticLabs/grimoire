@@ -13,6 +13,7 @@ pub async fn run(id: String, tail: Option<usize>) -> Result<()> {
         method: "agent.bind".to_string(),
         params,
         id: 1,
+        protocol_version: None,
     };
 
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt};

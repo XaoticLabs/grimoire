@@ -24,6 +24,7 @@ fn seed(db: &Database, id: &str, keep_alive: bool) {
         worker_id: None,
         restart_policy: grimoire::shared::types::RestartPolicy::Never,
         restart_count: 0,
+        workspace_id: None,
     };
     db.insert_agent(&a).unwrap();
     if keep_alive {

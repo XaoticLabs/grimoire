@@ -49,6 +49,7 @@ fn seed_agent(db: &Database, agent_id: &str) {
         worker_id: None,
         restart_policy: grimoire::shared::types::RestartPolicy::Never,
         restart_count: 0,
+        workspace_id: None,
     })
     .unwrap();
 }

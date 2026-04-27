@@ -28,6 +28,7 @@ fn agent(id: &str, policy: RestartPolicy, count: u32) -> Agent {
         worker_id: None,
         restart_policy: policy,
         restart_count: count,
+        workspace_id: None,
     }
 }
 

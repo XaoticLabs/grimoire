@@ -53,6 +53,7 @@ pub async fn run(json: bool) -> Result<()> {
             queued_count: result.queued_count,
             max_concurrent_agents: result.max_concurrent_agents,
             uptime_secs: result.uptime_secs,
+            daemon_id: result.daemon_id.clone(),
             ..Default::default()
         };
         println!("{}", serde_json::to_string_pretty(&resp)?);
@@ -66,6 +67,9 @@ pub async fn run(json: bool) -> Result<()> {
             result.queued_count,
             result.max_concurrent_agents,
         );
+        if let Some(id) = &result.daemon_id {
+            println!("Daemon ID: grimd-{}", id);
+        }
     }
 
     Ok(())

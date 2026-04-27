@@ -26,6 +26,7 @@ fn seed(db: &Database, id: &str, state: AgentState, session_id: Option<&str>) {
         worker_id: None,
         restart_policy: grimoire::shared::types::RestartPolicy::Never,
         restart_count: 0,
+        workspace_id: None,
     };
     db.insert_agent(&agent).unwrap();
     if let Some(sid) = session_id {

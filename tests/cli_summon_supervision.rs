@@ -9,6 +9,7 @@ use grimoire::daemon::event_bus::EventBus;
 use grimoire::daemon::persistence::Database;
 use grimoire::daemon::scroll_keeper::ScrollKeeper;
 use grimoire::daemon::wake_registry::WakeRegistry;
+use grimoire::daemon::workspace_registry::WorkspaceRegistry;
 use grimoire::shared::config::Config;
 use grimoire::shared::protocol::{RpcRequest, SummonResult};
 use grimoire::shared::types::RestartPolicy;
@@ -18,6 +19,7 @@ async fn build() -> (
     Arc<Database>,
     Arc<ScrollKeeper>,
     Arc<WakeRegistry>,
+    Arc<WorkspaceRegistry>,
     EventBus,
 ) {
     let db = Arc::new(Database::open_in_memory().unwrap());
@@ -27,22 +29,24 @@ async fn build() -> (
     let clock: Arc<dyn grimoire::daemon::clock::Clock> =
         Arc::new(grimoire::daemon::clock::SystemClock);
     let wr = WakeRegistry::with_default_sender(db.clone(), bus.clone(), clock);
-    (manager, db, sk, wr, bus)
+    let wsr = WorkspaceRegistry::with_default_git(db.clone(), bus.clone());
+    (manager, db, sk, wr, wsr, bus)
 }
 
 async fn summon(params: serde_json::Value) -> grimoire::shared::protocol::RpcResponse {
-    let (m, db, sk, wr, bus) = build().await;
+    let (m, db, sk, wr, wsr, bus) = build().await;
     let req = RpcRequest {
         method: "agent.summon".into(),
         params,
         id: 1,
+        protocol_version: None,
     };
-    grimoire::daemon::rpc::handle_rpc(&m, &db, &sk, &wr, &bus, req).await
+    grimoire::daemon::rpc::handle_rpc_test(&m, &db, &sk, &wr, &wsr, &bus, req).await
 }
 
 #[tokio::test]
 async fn summon_on_failure_persists_full_config() {
-    let (m, db, sk, wr, bus) = build().await;
+    let (m, db, sk, wr, wsr, bus) = build().await;
     let req = RpcRequest {
         method: "agent.summon".into(),
         params: json!({
@@ -53,8 +57,9 @@ async fn summon_on_failure_persists_full_config() {
             "escalate_to": "topic://x",
         }),
         id: 1,
+        protocol_version: None,
     };
-    let resp = grimoire::daemon::rpc::handle_rpc(&m, &db, &sk, &wr, &bus, req).await;
+    let resp = grimoire::daemon::rpc::handle_rpc_test(&m, &db, &sk, &wr, &wsr, &bus, req).await;
     assert!(resp.error.is_none(), "{:?}", resp);
     let r: SummonResult = serde_json::from_value(resp.result.unwrap()).unwrap();
     let cfg = db.get_supervision(&r.id).unwrap().unwrap();
@@ -66,13 +71,14 @@ async fn summon_on_failure_persists_full_config() {
 
 #[tokio::test]
 async fn summon_never_persists_defaults() {
-    let (m, db, sk, wr, bus) = build().await;
+    let (m, db, sk, wr, wsr, bus) = build().await;
     let req = RpcRequest {
         method: "agent.summon".into(),
         params: json!({"task": "t"}),
         id: 1,
+        protocol_version: None,
     };
-    let resp = grimoire::daemon::rpc::handle_rpc(&m, &db, &sk, &wr, &bus, req).await;
+    let resp = grimoire::daemon::rpc::handle_rpc_test(&m, &db, &sk, &wr, &wsr, &bus, req).await;
     let r: SummonResult = serde_json::from_value(resp.result.unwrap()).unwrap();
     let agent = db.get_agent(&r.id).unwrap().unwrap();
     assert_eq!(agent.restart_policy, RestartPolicy::Never);

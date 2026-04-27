@@ -38,6 +38,7 @@ fn make_agent(id: &str) -> Agent {
         worker_id: None,
         restart_policy: grimoire::shared::types::RestartPolicy::Never,
         restart_count: 0,
+        workspace_id: None,
     }
 }
 

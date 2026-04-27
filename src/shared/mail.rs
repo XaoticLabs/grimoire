@@ -6,13 +6,30 @@
 //!
 //! Anything else, including a bare string with no `://`, is rejected.
 
-use crate::shared::types::AgentId;
+use crate::shared::types::{AgentId, DaemonId, validate_daemon_id};
 
 /// A parsed destination for `mail.send`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Address {
     Agent(AgentId),
     Topic(String),
+    /// `agent://grimd-<daemon-id>/<agent-id>` — federation form.
+    FederatedAgent {
+        daemon_id: DaemonId,
+        agent_id: AgentId,
+    },
+}
+
+impl std::fmt::Display for Address {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Address::Agent(id) => write!(f, "agent://{}", id),
+            Address::Topic(name) => write!(f, "topic://{}", name),
+            Address::FederatedAgent { daemon_id, agent_id } => {
+                write!(f, "agent://grimd-{}/{}", daemon_id, agent_id)
+            }
+        }
+    }
 }
 
 /// Reason a string failed to parse as an `Address`. The error code (`code()`)
@@ -22,6 +39,7 @@ pub enum AddressParseError {
     InvalidAgentId,
     InvalidTopicName,
     InvalidAddress,
+    InvalidFederatedAgentId,
 }
 
 impl AddressParseError {
@@ -30,6 +48,7 @@ impl AddressParseError {
             Self::InvalidAgentId => "invalid_agent_id",
             Self::InvalidTopicName => "invalid_topic_name",
             Self::InvalidAddress => "invalid_address",
+            Self::InvalidFederatedAgentId => "invalid_federated_agent_id",
         }
     }
 }
@@ -44,6 +63,18 @@ impl std::error::Error for AddressParseError {}
 
 pub fn parse_address(s: &str) -> Result<Address, AddressParseError> {
     if let Some(rest) = s.strip_prefix("agent://") {
+        // Federation Task 2: try the federated form first
+        // (`grimd-<daemon-id>/<agent-id>`). Falls back to bare 8-hex.
+        if let Some(stripped) = rest.strip_prefix("grimd-") {
+            // Strict shape: <8hex>/<8hex>, no extra path segments.
+            return match parse_federated_agent_tail(stripped) {
+                Some((daemon_id, agent_id)) => Ok(Address::FederatedAgent {
+                    daemon_id,
+                    agent_id,
+                }),
+                None => Err(AddressParseError::InvalidFederatedAgentId),
+            };
+        }
         if is_valid_agent_id(rest) {
             Ok(Address::Agent(rest.to_string()))
         } else {
@@ -58,6 +89,21 @@ pub fn parse_address(s: &str) -> Result<Address, AddressParseError> {
     } else {
         Err(AddressParseError::InvalidAddress)
     }
+}
+
+/// Parse the tail of `agent://grimd-<rest>` into `(daemon_id, agent_id)`.
+/// Both must be 8 lowercase hex characters; no extra segments allowed.
+fn parse_federated_agent_tail(s: &str) -> Option<(DaemonId, AgentId)> {
+    let mut parts = s.splitn(2, '/');
+    let daemon = parts.next()?;
+    let agent = parts.next()?;
+    if !validate_daemon_id(daemon) {
+        return None;
+    }
+    if !is_valid_agent_id(agent) {
+        return None;
+    }
+    Some((daemon.to_string(), agent.to_string()))
 }
 
 /// `^[0-9a-f]{8}$` — the existing short-id shape. Reject anything else,
@@ -166,5 +212,59 @@ mod tests {
         let body = "🎉".repeat(10);
         let preview = body_preview(&body, 5);
         assert_eq!(preview.chars().count(), 5);
+    }
+
+    // --- Federation Task 2: federated address parser ---
+
+    #[test]
+    fn parse_address_accepts_federated_form() {
+        let out = parse_address("agent://grimd-1a2b3c4d/deadbeef").unwrap();
+        match out {
+            Address::FederatedAgent { daemon_id, agent_id } => {
+                assert_eq!(daemon_id, "1a2b3c4d");
+                assert_eq!(agent_id, "deadbeef");
+            }
+            _ => panic!("expected FederatedAgent"),
+        }
+    }
+
+    #[test]
+    fn parse_address_rejects_uppercase_federated_daemon_id() {
+        assert_eq!(
+            parse_address("agent://grimd-1A2B3C4D/abcd1234").unwrap_err(),
+            AddressParseError::InvalidFederatedAgentId
+        );
+    }
+
+    #[test]
+    fn parse_address_rejects_federated_with_extra_segment() {
+        assert_eq!(
+            parse_address("agent://grimd-1a2b3c4d/deadbeef/x").unwrap_err(),
+            AddressParseError::InvalidFederatedAgentId
+        );
+    }
+
+    #[test]
+    fn parse_address_bare_agent_form_still_works() {
+        assert_eq!(
+            parse_address("agent://abcd1234").unwrap(),
+            Address::Agent("abcd1234".into())
+        );
+    }
+
+    #[test]
+    fn federated_address_round_trips_via_display() {
+        let s = "agent://grimd-1a2b3c4d/deadbeef";
+        let a = parse_address(s).unwrap();
+        assert_eq!(a.to_string(), s);
+        assert_eq!(parse_address(&a.to_string()).unwrap(), a);
+    }
+
+    #[test]
+    fn parse_address_rejects_federated_trailing_slash() {
+        assert_eq!(
+            parse_address("agent://grimd-1a2b3c4d/").unwrap_err(),
+            AddressParseError::InvalidFederatedAgentId
+        );
     }
 }

@@ -24,6 +24,7 @@ fn rpc_request_serialization() {
             "model": "sonnet"
         }),
         id: 42,
+        protocol_version: None,
     };
 
     let json = serde_json::to_string(&req).unwrap();
@@ -147,6 +148,7 @@ fn stream_event_agent_created_roundtrip() {
         worker_id: None,
         restart_policy: grimoire::shared::types::RestartPolicy::Never,
         restart_count: 0,
+        workspace_id: None,
     };
 
     let event = StreamEvent::AgentCreated { agent };
@@ -258,6 +260,7 @@ fn agent_in_queued_state_roundtrips() {
         worker_id: None,
         restart_policy: grimoire::shared::types::RestartPolicy::Never,
         restart_count: 0,
+        workspace_id: None,
     };
 
     let json = serde_json::to_string(&agent).unwrap();
@@ -375,6 +378,7 @@ fn status_response_queued_count_serde() {
         active_count: 2,
         queued_count: 3,
         max_concurrent_agents: 8,
+        daemon_id: None,
     };
     let json = serde_json::to_value(&resp).unwrap();
     assert_eq!(json["queued_count"].as_u64(), Some(3));
@@ -395,6 +399,7 @@ fn daemon_status_result_includes_queued_and_cap() {
         active_count: 2,
         queued_count: 3,
         max_concurrent_agents: 8,
+        daemon_id: None,
     };
     let json = serde_json::to_value(&result).unwrap();
     assert_eq!(json["queued_count"].as_u64(), Some(3));

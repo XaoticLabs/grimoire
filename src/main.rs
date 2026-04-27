@@ -50,6 +50,10 @@ enum Commands {
         /// the restart budget is exhausted.
         #[arg(long)]
         escalate_to: Option<String>,
+
+        /// Workspace name to summon into. Mutually exclusive with `--cwd`.
+        #[arg(long)]
+        workspace: Option<String>,
     },
 
     /// List all agents in the circle
@@ -167,6 +171,30 @@ enum Commands {
         #[command(subcommand)]
         cmd: cli::commands::wake::WakeCommand,
     },
+
+    /// Manage workspaces (named git worktrees with shared memory + filewatch).
+    Workspace {
+        #[command(subcommand)]
+        cmd: cli::commands::workspace::WorkspaceCommand,
+    },
+
+    /// Read/write workspace memory KV.
+    Memory {
+        #[command(subcommand)]
+        cmd: cli::commands::memory::MemoryCommand,
+    },
+
+    /// Manage federation peers (`add` / `list` / `remove` / `ping`).
+    Peer {
+        #[command(subcommand)]
+        cmd: cli::commands::peer::PeerCommand,
+    },
+
+    /// Federate / unfederate topics across peers.
+    Topic {
+        #[command(subcommand)]
+        cmd: cli::commands::topic::TopicCommand,
+    },
 }
 
 #[tokio::main]
@@ -214,6 +242,7 @@ async fn main() {
                     restart,
                     max_restarts,
                     escalate_to,
+                    workspace,
                 } => {
                     cli::commands::summon::run(
                         task,
@@ -224,6 +253,7 @@ async fn main() {
                         restart,
                         max_restarts,
                         escalate_to,
+                        workspace,
                     )
                     .await
                 }
@@ -268,6 +298,10 @@ async fn main() {
                 Commands::Scry => cli::commands::scry::run().await,
                 Commands::Mail { cmd } => cli::commands::mail::run(cmd).await,
                 Commands::Wake { cmd } => cli::commands::wake::run(cmd).await,
+                Commands::Workspace { cmd } => cli::commands::workspace::run(cmd).await,
+                Commands::Memory { cmd } => cli::commands::memory::run(cmd).await,
+                Commands::Peer { cmd } => cli::commands::peer::run(cmd).await,
+                Commands::Topic { cmd } => cli::commands::topic::run(cmd).await,
                 Commands::Daemon => unreachable!(),
             };
 

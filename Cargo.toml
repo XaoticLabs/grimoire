@@ -46,6 +46,9 @@ toml = "1.1.2"
 tonic = { version = "0.12", features = ["tls", "tls-roots"] }
 prost = "0.13"
 semver = "1"
+blake3 = "1"
+tempfile = "3"
+futures = "0.3"
 
 # Wake-source runtime support
 cron = "0.12"

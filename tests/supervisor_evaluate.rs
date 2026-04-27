@@ -49,6 +49,7 @@ fn seed_failed(db: &Database, id: &str) {
         worker_id: None,
         restart_policy: RestartPolicy::Never,
         restart_count: 0,
+        workspace_id: None,
     };
     db.insert_agent(&agent).unwrap();
 }

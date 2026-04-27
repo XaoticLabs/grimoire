@@ -1,15 +1,20 @@
 use serde::de::DeserializeOwned;
 use std::sync::Arc;
 
+use crate::shared::constants::RPC_PROTOCOL_VERSION;
 use crate::shared::mail::{Address, parse_address, body_preview, is_valid_topic_name};
 use crate::shared::protocol::*;
 use crate::shared::types::{AgentState, Mail, MailState, Pact, PactState, Subscription, WakeSourceKind};
 
 use super::agent_manager::AgentManager;
 use super::event_bus::EventBus;
+use super::peer_registry::PeerRegistry;
 use super::persistence::{Database, unix_now};
 use super::scroll_keeper::ScrollKeeper;
 use super::wake_registry::WakeRegistry;
+use super::workspace_db::MemoryWriteOutcome;
+use super::workspace_registry::{WorkspaceRegistry, publish_memory_topic_mail};
+use crate::shared::types::{validate_memory_key, validate_workspace_id};
 
 const MAX_MAIL_BODY_BYTES: usize = 65_536;
 const PREVIEW_CHARS: usize = 200;
@@ -19,16 +24,59 @@ fn parse_params<T: DeserializeOwned>(req: &RpcRequest) -> Result<T, RpcResponse>
         .map_err(|e| RpcResponse::error(req.id, -32602, format!("Invalid params: {}", e)))
 }
 
+/// Test-only wrapper that fabricates a `PeerRegistry` and a synthetic
+/// `daemon_id`. Production code goes through `handle_rpc` with the real
+/// per-daemon registry from `AppState`.
+pub async fn handle_rpc_test(
+    manager: &Arc<AgentManager>,
+    db: &Arc<Database>,
+    scroll_keeper: &Arc<ScrollKeeper>,
+    wake_registry: &Arc<WakeRegistry>,
+    workspace_registry: &Arc<WorkspaceRegistry>,
+    bus: &EventBus,
+    req: RpcRequest,
+) -> RpcResponse {
+    use super::clock::SystemClock;
+    let clock: Arc<dyn super::clock::Clock> = Arc::new(SystemClock);
+    let peer_registry = super::peer_registry::PeerRegistry::new(
+        db.clone(),
+        bus.clone(),
+        clock,
+        "00000000".to_string(),
+    );
+    handle_rpc(
+        manager,
+        db,
+        scroll_keeper,
+        wake_registry,
+        workspace_registry,
+        &peer_registry,
+        bus,
+        "00000000",
+        req,
+    )
+    .await
+}
+
 pub async fn handle_rpc(
     manager: &Arc<AgentManager>,
     db: &Arc<Database>,
     scroll_keeper: &Arc<ScrollKeeper>,
     wake_registry: &Arc<WakeRegistry>,
+    workspace_registry: &Arc<WorkspaceRegistry>,
+    peer_registry: &Arc<PeerRegistry>,
     bus: &EventBus,
+    daemon_id: &str,
     req: RpcRequest,
 ) -> RpcResponse {
+    // Federation Task 4: validate RPC protocol_version. Existing callers
+    // omit the field and default to v1.
+    let pv = req.protocol_version.unwrap_or(RPC_PROTOCOL_VERSION);
+    if pv != RPC_PROTOCOL_VERSION {
+        return rpc_err(req.id, "unsupported_protocol_version");
+    }
     match req.method.as_str() {
-        "agent.summon" => handle_summon(manager, req).await,
+        "agent.summon" => handle_summon(manager, db, workspace_registry, req).await,
         "agent.circle" => handle_circle(manager, req).await,
         "agent.banish" => handle_banish(manager, req).await,
         "agent.invoke" => handle_invoke(manager, req).await,
@@ -39,9 +87,9 @@ pub async fn handle_rpc(
         "scroll.status" => handle_scroll_status(scroll_keeper, req),
         "scroll.list" => handle_scroll_list(db, req),
         "scroll.abandon" => handle_scroll_abandon(scroll_keeper, req).await,
-        "daemon.status" => handle_status(manager, req).await,
+        "daemon.status" => handle_status(manager, daemon_id, req).await,
         "agent.queue.list" => handle_queue_list(db, req),
-        "mail.send" => handle_mail_send(db, bus, req),
+        "mail.send" => handle_mail_send(db, bus, peer_registry, daemon_id, req).await,
         "mail.list" => handle_mail_list(db, req),
         "mail.ack" => handle_mail_ack(db, bus, req),
         "mail.subscribe" => handle_mail_subscribe(db, req),
@@ -51,6 +99,20 @@ pub async fn handle_rpc(
         "wake.list" => handle_wake_list(wake_registry, req).await,
         "wake.remove" => handle_wake_remove(wake_registry, req).await,
         "wake.test" => handle_wake_test(wake_registry, req).await,
+        "workspace.create" => handle_workspace_create(workspace_registry, req).await,
+        "workspace.list" => handle_workspace_list(workspace_registry, req),
+        "workspace.destroy" => handle_workspace_destroy(workspace_registry, req).await,
+        "workspace.assign" => handle_workspace_assign(workspace_registry, req).await,
+        "memory.put" => handle_memory_put(db, bus, req),
+        "memory.get" => handle_memory_get(db, req),
+        "memory.list" => handle_memory_list(db, req),
+        "memory.delete" => handle_memory_delete(db, bus, req),
+        "peer.add" => handle_peer_add(peer_registry, req).await,
+        "peer.list" => handle_peer_list(peer_registry, req).await,
+        "peer.remove" => handle_peer_remove(peer_registry, req).await,
+        "peer.ping" => handle_peer_ping(peer_registry, req).await,
+        "topic.federate" => handle_topic_federate(peer_registry, req).await,
+        "topic.unfederate" => handle_topic_unfederate(peer_registry, req).await,
         _ => RpcResponse::error(req.id, -32601, format!("Unknown method: {}", req.method)),
     }
 }
@@ -143,7 +205,12 @@ async fn handle_wake_test(reg: &Arc<WakeRegistry>, req: RpcRequest) -> RpcRespon
     }
 }
 
-async fn handle_summon(manager: &Arc<AgentManager>, req: RpcRequest) -> RpcResponse {
+async fn handle_summon(
+    manager: &Arc<AgentManager>,
+    db: &Arc<Database>,
+    workspace_registry: &Arc<WorkspaceRegistry>,
+    req: RpcRequest,
+) -> RpcResponse {
     let params: SummonParams = match parse_params(&req) {
         Ok(p) => p,
         Err(e) => return e,
@@ -201,7 +268,27 @@ async fn handle_summon(manager: &Arc<AgentManager>, req: RpcRequest) -> RpcRespo
         None
     };
 
-    let cwd = manager.resolve_cwd(params.cwd);
+    // Workspace short-circuit on cwd: mutually exclusive with --cwd, looks
+    // up the workspace path, and triggers assignment after agent insert.
+    if params.workspace.is_some() && params.cwd.is_some() {
+        return rpc_err(req.id, "conflicting_options");
+    }
+    let workspace_path: Option<std::path::PathBuf> = match &params.workspace {
+        Some(name) => {
+            let ws = match db.get_workspace(name) {
+                Ok(Some(w)) => w,
+                Ok(None) => return rpc_err(req.id, "workspace_not_found"),
+                Err(e) => return RpcResponse::error(req.id, -32000, format!("db: {}", e)),
+            };
+            if ws.state != crate::shared::types::WorkspaceState::Active {
+                return rpc_err(req.id, "workspace_destroying");
+            }
+            Some(ws.path)
+        }
+        None => None,
+    };
+
+    let cwd = workspace_path.clone().unwrap_or_else(|| manager.resolve_cwd(params.cwd.clone()));
     let keep_alive = params.keep_alive.unwrap_or(false);
     let result = match manager
         .enqueue_with_options(
@@ -219,6 +306,13 @@ async fn handle_summon(manager: &Arc<AgentManager>, req: RpcRequest) -> RpcRespo
         Ok(a) => a,
         Err(e) => return RpcResponse::error(req.id, -32000, format!("Failed to summon: {}", e)),
     };
+
+    // Post-insert assignment.
+    if let Some(name) = &params.workspace {
+        if let Err(e) = workspace_registry.assign(name, &result.id).await {
+            tracing::warn!(workspace = %name, agent = %result.id, error = %e, "workspace assign after summon failed");
+        }
+    }
 
     // Self-escalation check, post-id-generation, before any further state.
     if let Some(addr) = &params.escalate_to {
@@ -439,7 +533,13 @@ fn rpc_err(req_id: u64, code: &str) -> RpcResponse {
     RpcResponse::error(req_id, -32000, code.to_string())
 }
 
-fn handle_mail_send(db: &Arc<Database>, bus: &EventBus, req: RpcRequest) -> RpcResponse {
+async fn handle_mail_send(
+    db: &Arc<Database>,
+    bus: &EventBus,
+    peer_registry: &Arc<PeerRegistry>,
+    daemon_id: &str,
+    req: RpcRequest,
+) -> RpcResponse {
     let params: MailSendParams = match parse_params(&req) {
         Ok(p) => p,
         Err(e) => return e,
@@ -453,7 +553,11 @@ fn handle_mail_send(db: &Arc<Database>, bus: &EventBus, req: RpcRequest) -> RpcR
     // identities. Internal callers (wake registry, supervisor) bypass
     // mail.send entirely and write rows directly.
     if let Some(s) = &params.sender {
-        if s.starts_with("supervisor://") || s.starts_with("wake://") {
+        if s.starts_with("supervisor://")
+            || s.starts_with("wake://")
+            || s.starts_with("workspace://")
+            || s.starts_with("peer://")
+        {
             return rpc_err(req.id, "reserved_sender_prefix");
         }
     }
@@ -470,7 +574,29 @@ fn handle_mail_send(db: &Arc<Database>, bus: &EventBus, req: RpcRequest) -> RpcR
             handle_direct_send(db, bus, &req, &params, recipient_id, wake_eligible)
         }
         Address::Topic(topic) => {
-            handle_topic_send(db, bus, &req, &params, topic, wake_eligible)
+            handle_topic_send(db, bus, &req, &params, topic, wake_eligible, peer_registry).await
+        }
+        Address::FederatedAgent {
+            daemon_id: target_daemon,
+            agent_id,
+        } => {
+            // Self via federated form: rewrite to local before reaching
+            // federation routing (Task 4 spec).
+            if target_daemon == daemon_id {
+                handle_direct_send(db, bus, &req, &params, agent_id, wake_eligible)
+            } else {
+                handle_federated_direct_send(
+                    db,
+                    bus,
+                    peer_registry,
+                    &req,
+                    &params,
+                    &target_daemon,
+                    &agent_id,
+                    wake_eligible,
+                )
+                .await
+            }
         }
     }
 }
@@ -548,6 +674,7 @@ fn handle_direct_send(
                 topic: None,
                 body_preview: preview,
                 wake_eligible,
+                origin_daemon_id: None,
             });
             let result = MailSendResult {
                 delivered: 1,
@@ -559,13 +686,14 @@ fn handle_direct_send(
     }
 }
 
-fn handle_topic_send(
+async fn handle_topic_send(
     db: &Arc<Database>,
     bus: &EventBus,
     req: &RpcRequest,
     params: &MailSendParams,
     topic: String,
     wake_eligible: bool,
+    peer_registry: &Arc<PeerRegistry>,
 ) -> RpcResponse {
     let subscribers = match db.list_subscribers_for_topic(&topic) {
         Ok(s) => s,
@@ -636,6 +764,66 @@ fn handle_topic_send(
         return RpcResponse::error(req.id, -32000, format!("insert_mail_batch: {}", e));
     }
 
+    // Federation Task 12: enumerate `topic_federations` rows and append
+    // a `peer_outbox` row per outbound-or-both peer. Done in a separate
+    // step from the local mail batch — receivers dedupe by sender_seq so
+    // partial-fanout failure is recoverable.
+    let federated_peers = db
+        .list_outbound_federations_for_topic(&topic)
+        .unwrap_or_default();
+    if !federated_peers.is_empty() {
+        let mail_id_for_peer = mails
+            .first()
+            .map(|m| m.id.clone())
+            .unwrap_or_else(|| crate::shared::constants::generate_short_id());
+        let recipient_addr = format!("topic://{}", topic);
+        let body = params.body.clone();
+        let sender = params.sender.clone();
+        let created_at = now;
+        let mut fanout: Vec<(
+            String,
+            String,
+            String,
+            String,
+            String,
+            Option<String>,
+            i64,
+        )> = Vec::new();
+        for fed in &federated_peers {
+            // Per-peer cap pre-check.
+            if let Ok(depth) = db.outbox_depth(&fed.peer_id) {
+                if depth >= PEER_OUTBOX_MAX_DEPTH_DEFAULT {
+                    // Skip this peer; emit a forward-failed event.
+                    bus.publish(StreamEvent::PeerMailForwardFailed {
+                        peer_id: fed.peer_id.clone(),
+                        mail_id: mail_id_for_peer.clone(),
+                        reason: "peer_outbox_full".to_string(),
+                    });
+                    continue;
+                }
+            }
+            let outbox_id = crate::shared::constants::generate_short_id();
+            fanout.push((
+                fed.peer_id.clone(),
+                outbox_id,
+                mail_id_for_peer.clone(),
+                recipient_addr.clone(),
+                body.clone(),
+                sender.clone(),
+                created_at,
+            ));
+        }
+        if !fanout.is_empty() {
+            if let Err(e) = db.insert_mail_batch_with_outbox(&[], &fanout) {
+                tracing::warn!(error = %e, "topic federation outbox fanout failed");
+            } else {
+                for (peer_id, _, _, _, _, _, _) in &fanout {
+                    peer_registry.notify_outbox(peer_id).await;
+                }
+            }
+        }
+    }
+
     // Emit one MailSent per subscriber row; each carries the per-recipient
     // mail_id so the event stream is "one event per recipient".
     for (mail, state) in mails.iter().zip(per_state.iter()) {
@@ -654,6 +842,7 @@ fn handle_topic_send(
                     topic: Some(topic.clone()),
                     body_preview: preview.clone(),
                     wake_eligible,
+                    origin_daemon_id: None,
                 });
             }
             MailState::Failed => {
@@ -723,6 +912,7 @@ fn handle_mail_ack(db: &Arc<Database>, bus: &EventBus, req: RpcRequest) -> RpcRe
             bus.publish(StreamEvent::MailDelivered {
                 mail_id: mail.id.clone(),
                 recipient_id: mail.recipient_id.clone(),
+                origin_daemon_id: None,
             });
             let r = MailAckResult { acked: true };
             RpcResponse::success(req.id, serde_json::to_value(r).unwrap())
@@ -794,7 +984,11 @@ fn handle_mail_topics(db: &Arc<Database>, req: RpcRequest) -> RpcResponse {
     }
 }
 
-async fn handle_status(manager: &Arc<AgentManager>, req: RpcRequest) -> RpcResponse {
+async fn handle_status(
+    manager: &Arc<AgentManager>,
+    daemon_id: &str,
+    req: RpcRequest,
+) -> RpcResponse {
     match manager.circle(None).await {
         Ok(agents) => {
             use crate::shared::types::AgentState;
@@ -812,9 +1006,511 @@ async fn handle_status(manager: &Arc<AgentManager>, req: RpcRequest) -> RpcRespo
                 active_count: active,
                 queued_count: queued,
                 max_concurrent_agents: manager.max_concurrent_agents(),
+                daemon_id: Some(daemon_id.to_string()),
             };
             RpcResponse::success(req.id, serde_json::to_value(result).unwrap())
         }
         Err(e) => RpcResponse::error(req.id, -32000, format!("Failed: {}", e)),
+    }
+}
+
+// --- Workspace + Memory handlers ---
+
+async fn handle_workspace_create(
+    reg: &Arc<WorkspaceRegistry>,
+    req: RpcRequest,
+) -> RpcResponse {
+    let params: WorkspaceCreateParams = match parse_params(&req) {
+        Ok(p) => p,
+        Err(e) => return e,
+    };
+    if let Err(e) = validate_workspace_id(&params.name) {
+        let _ = e;
+        return rpc_err(req.id, "invalid_workspace_name");
+    }
+    match reg
+        .create(
+            &params.name,
+            std::path::Path::new(&params.repo_path),
+            &params.branch,
+        )
+        .await
+    {
+        Ok(ws) => {
+            let result = WorkspaceCreateResult {
+                id: ws.id,
+                path: ws.path,
+            };
+            RpcResponse::success(req.id, serde_json::to_value(result).unwrap())
+        }
+        Err(e) => {
+            let msg = e.to_string();
+            // Map prefix to RPC code, keep details in message after colon.
+            let code = msg.split(':').next().unwrap_or("workspace_error");
+            rpc_err(req.id, code)
+        }
+    }
+}
+
+fn handle_workspace_list(reg: &Arc<WorkspaceRegistry>, req: RpcRequest) -> RpcResponse {
+    match reg.list() {
+        Ok((entries, orphans)) => {
+            let result = WorkspaceListResult {
+                workspaces: entries,
+                orphans,
+            };
+            RpcResponse::success(req.id, serde_json::to_value(result).unwrap())
+        }
+        Err(e) => RpcResponse::error(req.id, -32000, format!("list: {}", e)),
+    }
+}
+
+async fn handle_workspace_destroy(
+    reg: &Arc<WorkspaceRegistry>,
+    req: RpcRequest,
+) -> RpcResponse {
+    let params: WorkspaceDestroyParams = match parse_params(&req) {
+        Ok(p) => p,
+        Err(e) => return e,
+    };
+    match reg.destroy(&params.id).await {
+        Ok(()) => RpcResponse::success(
+            req.id,
+            serde_json::to_value(WorkspaceDestroyResult::default()).unwrap(),
+        ),
+        Err(e) => {
+            let msg = e.to_string();
+            let code = msg.split(':').next().unwrap_or("workspace_error");
+            rpc_err(req.id, code)
+        }
+    }
+}
+
+async fn handle_workspace_assign(
+    reg: &Arc<WorkspaceRegistry>,
+    req: RpcRequest,
+) -> RpcResponse {
+    let params: WorkspaceAssignParams = match parse_params(&req) {
+        Ok(p) => p,
+        Err(e) => return e,
+    };
+    match reg.assign(&params.workspace_id, &params.agent_id).await {
+        Ok(()) => RpcResponse::success(
+            req.id,
+            serde_json::to_value(WorkspaceAssignResult::default()).unwrap(),
+        ),
+        Err(e) => {
+            let msg = e.to_string();
+            let code = msg.split(':').next().unwrap_or("workspace_error");
+            rpc_err(req.id, code)
+        }
+    }
+}
+
+fn handle_memory_put(db: &Arc<Database>, bus: &EventBus, req: RpcRequest) -> RpcResponse {
+    let params: MemoryPutParams = match parse_params(&req) {
+        Ok(p) => p,
+        Err(e) => return e,
+    };
+    if validate_memory_key(&params.key).is_err() {
+        return rpc_err(req.id, "invalid_memory_key");
+    }
+    // Workspace must exist and be Active.
+    let ws = match db.get_workspace(&params.workspace_id) {
+        Ok(Some(w)) => w,
+        Ok(None) => return rpc_err(req.id, "workspace_not_found"),
+        Err(e) => return RpcResponse::error(req.id, -32000, format!("db: {}", e)),
+    };
+    if ws.state != crate::shared::types::WorkspaceState::Active {
+        return rpc_err(req.id, "workspace_destroying");
+    }
+
+    let bytes = match serde_json::to_vec(&params.value) {
+        Ok(b) => b,
+        Err(_) => return rpc_err(req.id, "invalid_value_json"),
+    };
+
+    let cfg = crate::shared::config::Config::load().unwrap_or_default();
+    if (bytes.len() as u64) > cfg.daemon.workspace_value_cap_bytes {
+        return rpc_err(req.id, "memory_value_too_large");
+    }
+
+    // Total cap pre-check.
+    let total = db.memory_total_size_for_workspace(&params.workspace_id).unwrap_or(0);
+    let (_cur_v, cur_size) = db
+        .memory_current_version_and_size(&params.workspace_id, &params.key)
+        .unwrap_or((0, 0));
+    let new_total = total.saturating_sub(cur_size).saturating_add(bytes.len() as u64);
+    if new_total > cfg.daemon.workspace_total_cap_bytes {
+        return rpc_err(req.id, "memory_total_cap_exceeded");
+    }
+
+    let updated_by = params.sender.clone().unwrap_or_else(|| "system".to_string());
+    let outcome = match db.memory_put_cas(
+        &params.workspace_id,
+        &params.key,
+        &bytes,
+        params.expected_version,
+        &updated_by,
+    ) {
+        Ok(o) => o,
+        Err(e) => return RpcResponse::error(req.id, -32000, format!("put: {}", e)),
+    };
+
+    match outcome {
+        MemoryWriteOutcome::Conflict { current_version } => {
+            RpcResponse::error(
+                req.id,
+                -32000,
+                format!("cas_conflict:current_version={}", current_version),
+            )
+        }
+        MemoryWriteOutcome::Written { version } => {
+            bus.publish(StreamEvent::MemoryWritten {
+                workspace_id: params.workspace_id.clone(),
+                key: params.key.clone(),
+                version,
+                agent_id: params.sender.clone(),
+            });
+            let _ = publish_memory_topic_mail(
+                db,
+                bus,
+                &params.workspace_id,
+                &params.key,
+                version,
+                "put",
+                params.sender.as_deref(),
+            );
+            RpcResponse::success(
+                req.id,
+                serde_json::to_value(MemoryPutResult { version }).unwrap(),
+            )
+        }
+    }
+}
+
+fn handle_memory_get(db: &Arc<Database>, req: RpcRequest) -> RpcResponse {
+    let params: MemoryGetParams = match parse_params(&req) {
+        Ok(p) => p,
+        Err(e) => return e,
+    };
+    if validate_memory_key(&params.key).is_err() {
+        return rpc_err(req.id, "invalid_memory_key");
+    }
+    match db.memory_get(&params.workspace_id, &params.key) {
+        Ok(Some(entry)) => {
+            let result = MemoryGetResult {
+                value: entry.value,
+                version: entry.version,
+            };
+            RpcResponse::success(req.id, serde_json::to_value(result).unwrap())
+        }
+        Ok(None) => rpc_err(req.id, "memory_not_found"),
+        Err(e) => RpcResponse::error(req.id, -32000, format!("get: {}", e)),
+    }
+}
+
+fn handle_memory_list(db: &Arc<Database>, req: RpcRequest) -> RpcResponse {
+    let params: MemoryListParams = match parse_params(&req) {
+        Ok(p) => p,
+        Err(e) => return e,
+    };
+    let prefix = params.prefix.as_deref();
+    match db.memory_list_prefix(&params.workspace_id, prefix) {
+        Ok(entries) => RpcResponse::success(
+            req.id,
+            serde_json::to_value(MemoryListResult { entries }).unwrap(),
+        ),
+        Err(e) => RpcResponse::error(req.id, -32000, format!("list: {}", e)),
+    }
+}
+
+fn handle_memory_delete(db: &Arc<Database>, bus: &EventBus, req: RpcRequest) -> RpcResponse {
+    let params: MemoryDeleteParams = match parse_params(&req) {
+        Ok(p) => p,
+        Err(e) => return e,
+    };
+    if validate_memory_key(&params.key).is_err() {
+        return rpc_err(req.id, "invalid_memory_key");
+    }
+    let outcome = match db.memory_delete_cas(
+        &params.workspace_id,
+        &params.key,
+        params.expected_version,
+    ) {
+        Ok(o) => o,
+        Err(e) => return RpcResponse::error(req.id, -32000, format!("delete: {}", e)),
+    };
+    match outcome {
+        MemoryWriteOutcome::Conflict { current_version } => RpcResponse::error(
+            req.id,
+            -32000,
+            format!("cas_conflict:current_version={}", current_version),
+        ),
+        MemoryWriteOutcome::Written { version } => {
+            // version == 0 means "no-op" (key didn't exist).
+            if version > 0 {
+                bus.publish(StreamEvent::MemoryDeleted {
+                    workspace_id: params.workspace_id.clone(),
+                    key: params.key.clone(),
+                    agent_id: params.sender.clone(),
+                });
+                let _ = publish_memory_topic_mail(
+                    db,
+                    bus,
+                    &params.workspace_id,
+                    &params.key,
+                    version,
+                    "delete",
+                    params.sender.as_deref(),
+                );
+            }
+            RpcResponse::success(
+                req.id,
+                serde_json::to_value(MemoryDeleteResult::default()).unwrap(),
+            )
+        }
+    }
+}
+
+// --- Federation handlers (Tasks 10, 11, 12) ---
+
+const PEER_OUTBOX_MAX_DEPTH_DEFAULT: u64 = 10_000;
+
+async fn handle_federated_direct_send(
+    db: &Arc<Database>,
+    bus: &EventBus,
+    peer_registry: &Arc<PeerRegistry>,
+    req: &RpcRequest,
+    params: &MailSendParams,
+    target_daemon: &str,
+    agent_id: &str,
+    wake_eligible: bool,
+) -> RpcResponse {
+    use crate::shared::types::{Peer, PeerState};
+    let peer: Peer = match peer_registry
+        .peer_for_daemon_id(target_daemon)
+        .await
+    {
+        Ok(Some(p)) => p,
+        Ok(None) => return rpc_err(req.id, "peer_unknown_for_recipient"),
+        Err(e) => return RpcResponse::error(req.id, -32000, format!("db: {}", e)),
+    };
+    if peer.state == PeerState::Removing {
+        return rpc_err(req.id, "peer_removing");
+    }
+
+    let depth = match db.outbox_depth(&peer.id) {
+        Ok(d) => d,
+        Err(e) => return RpcResponse::error(req.id, -32000, format!("outbox_depth: {}", e)),
+    };
+    if depth >= PEER_OUTBOX_MAX_DEPTH_DEFAULT {
+        return rpc_err(req.id, "peer_outbox_full");
+    }
+
+    let now = unix_now();
+    let mail_id = crate::shared::constants::generate_short_id();
+    let outbox_id = crate::shared::constants::generate_short_id();
+    let recipient_addr = format!("agent://grimd-{}/{}", target_daemon, agent_id);
+
+    let mail = Mail {
+        id: mail_id.clone(),
+        recipient_id: recipient_addr.clone(),
+        sender_id: params.sender.clone(),
+        topic: None,
+        body: params.body.clone(),
+        in_reply_to: None,
+        state: MailState::Pending,
+        fail_reason: None,
+        created_at: now,
+        delivered_at: None,
+        seq: 0,
+        wake_eligible,
+    };
+
+    if let Err(e) = db.insert_mail_with_outbox(
+        &mail,
+        &peer.id,
+        &outbox_id,
+        &recipient_addr,
+        None,
+        now,
+    ) {
+        return RpcResponse::error(req.id, -32000, format!("insert_mail_with_outbox: {}", e));
+    }
+
+    bus.publish(StreamEvent::MailSent {
+        mail_id: mail_id.clone(),
+        sender_id: params.sender.clone(),
+        recipient_id: Some(recipient_addr.clone()),
+        topic: None,
+    });
+    peer_registry.notify_outbox(&peer.id).await;
+
+    let result = MailSendResult {
+        delivered: 1,
+        mail_ids: vec![mail_id],
+    };
+    RpcResponse::success(req.id, serde_json::to_value(result).unwrap())
+}
+
+async fn handle_peer_add(
+    peer_registry: &Arc<PeerRegistry>,
+    req: RpcRequest,
+) -> RpcResponse {
+    let params: PeerAddParams = match parse_params(&req) {
+        Ok(p) => p,
+        Err(e) => return e,
+    };
+    match peer_registry
+        .register_peer(params.name, params.url, params.bearer_token, 10)
+        .await
+    {
+        Ok(peer) => RpcResponse::success(
+            req.id,
+            serde_json::to_value(PeerAddResult {
+                peer_id: peer.id,
+                daemon_id: peer.daemon_id,
+            })
+            .unwrap(),
+        ),
+        Err(e) => rpc_err(req.id, &e.to_string()),
+    }
+}
+
+async fn handle_peer_list(
+    peer_registry: &Arc<PeerRegistry>,
+    req: RpcRequest,
+) -> RpcResponse {
+    match peer_registry.list_with_outbox_depth().await {
+        Ok(peers) => RpcResponse::success(
+            req.id,
+            serde_json::to_value(PeerListResult { peers }).unwrap(),
+        ),
+        Err(e) => RpcResponse::error(req.id, -32000, format!("list_peers: {}", e)),
+    }
+}
+
+async fn handle_peer_remove(
+    peer_registry: &Arc<PeerRegistry>,
+    req: RpcRequest,
+) -> RpcResponse {
+    let params: PeerRemoveParams = match parse_params(&req) {
+        Ok(p) => p,
+        Err(e) => return e,
+    };
+    match peer_registry.remove_peer(&params.name).await {
+        Ok(removed) => RpcResponse::success(
+            req.id,
+            serde_json::to_value(PeerRemoveResult { removed }).unwrap(),
+        ),
+        Err(e) => rpc_err(req.id, &e.to_string()),
+    }
+}
+
+async fn handle_peer_ping(
+    peer_registry: &Arc<PeerRegistry>,
+    req: RpcRequest,
+) -> RpcResponse {
+    let params: PeerPingParams = match parse_params(&req) {
+        Ok(p) => p,
+        Err(e) => return e,
+    };
+    match peer_registry.ping_peer(&params.name).await {
+        Ok((rtt, state)) => RpcResponse::success(
+            req.id,
+            serde_json::to_value(PeerPingResult {
+                rtt_ms: rtt,
+                state,
+            })
+            .unwrap(),
+        ),
+        Err(e) => rpc_err(req.id, &e.to_string()),
+    }
+}
+
+async fn handle_topic_federate(
+    peer_registry: &Arc<PeerRegistry>,
+    req: RpcRequest,
+) -> RpcResponse {
+    use crate::shared::types::FederationDirection;
+    let params: TopicFederateParams = match parse_params(&req) {
+        Ok(p) => p,
+        Err(e) => return e,
+    };
+    if !is_valid_topic_name(&params.topic) {
+        return rpc_err(req.id, "invalid_topic_name");
+    }
+    if params.topic.starts_with("workspace/")
+        || params.topic.starts_with("supervisor/")
+        || params.topic.starts_with("wake/")
+    {
+        return rpc_err(req.id, "topic_federation_reserved");
+    }
+    let direction: FederationDirection = match params.direction.parse() {
+        Ok(d) => d,
+        Err(_) => return rpc_err(req.id, "invalid_direction"),
+    };
+    let peer = match peer_registry.db.get_peer_by_name(&params.peer) {
+        Ok(Some(p)) => p,
+        Ok(None) => return rpc_err(req.id, "peer_not_found"),
+        Err(e) => return RpcResponse::error(req.id, -32000, format!("db: {}", e)),
+    };
+    let id = crate::shared::constants::generate_short_id();
+    let now = unix_now();
+    let final_dir = match peer_registry
+        .db
+        .upsert_topic_federation(&id, &peer.id, &params.topic, direction, now)
+    {
+        Ok(d) => d,
+        Err(e) => return RpcResponse::error(req.id, -32000, format!("federate: {}", e)),
+    };
+    peer_registry.bus.publish(StreamEvent::TopicFederationAdded {
+        peer_id: peer.id.clone(),
+        topic: params.topic.clone(),
+        direction: final_dir.as_str().to_string(),
+    });
+    RpcResponse::success(
+        req.id,
+        serde_json::to_value(TopicFederateResult {
+            topic: params.topic,
+            direction: final_dir.as_str().to_string(),
+        })
+        .unwrap(),
+    )
+}
+
+async fn handle_topic_unfederate(
+    peer_registry: &Arc<PeerRegistry>,
+    req: RpcRequest,
+) -> RpcResponse {
+    let params: TopicUnfederateParams = match parse_params(&req) {
+        Ok(p) => p,
+        Err(e) => return e,
+    };
+    let peer = match peer_registry.db.get_peer_by_name(&params.peer) {
+        Ok(Some(p)) => p,
+        Ok(None) => return rpc_err(req.id, "peer_not_found"),
+        Err(e) => return RpcResponse::error(req.id, -32000, format!("db: {}", e)),
+    };
+    match peer_registry
+        .db
+        .delete_topic_federation(&peer.id, &params.topic)
+    {
+        Ok(removed) => {
+            if removed {
+                peer_registry
+                    .bus
+                    .publish(StreamEvent::TopicFederationRemoved {
+                        peer_id: peer.id.clone(),
+                        topic: params.topic.clone(),
+                    });
+            }
+            RpcResponse::success(
+                req.id,
+                serde_json::to_value(TopicUnfederateResult { removed }).unwrap(),
+            )
+        }
+        Err(e) => RpcResponse::error(req.id, -32000, format!("unfederate: {}", e)),
     }
 }

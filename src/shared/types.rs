@@ -5,6 +5,22 @@ use std::path::PathBuf;
 
 pub type AgentId = String;
 
+/// Stable 8-hex identifier minted on first `grimd` boot. Two daemons in a
+/// federation use distinct DaemonIds to disambiguate agent addresses.
+/// Display form prefixes `grimd-`; storage is the bare 8-hex string.
+pub type DaemonId = String;
+
+/// `^[0-9a-f]{8}$`.
+pub fn validate_daemon_id(s: &str) -> bool {
+    if s.len() != 8 {
+        return false;
+    }
+    s.bytes()
+        .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+}
+
+pub type PeerId = String;
+
 // --- State Enums with consistent FromStr + Display ---
 
 macro_rules! impl_state_enum {
@@ -165,6 +181,8 @@ pub struct Agent {
     pub restart_policy: RestartPolicy,
     #[serde(default)]
     pub restart_count: u32,
+    #[serde(default)]
+    pub workspace_id: Option<WorkspaceId>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -302,6 +320,155 @@ pub struct WakeSource {
     pub last_fired_at: Option<i64>,
     pub fire_count: i64,
     pub created_at: i64,
+}
+
+// --- Workspaces ---
+
+pub type WorkspaceId = String;
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "PascalCase")]
+pub enum WorkspaceState {
+    Active,
+    Destroying,
+}
+
+impl_state_enum!(WorkspaceState {
+    Active => "Active",
+    Destroying => "Destroying",
+});
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct Workspace {
+    pub id: WorkspaceId,
+    pub path: PathBuf,
+    pub repo_path: PathBuf,
+    pub branch: String,
+    pub state: WorkspaceState,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct WorkspaceListEntry {
+    pub id: WorkspaceId,
+    pub path: PathBuf,
+    pub branch: String,
+    pub state: WorkspaceState,
+    pub agent_count: u32,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct MemoryEntry {
+    pub workspace_id: WorkspaceId,
+    pub key: String,
+    pub value: serde_json::Value,
+    pub version: u64,
+    pub updated_at: i64,
+    pub updated_by: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct MemoryListItem {
+    pub key: String,
+    pub version: u64,
+    pub updated_at: i64,
+    pub value_size: u64,
+}
+
+/// Validation error returned by [`validate_workspace_id`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum NameError {
+    Empty,
+    TooLong,
+    InvalidChar,
+    LeadingNonAlphanumeric,
+}
+
+impl std::fmt::Display for NameError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Empty => f.write_str("empty"),
+            Self::TooLong => f.write_str("too_long"),
+            Self::InvalidChar => f.write_str("invalid_char"),
+            Self::LeadingNonAlphanumeric => f.write_str("leading_non_alphanumeric"),
+        }
+    }
+}
+
+/// Workspace ID validator: `^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$`.
+pub fn validate_workspace_id(s: &str) -> Result<(), NameError> {
+    if s.is_empty() {
+        return Err(NameError::Empty);
+    }
+    if s.len() > super::constants::MAX_WORKSPACE_NAME_LEN {
+        return Err(NameError::TooLong);
+    }
+    let mut chars = s.chars();
+    let first = chars.next().unwrap();
+    if !first.is_ascii_alphanumeric() {
+        return Err(NameError::LeadingNonAlphanumeric);
+    }
+    for c in chars {
+        if !(c.is_ascii_alphanumeric() || c == '.' || c == '_' || c == '-') {
+            return Err(NameError::InvalidChar);
+        }
+    }
+    Ok(())
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MemoryKeyError {
+    Empty,
+    TooLong,
+    InvalidChar,
+    LeadingSlash,
+    TrailingSlash,
+    DoubleSlash,
+}
+
+impl std::fmt::Display for MemoryKeyError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Empty => f.write_str("empty"),
+            Self::TooLong => f.write_str("too_long"),
+            Self::InvalidChar => f.write_str("invalid_char"),
+            Self::LeadingSlash => f.write_str("leading_slash"),
+            Self::TrailingSlash => f.write_str("trailing_slash"),
+            Self::DoubleSlash => f.write_str("double_slash"),
+        }
+    }
+}
+
+/// Memory key validator: `^[a-zA-Z0-9._-]+(/[a-zA-Z0-9._-]+)*$`, ≤ 256 chars,
+/// no leading/trailing slash, no double slash.
+pub fn validate_memory_key(s: &str) -> Result<(), MemoryKeyError> {
+    if s.is_empty() {
+        return Err(MemoryKeyError::Empty);
+    }
+    if s.len() > super::constants::MAX_MEMORY_KEY_LEN {
+        return Err(MemoryKeyError::TooLong);
+    }
+    if s.starts_with('/') {
+        return Err(MemoryKeyError::LeadingSlash);
+    }
+    if s.ends_with('/') {
+        return Err(MemoryKeyError::TrailingSlash);
+    }
+    if s.contains("//") {
+        return Err(MemoryKeyError::DoubleSlash);
+    }
+    for c in s.chars() {
+        if !(c.is_ascii_alphanumeric() || c == '.' || c == '_' || c == '-' || c == '/') {
+            return Err(MemoryKeyError::InvalidChar);
+        }
+    }
+    Ok(())
+}
+
+/// Split a memory key into segments (for topic emission).
+pub fn memory_key_segments(s: &str) -> Vec<&str> {
+    s.split('/').collect()
 }
 
 // --- Scrolls (Spec-based DAG Orchestration) ---
@@ -572,5 +739,160 @@ mod tests {
             created_at: Utc::now(),
             updated_at: Utc::now(),
         }
+    }
+}
+
+// --- Federation peer types (see plan/federation.md) ---
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum PeerState {
+    Pending,
+    Active,
+    Down,
+    Removing,
+}
+
+impl_state_enum!(PeerState {
+    Pending => "pending",
+    Active => "active",
+    Down => "down",
+    Removing => "removing",
+});
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum PeerOutboxState {
+    Pending,
+    InFlight,
+    Delivered,
+    Failed,
+}
+
+impl_state_enum!(PeerOutboxState {
+    Pending => "pending",
+    InFlight => "in_flight",
+    Delivered => "delivered",
+    Failed => "failed",
+});
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum FederationDirection {
+    Inbound,
+    Outbound,
+    Both,
+}
+
+impl_state_enum!(FederationDirection {
+    Inbound => "inbound",
+    Outbound => "outbound",
+    Both => "both",
+});
+
+impl FederationDirection {
+    /// Merge two direction declarations into the most-permissive form.
+    pub fn merge(self, other: FederationDirection) -> FederationDirection {
+        if self == other {
+            return self;
+        }
+        FederationDirection::Both
+    }
+
+    pub fn allows_outbound(&self) -> bool {
+        matches!(self, Self::Outbound | Self::Both)
+    }
+
+    pub fn allows_inbound(&self) -> bool {
+        matches!(self, Self::Inbound | Self::Both)
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct Peer {
+    pub id: PeerId,
+    /// Remote DaemonId. Empty until the handshake completes for `Pending` rows.
+    pub daemon_id: String,
+    pub name: String,
+    pub url: String,
+    pub bearer_token_hash: Vec<u8>,
+    /// Plaintext bearer token. Stored alongside the hash so the outbound
+    /// client task can re-issue `Hello` after daemon restarts. Spec calls
+    /// for hash-only storage; v1 keeps plaintext for ergonomics until
+    /// a token-rotation UX lands.
+    pub bearer_token: String,
+    pub public_key: Option<Vec<u8>>,
+    pub state: PeerState,
+    pub last_seen: Option<i64>,
+    pub registered_at: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PeerOutboxRow {
+    pub id: String,
+    pub peer_id: PeerId,
+    pub mail_id: String,
+    pub sender_seq: u64,
+    pub recipient: String,
+    pub sender: Option<String>,
+    pub topic: Option<String>,
+    pub body: String,
+    pub created_at: i64,
+    pub attempts: u32,
+    pub next_attempt_at: i64,
+    pub state: PeerOutboxState,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PeerInboxRow {
+    pub sender_daemon_id: String,
+    pub sender_seq: u64,
+    pub mail_id: String,
+    pub received_at: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TopicFederation {
+    pub id: String,
+    pub peer_id: PeerId,
+    pub topic: String,
+    pub direction: FederationDirection,
+    pub created_at: i64,
+}
+
+#[cfg(test)]
+mod federation_type_tests {
+    use super::*;
+
+    #[test]
+    fn validate_daemon_id_accepts_lowercase_hex() {
+        assert!(validate_daemon_id("abcd1234"));
+        assert!(validate_daemon_id("00000000"));
+        assert!(validate_daemon_id("ffffffff"));
+    }
+
+    #[test]
+    fn validate_daemon_id_rejects_other() {
+        assert!(!validate_daemon_id(""));
+        assert!(!validate_daemon_id("abcd123"));
+        assert!(!validate_daemon_id("abcd1234x"));
+        assert!(!validate_daemon_id("ABCD1234"));
+        assert!(!validate_daemon_id("ghij1234"));
+    }
+
+    #[test]
+    fn federation_direction_merge_idempotent_to_both() {
+        assert_eq!(
+            FederationDirection::Outbound.merge(FederationDirection::Inbound),
+            FederationDirection::Both
+        );
+        assert_eq!(
+            FederationDirection::Outbound.merge(FederationDirection::Outbound),
+            FederationDirection::Outbound
+        );
+        assert_eq!(
+            FederationDirection::Outbound.merge(FederationDirection::Both),
+            FederationDirection::Both
+        );
     }
 }

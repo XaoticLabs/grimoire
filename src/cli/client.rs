@@ -33,6 +33,7 @@ impl DaemonClient {
             method: method.to_string(),
             params,
             id,
+            protocol_version: None,
         };
 
         let json = serde_json::to_string(&req)?;

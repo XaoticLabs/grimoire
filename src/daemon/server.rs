@@ -21,7 +21,10 @@ pub struct AppState {
     pub db: Arc<super::persistence::Database>,
     pub scroll_keeper: Arc<super::scroll_keeper::ScrollKeeper>,
     pub wake_registry: Arc<super::wake_registry::WakeRegistry>,
+    pub workspace_registry: Arc<super::workspace_registry::WorkspaceRegistry>,
     pub supervisor: Arc<super::supervisor::Supervisor>,
+    pub peer_registry: Arc<super::peer_registry::PeerRegistry>,
+    pub daemon_id: String,
 }
 
 /// Start both UDS and HTTP servers
@@ -30,14 +33,20 @@ pub async fn run(
     db: Arc<super::persistence::Database>,
     scroll_keeper: Arc<super::scroll_keeper::ScrollKeeper>,
     wake_registry: Arc<super::wake_registry::WakeRegistry>,
+    workspace_registry: Arc<super::workspace_registry::WorkspaceRegistry>,
     supervisor: Arc<super::supervisor::Supervisor>,
+    peer_registry: Arc<super::peer_registry::PeerRegistry>,
+    daemon_id: String,
 ) -> Result<()> {
     let state = AppState {
         manager: manager.clone(),
         db,
         scroll_keeper,
         wake_registry,
+        workspace_registry,
         supervisor,
+        peer_registry,
+        daemon_id,
     };
 
     // Start UDS listener
@@ -155,7 +164,10 @@ async fn run_uds_server(state: AppState) -> Result<()> {
                     &state.db,
                     &state.scroll_keeper,
                     &state.wake_registry,
+                    &state.workspace_registry,
+                    &state.peer_registry,
                     &bus,
+                    &state.daemon_id,
                     req,
                 )
                 .await;

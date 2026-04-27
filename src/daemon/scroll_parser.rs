@@ -5,6 +5,9 @@ use anyhow::{Result, anyhow};
 pub struct ScrollSpec {
     pub name: String,
     pub tasks: Vec<TaskSpec>,
+    pub workspace: Option<String>,
+    pub workspace_repo: Option<String>,
+    pub workspace_branch: Option<String>,
 }
 
 #[derive(Debug)]
@@ -55,8 +58,27 @@ pub fn parse_scroll(content: &str) -> Result<ScrollSpec> {
     // Split into task sections on ## Task: headings
     let mut tasks = Vec::new();
     let mut current_task: Option<(String, Vec<&str>)> = None;
+    let mut workspace: Option<String> = None;
+    let mut workspace_repo: Option<String> = None;
+    let mut workspace_branch: Option<String> = None;
 
     for line in &lines {
+        // Top-level workspace directives (between scroll heading and first task).
+        if current_task.is_none() {
+            let trimmed = line.trim();
+            if let Some(v) = trimmed.strip_prefix("- workspace_repo:") {
+                workspace_repo = Some(v.trim().to_string());
+                continue;
+            }
+            if let Some(v) = trimmed.strip_prefix("- workspace_branch:") {
+                workspace_branch = Some(v.trim().to_string());
+                continue;
+            }
+            if let Some(v) = trimmed.strip_prefix("- workspace:") {
+                workspace = Some(v.trim().to_string());
+                continue;
+            }
+        }
         if let Some(task_name) = line
             .strip_prefix("## Task:")
             .or_else(|| line.strip_prefix("## Task: "))
@@ -102,7 +124,13 @@ pub fn parse_scroll(content: &str) -> Result<ScrollSpec> {
         }
     }
 
-    Ok(ScrollSpec { name, tasks })
+    Ok(ScrollSpec {
+        name,
+        tasks,
+        workspace,
+        workspace_repo,
+        workspace_branch,
+    })
 }
 
 fn parse_task_section(name: &str, body: &[&str]) -> Result<TaskSpec> {

@@ -1,0 +1,95 @@
+syntax = "proto3";
+package grimoire.peer.v1;
+
+// Federation peer protocol (federation-spec Tasks 5–9).
+//
+// One persistent bidirectional stream per peer link. The first message
+// from each side is `Hello`; the receiver replies with `HelloAck`. After
+// that the channel carries `MailDeliver`/`MailAck` traffic (with periodic
+// `Heartbeat`s to detect silently dead peers) until either side sends
+// `Goodbye` or the underlying transport drops.
+//
+// `PeerOutbound` and `PeerInbound` use symmetric oneof shapes — the names
+// just disambiguate per-side at the type level.
+
+service Peer {
+  rpc Channel(stream PeerOutbound) returns (stream PeerInbound);
+}
+
+message Hello {
+  string daemon_id = 1;
+  uint32 protocol_version = 2;
+  string bearer_token = 3;
+  repeated string advertised_topics = 4;
+}
+
+message HelloAck {
+  string daemon_id = 1;
+  uint32 protocol_version = 2;
+  bool accepted = 3;
+  string reject_reason = 4;
+}
+
+message Heartbeat {
+  uint64 nonce = 1;
+}
+
+message HeartbeatAck {
+  uint64 nonce = 1;
+}
+
+message MailDeliver {
+  string mail_id = 1;
+  string sender = 2;
+  string recipient = 3;
+  string body = 4;
+  optional string topic = 5;
+  uint64 sender_seq = 6;
+}
+
+message MailAck {
+  string mail_id = 1;
+  bool ok = 2;
+  string reason = 3;
+}
+
+message TopicSubscribe {
+  string topic = 1;
+  string subscriber_address = 2;
+}
+
+message TopicUnsubscribe {
+  string topic = 1;
+  string subscriber_address = 2;
+}
+
+message Goodbye {
+  string reason = 1;
+}
+
+message PeerOutbound {
+  oneof msg {
+    Hello hello = 1;
+    Heartbeat heartbeat = 2;
+    HeartbeatAck heartbeat_ack = 3;
+    MailDeliver mail_deliver = 4;
+    MailAck mail_ack = 5;
+    TopicSubscribe topic_subscribe = 6;
+    TopicUnsubscribe topic_unsubscribe = 7;
+    Goodbye goodbye = 8;
+    HelloAck hello_ack = 9;
+  }
+}
+
+message PeerInbound {
+  oneof msg {
+    HelloAck hello_ack = 1;
+    Heartbeat heartbeat = 2;
+    HeartbeatAck heartbeat_ack = 3;
+    MailDeliver mail_deliver = 4;
+    MailAck mail_ack = 5;
+    TopicSubscribe topic_subscribe = 6;
+    TopicUnsubscribe topic_unsubscribe = 7;
+    Goodbye goodbye = 8;
+  }
+}

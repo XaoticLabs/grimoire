@@ -182,6 +182,7 @@ impl EscalationMailSender for DbEscalationMailSender {
                     topic: None,
                     body_preview: body.chars().take(200).collect(),
                     wake_eligible: true,
+                    origin_daemon_id: None,
                 });
                 Ok(EscalationOutcome {
                     fanout_count: 1,
@@ -222,12 +223,18 @@ impl EscalationMailSender for DbEscalationMailSender {
                         topic: Some(topic.clone()),
                         body_preview: body.chars().take(200).collect(),
                         wake_eligible: true,
+                        origin_daemon_id: None,
                     });
                 }
                 Ok(EscalationOutcome {
                     fanout_count: mails.len() as u32,
                     recipient_ids: recipients,
                 })
+            }
+            Address::FederatedAgent { .. } => {
+                // Supervisor escalation does not yet cross daemons. Surface
+                // a clear error so operators can re-target locally.
+                anyhow::bail!("escalate_to_federated_unsupported")
             }
         }
     }

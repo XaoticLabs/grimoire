@@ -345,6 +345,7 @@ async fn restart_recovery_publishes_state_change_for_each_failure() {
             worker_id: None,
             restart_policy: grimoire::shared::types::RestartPolicy::Never,
             restart_count: 0,
+            workspace_id: None,
         })
         .unwrap();
     }

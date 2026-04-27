@@ -25,6 +25,7 @@ fn fresh_agent(id: &str, worker_id: Option<&str>) -> Agent {
         worker_id: worker_id.map(|s| s.to_string()),
         restart_policy: grimoire::shared::types::RestartPolicy::Never,
         restart_count: 0,
+        workspace_id: None,
     }
 }
 

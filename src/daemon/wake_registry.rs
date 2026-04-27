@@ -85,6 +85,7 @@ impl WakeMailSender for DbWakeMailSender {
             topic: None,
             body_preview: body.chars().take(200).collect(),
             wake_eligible: true,
+            origin_daemon_id: None,
         });
         Ok(mail_id)
     }

@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
-use super::types::{Agent, AgentEvent, AgentId, AgentState, AgentSummary, Mail, MailState, TaskConflict, TaskState, ScrollId, WakeSource};
+use super::types::{Agent, AgentEvent, AgentId, AgentState, AgentSummary, DaemonId, Mail, MailState, MemoryListItem, TaskConflict, TaskState, ScrollId, WakeSource, Workspace, WorkspaceId, WorkspaceListEntry};
 
 /// JSON-RPC request from CLI to daemon
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -9,6 +9,11 @@ pub struct RpcRequest {
     pub method: String,
     pub params: serde_json::Value,
     pub id: u64,
+    /// RPC protocol version. Existing callers omit this; the dispatcher
+    /// defaults to `1`. Unknown versions are rejected with
+    /// `unsupported_protocol_version` (federation Task 4).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub protocol_version: Option<u32>,
 }
 
 /// JSON-RPC response from daemon to CLI
@@ -67,6 +72,9 @@ pub struct SummonParams {
     /// (`supervisor://`, `wake://`) are rejected at `mail.send`.
     #[serde(default)]
     pub escalate_to: Option<String>,
+    /// Workspace name to summon into. Mutually exclusive with `cwd`.
+    #[serde(default)]
+    pub workspace: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -120,6 +128,9 @@ pub struct DaemonStatusResult {
     pub queued_count: usize,
     #[serde(default)]
     pub max_concurrent_agents: u32,
+    /// Stable 8-hex DaemonId of this daemon. Display form: `grimd-<id>`.
+    #[serde(default)]
+    pub daemon_id: Option<DaemonId>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -147,6 +158,8 @@ pub struct StatusResponse {
     pub queued_count: usize,
     #[serde(default)]
     pub max_concurrent_agents: u32,
+    #[serde(default)]
+    pub daemon_id: Option<DaemonId>,
 }
 
 // --- Pact params/results ---
@@ -315,6 +328,106 @@ pub struct WakeTestResult {
     pub mail_id: String,
 }
 
+// --- Workspace params/results ---
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkspaceCreateParams {
+    pub name: String,
+    pub repo_path: String,
+    pub branch: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkspaceCreateResult {
+    pub id: WorkspaceId,
+    pub path: PathBuf,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct WorkspaceListParams {
+    #[serde(default)]
+    pub include_orphans: Option<bool>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct WorkspaceListResult {
+    pub workspaces: Vec<WorkspaceListEntry>,
+    #[serde(default)]
+    pub orphans: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkspaceDestroyParams {
+    pub id: WorkspaceId,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct WorkspaceDestroyResult {}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkspaceAssignParams {
+    pub workspace_id: WorkspaceId,
+    pub agent_id: AgentId,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct WorkspaceAssignResult {}
+
+// --- Memory params/results ---
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MemoryPutParams {
+    pub workspace_id: WorkspaceId,
+    pub key: String,
+    pub value: serde_json::Value,
+    #[serde(default)]
+    pub expected_version: Option<u64>,
+    #[serde(default)]
+    pub sender: Option<AgentId>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MemoryPutResult {
+    pub version: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MemoryGetParams {
+    pub workspace_id: WorkspaceId,
+    pub key: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MemoryGetResult {
+    pub value: serde_json::Value,
+    pub version: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MemoryListParams {
+    pub workspace_id: WorkspaceId,
+    #[serde(default)]
+    pub prefix: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct MemoryListResult {
+    pub entries: Vec<MemoryListItem>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MemoryDeleteParams {
+    pub workspace_id: WorkspaceId,
+    pub key: String,
+    #[serde(default)]
+    pub expected_version: Option<u64>,
+    #[serde(default)]
+    pub sender: Option<AgentId>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct MemoryDeleteResult {}
+
 // --- Streaming events (sent over bind/SSE) ---
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -377,11 +490,17 @@ pub enum StreamEvent {
         topic: Option<String>,
         body_preview: String,
         wake_eligible: bool,
+        /// `Some(<daemon-id>)` when the mail arrived via a federated peer;
+        /// `None` for purely local mail.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        origin_daemon_id: Option<DaemonId>,
     },
     #[serde(rename = "mail_delivered")]
     MailDelivered {
         mail_id: String,
         recipient_id: AgentId,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        origin_daemon_id: Option<DaemonId>,
     },
     #[serde(rename = "mail_failed")]
     MailFailed {
@@ -443,6 +562,78 @@ pub enum StreamEvent {
         target: String,
         fanout_count: u32,
     },
+    #[serde(rename = "workspace_created")]
+    WorkspaceCreated {
+        workspace_id: WorkspaceId,
+        path: PathBuf,
+        branch: String,
+    },
+    #[serde(rename = "workspace_destroyed")]
+    WorkspaceDestroyed { workspace_id: WorkspaceId },
+    #[serde(rename = "workspace_orphan_dir_detected")]
+    WorkspaceOrphanDirDetected { path: PathBuf },
+    #[serde(rename = "memory_written")]
+    MemoryWritten {
+        workspace_id: WorkspaceId,
+        key: String,
+        version: u64,
+        agent_id: Option<AgentId>,
+    },
+    #[serde(rename = "memory_deleted")]
+    MemoryDeleted {
+        workspace_id: WorkspaceId,
+        key: String,
+        agent_id: Option<AgentId>,
+    },
+    #[serde(rename = "workspace_file_changed")]
+    WorkspaceFileChanged {
+        workspace_id: WorkspaceId,
+        paths: Vec<String>,
+        kinds: Vec<String>,
+        truncated_count: u32,
+    },
+    // --- Federation (peer-link) events ---
+    #[serde(rename = "peer_handshake_ok")]
+    PeerHandshakeOk {
+        peer_id: String,
+        peer_daemon_id: DaemonId,
+        peer_name: String,
+    },
+    #[serde(rename = "peer_handshake_failed")]
+    PeerHandshakeFailed {
+        peer_name: Option<String>,
+        reason: String,
+    },
+    #[serde(rename = "peer_stream_connected")]
+    PeerStreamConnected { peer_id: String },
+    #[serde(rename = "peer_stream_disconnected")]
+    PeerStreamDisconnected { peer_id: String, reason: String },
+    #[serde(rename = "peer_mail_forwarded")]
+    PeerMailForwarded {
+        peer_id: String,
+        mail_id: String,
+        sender_seq: u64,
+    },
+    #[serde(rename = "peer_mail_forward_failed")]
+    PeerMailForwardFailed {
+        peer_id: String,
+        mail_id: String,
+        reason: String,
+    },
+    #[serde(rename = "peer_mail_received")]
+    PeerMailReceived {
+        peer_id: String,
+        mail_id: String,
+        sender_daemon_id: DaemonId,
+    },
+    #[serde(rename = "topic_federation_added")]
+    TopicFederationAdded {
+        peer_id: String,
+        topic: String,
+        direction: String,
+    },
+    #[serde(rename = "topic_federation_removed")]
+    TopicFederationRemoved { peer_id: String, topic: String },
 }
 
 impl StreamEvent {
@@ -472,9 +663,25 @@ impl StreamEvent {
             | Self::Restarted { agent_id, .. }
             | Self::RestartBudgetExhausted { agent_id, .. }
             | Self::Escalated { agent_id, .. } => Some(agent_id),
+            Self::MemoryWritten { agent_id, .. } | Self::MemoryDeleted { agent_id, .. } => {
+                agent_id.as_deref()
+            }
             Self::ScrollProgress { .. }
             | Self::TaskStateChange { .. }
-            | Self::WorkerRegistered { .. } => None,
+            | Self::WorkerRegistered { .. }
+            | Self::WorkspaceCreated { .. }
+            | Self::WorkspaceDestroyed { .. }
+            | Self::WorkspaceOrphanDirDetected { .. }
+            | Self::WorkspaceFileChanged { .. }
+            | Self::PeerHandshakeOk { .. }
+            | Self::PeerHandshakeFailed { .. }
+            | Self::PeerStreamConnected { .. }
+            | Self::PeerStreamDisconnected { .. }
+            | Self::PeerMailForwarded { .. }
+            | Self::PeerMailForwardFailed { .. }
+            | Self::PeerMailReceived { .. }
+            | Self::TopicFederationAdded { .. }
+            | Self::TopicFederationRemoved { .. } => None,
         }
     }
 
@@ -513,6 +720,21 @@ impl StreamEvent {
             Self::Restarted { .. } => "restarted",
             Self::RestartBudgetExhausted { .. } => "restart_budget_exhausted",
             Self::Escalated { .. } => "escalated",
+            Self::WorkspaceCreated { .. } => "workspace_created",
+            Self::WorkspaceDestroyed { .. } => "workspace_destroyed",
+            Self::WorkspaceOrphanDirDetected { .. } => "workspace_orphan_dir_detected",
+            Self::MemoryWritten { .. } => "memory_written",
+            Self::MemoryDeleted { .. } => "memory_deleted",
+            Self::WorkspaceFileChanged { .. } => "workspace_file_changed",
+            Self::PeerHandshakeOk { .. } => "peer_handshake_ok",
+            Self::PeerHandshakeFailed { .. } => "peer_handshake_failed",
+            Self::PeerStreamConnected { .. } => "peer_stream_connected",
+            Self::PeerStreamDisconnected { .. } => "peer_stream_disconnected",
+            Self::PeerMailForwarded { .. } => "peer_mail_forwarded",
+            Self::PeerMailForwardFailed { .. } => "peer_mail_forward_failed",
+            Self::PeerMailReceived { .. } => "peer_mail_received",
+            Self::TopicFederationAdded { .. } => "topic_federation_added",
+            Self::TopicFederationRemoved { .. } => "topic_federation_removed",
         }
     }
 }
@@ -546,6 +768,86 @@ pub struct ScrollStatusParams {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ScrollAbandonParams {
     pub id: ScrollId,
+}
+
+// --- Federation peer / topic params ---
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PeerAddParams {
+    pub name: String,
+    pub url: String,
+    pub bearer_token: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PeerAddResult {
+    pub peer_id: String,
+    pub daemon_id: DaemonId,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct PeerListParams {}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PeerListResult {
+    pub peers: Vec<PeerSummary>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PeerSummary {
+    pub peer_id: String,
+    pub name: String,
+    pub daemon_id: String,
+    pub url: String,
+    pub state: String,
+    pub last_seen: Option<i64>,
+    pub outbox_depth: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PeerRemoveParams {
+    pub name: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PeerRemoveResult {
+    pub removed: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PeerPingParams {
+    pub name: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PeerPingResult {
+    pub rtt_ms: u64,
+    pub state: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TopicFederateParams {
+    pub topic: String,
+    pub peer: String,
+    /// `inbound` | `outbound` | `both`
+    pub direction: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TopicFederateResult {
+    pub topic: String,
+    pub direction: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TopicUnfederateParams {
+    pub topic: String,
+    pub peer: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TopicUnfederateResult {
+    pub removed: bool,
 }
 
 #[cfg(test)]
@@ -590,6 +892,7 @@ mod tests {
             worker_id: None,
             restart_policy: crate::shared::types::RestartPolicy::Never,
             restart_count: 0,
+            workspace_id: None,
         };
         assert_eq!(StreamEvent::AgentCreated { agent }.agent_id(), Some("test1234"));
 

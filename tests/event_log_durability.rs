@@ -100,6 +100,7 @@ async fn publish_scenario(bus: &EventBus, db: &Database) {
         worker_id: None,
         restart_policy: grimoire::shared::types::RestartPolicy::Never,
         restart_count: 0,
+        workspace_id: None,
     };
     bus.publish(StreamEvent::AgentCreated { agent });
     // 2 more Outputs for "A"

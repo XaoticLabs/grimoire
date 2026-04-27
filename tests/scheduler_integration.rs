@@ -245,6 +245,7 @@ async fn restart_recovery_keeps_queued_loses_active() {
             worker_id: None,
             restart_policy: grimoire::shared::types::RestartPolicy::Never,
             restart_count: 0,
+            workspace_id: None,
         };
         db.insert_agent(&active).unwrap();
         // Drop Harness (and DB connection) to simulate daemon death.

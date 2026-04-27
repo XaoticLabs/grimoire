@@ -66,6 +66,7 @@ fn status_reports_queued_count() {
         active_count: 2,
         queued_count: 3,
         max_concurrent_agents: 8,
+        daemon_id: None,
     };
     let text = status::format_text(&resp);
     assert!(
@@ -92,6 +93,7 @@ fn status_json_includes_queued_count() {
         active_count: 2,
         queued_count: 3,
         max_concurrent_agents: 8,
+        daemon_id: None,
     };
     let json = serde_json::to_value(&resp).unwrap();
     assert_eq!(json["queued_count"].as_u64(), Some(3));

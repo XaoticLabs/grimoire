@@ -31,6 +31,7 @@ pub async fn run(
     restart: String,
     max_restarts: Option<String>,
     escalate_to: Option<String>,
+    workspace: Option<String>,
 ) -> Result<()> {
     let mut client = DaemonClient::connect().await?;
 
@@ -52,6 +53,7 @@ pub async fn run(
         "max_restarts": max_n,
         "restart_window_secs": window_t,
         "escalate_to": escalate_to,
+        "workspace": workspace,
     });
 
     let response = client.call("agent.summon", params).await?;

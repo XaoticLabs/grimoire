@@ -373,6 +373,7 @@ impl Scheduler {
                             self.bus.publish(StreamEvent::MailDelivered {
                                 mail_id: m.id.clone(),
                                 recipient_id: m.recipient_id.clone(),
+                                origin_daemon_id: None,
                             });
                         }
                     }

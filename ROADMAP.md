@@ -149,18 +149,32 @@ These are only possible because agents are daemons.
   - Spec: `.claude/specs/dormant-agents-wake-triggers-spec.md`. Plan: `.claude/plans/dormant-agents-wake-triggers.md`.
 - *Open (v2):* webhook wake source (gated on Part 1 auth-token hardening), dashboard surfacing for wake sources, and tunable file-watch debounce / glob exclusion patterns.
 
-### 6. Context-as-state, not as prompt
+### 6. Context-as-state, not as prompt ✅ *partially implemented (memory KV)*
 
 - Because agents are processes, their context window is a resource the daemon owns.
 - Expose it: `grim context <id>` shows the current window, `grim context <id> --compact` triggers summarization, `grim context <id> --fork` branches the agent.
 - Agents share a **working memory store** (daemon-managed KV or vector store): `memory.put("design-decisions/auth", …)`. Namespaced per scroll, per tenant.
 - Replaces ad-hoc "copy previous agent's output into next prompt." It's how a team of agents builds shared understanding.
+- *Status (v1):*
+  - **Memory KV done** — workspace-scoped, SQLite-backed, optimistic CAS via per-key version. `memory.put/get/list/delete` RPC + `grim memory` CLI. Writes emit `MemoryWritten` / `MemoryDeleted` stream events plus segment-prefix topic mail (`topic://workspace/<id>/memory/<prefix>`) so subscriber agents wake via the existing mail-wake plumbing. Per-value (256 KiB) and per-workspace (64 MiB) caps; segment-aligned `prefix` filter on `list`. Reserved sender prefix `workspace://` added to the `mail.send` guard so the daemon's writes can't be forged.
+  - Spec: `.claude/specs/shared-memory-workspaces-spec.md` (Tasks 1–2). Plan: `.claude/plans/shared-memory-workspaces.md`. Tests: `tests/workspaces_e2e.rs` (CAS conflict, segment-prefix list, put/get roundtrip).
+- *Open (v2):* `grim context <id>` (show / compact / fork) — context-window introspection still TODO; lives in the provider integration layer, not the daemon. Vector / embedding search is also deferred.
 
-### 7. Filesystem as the shared blackboard
+### 7. Filesystem as the shared blackboard ✅ *implemented (v1)*
 
 - Workspaces are first-class: `grim workspace create feature-auth` → daemon provisions a worktree, mounts it read-write for assigned agents, read-only for observers.
 - Agents see each other's file changes in real time. File-watch events become bus events: "agent-2 wrote `src/auth.rs`, agent-5 is subscribed."
 - Generalizes existing scroll conflict detection to the whole fabric.
+- *Status (v1):*
+  - Three new SQLite tables — `workspaces`, `workspace_memory`, `workspace_assignments`; `agents.workspace_id` column added via guarded `ALTER TABLE`. All cascade-delete on workspace destroy.
+  - `WorkspaceRegistry` actor (`src/daemon/workspace_registry.rs`) mirrors the `WakeRegistry` shape: shells out via a `GitRunner` trait seam (`SystemGitRunner` → `git worktree add/remove`; tests inject `FakeGit`). State machine: `Active → Destroying → gone`. Boot reconciliation handles orphan dirs (log + preserve, never auto-delete) and orphan rows (mark `Destroying`, cascade-delete).
+  - `WorkspaceWatcher` (`src/daemon/workspace_watcher.rs`) wraps `notify::RecommendedWatcher` per active workspace: 200 ms debounce, 64-path batches with `truncated_count` overflow, default ignore globs (`.git/**`, `target/**`, `node_modules/**`, `.DS_Store`, `*.swp`). Lazy-starts on first `assign`, stops on `destroy`. Emits `WorkspaceFileChanged` stream events plus topic mail to `topic://workspace/<id>/files`.
+  - Eight new RPC methods: `workspace.create / list / destroy / assign`, `memory.put / get / list / delete`. Six new `StreamEvent` variants flow through `EventBus` and the durable events log (`WorkspaceCreated`, `WorkspaceDestroyed`, `WorkspaceOrphanDirDetected`, `MemoryWritten`, `MemoryDeleted`, `WorkspaceFileChanged`).
+  - CLI surface: `grim workspace create|list|destroy|show`, `grim memory put|get|list|delete` (with `@<file>` JSON read, `--expected-version` for CAS, distinct exit codes 0/1/2/3/4 for scripting).
+  - `grim summon --workspace <name>` short-circuits cwd to the worktree path (mutually exclusive with `--cwd`); workspace-assignment row written post-insert. Scroll markdown gets top-level `- workspace:`, `- workspace_repo:`, `- workspace_branch:` directives parsed into `ScrollSpec`.
+  - Tests: `tests/workspaces_e2e.rs` (10 scenarios — create/destroy roundtrip, invalid-name rejection, duplicate rejection, memory put/get, CAS conflict surface, segment-aligned prefix list, in-use destroy refusal, idempotent assign, orphan-dir reconcile, orphan-row reconcile).
+  - Spec: `.claude/specs/shared-memory-workspaces-spec.md`. Plan: `.claude/plans/shared-memory-workspaces.md`.
+- *Open (v2):* RO observer ACLs (needs OS-level sandboxing from Part 1 §3), per-workspace watch-ignore overrides, automatic GC / TTL, `--copy-from <other-workspace>` for swarm-decompose forks, cross-host workspaces under `grimw`, `scroll_keeper` auto-creating workspaces from the parsed `- workspace:` directive (parser captures the fields; `inscribe()` consumption is the remaining wire).
 
 ### 8. Supervision trees (OTP-style) ✅ *implemented (v1)*
 
@@ -191,6 +205,7 @@ These are only possible because agents are daemons.
 
 - Two `grimd` instances peer with each other. Agents on daemon-A can message agents on daemon-B. Scrolls can span daemons.
 - Use case: a laptop daemon delegates heavy work to the office-server daemon, which delegates sandboxed execution to an ephemeral cloud daemon. All one fabric.
+- **v1 status (uncommitted on `main`):** direct `mail.send` across peers + opt-in topic federation are wired end-to-end. New `DaemonId` minted on first boot (`~/.grimoire/daemon.id`) and surfaced via `grim status`; address parser accepts `agent://grimd-<id>/<id>`. Tonic-based `proto/peer.proto` channel (Hello/HelloAck/Heartbeat/MailDeliver/MailAck) reuses the worker-channel substrate. Outbox + at-least-once delivery with `(sender_daemon_id, sender_seq)` dedupe. CLI: `grim peer add/list/remove/ping`, `grim topic federate/unfederate`. Full implementation in `.claude/specs/federation-spec.md` (T1–T13). 18 new federation tests; full suite at 553 passing. Out-of-scope (still): scroll-spanning, federated workspaces, federated supervision trees, mTLS (gated on worker-channel mTLS), cross-peer wake sources, transitive routing.
 
 ### 12. Introspection & eval as first-class
 
@@ -203,8 +218,8 @@ These are only possible because agents are daemons.
 
 Pick 2–3 of these and the product sells itself:
 
-- **Standing review team** — 3 dormant agents subscribed to `topic://pr-opened`. They wake on every PR, review in parallel, post to `topic://pr-reviewed`, sleep. Running for 30 days. *Now feasible end-to-end — `grim mail subscribe` + scheduler wake-on-mail are in place; only needs a webhook → `mail.send` bridge to drive it from real GitHub events.*
-- **Swarm decompose** — One agent gets a vague spec, spawns 5 children to explore approaches in parallel worktrees, messages them, picks the winner, reunifies. Visible live in `grim scry`. *Spawning + per-agent messaging are in place; the missing piece is the parent's "messages me back" loop, which `mail.list` covers but agents need a wrapper that drains it at turn boundaries.*
+- **Standing review team** — 3 dormant agents subscribed to `topic://pr-opened` and `topic://workspace/<ws>/files`. They wake on every PR (or every file change in a watched workspace), review in parallel, store findings in `memory.put("findings/<area>", …)`, post to `topic://pr-reviewed`, sleep. Running for 30 days. *Buildable end-to-end now — `grim mail subscribe`, scheduler wake-on-mail, workspace filewatch, and memory KV are all in place; only needs a webhook → `mail.send` bridge to drive it from real GitHub events.*
+- **Swarm decompose** — One agent gets a vague spec, creates a workspace, spawns 5 children into the same worktree (or sibling worktrees), they coordinate via `memory.put/get` with CAS, the parent subscribes to `topic://workspace/<ws>/memory/findings/*` to be woken on each child's deposit, picks the winner, reunifies. Visible live in `grim scry`. *Buildable end-to-end now — workspace + memory KV + topic-prefix subscriptions land the missing coordination substrate; the only remaining wrapper is "agents drain `mail.list` at turn boundaries."*
 - **Laptop grid** — `grim worker register` on 4 dev laptops. `grim inscribe big-migration.md -c 12` distributes 12 parallel agents across the team's idle machines.
 - **Self-healing pipeline** — A scroll runs overnight, one task fails, supervisor restarts with a different provider, succeeds, pipeline completes. You wake up to a green scroll and a report of what self-recovered.
 - **Fork and race** — `grim fork <id> --variants "use redis,use postgres,use sqlite"` spawns 3 forks of the same agent with different directions. Winner by eval score gets merged.
@@ -221,7 +236,7 @@ Six-month spine:
 4. ~~**Worker pool protocol** — unlocks scale story and "laptop grid" demo.~~ ✅
 5. ~~**Dormant agents with wake triggers** — THE differentiator. This is what being a daemon is _for_.~~ ✅ *v1 shipped — see Part 3 §5 / `.claude/specs/dormant-agents-wake-triggers-spec.md`.*
 6. ~~**Supervision trees** — layers on top of above; makes scrolls self-healing.~~ ✅ *v1 shipped — see Part 3 §8 / `.claude/specs/supervision-trees-spec.md`.*
-7. **Shared memory store + workspaces** — enables real multi-agent collaboration.
-8. **Federation** — last, after single-fabric is solid.
+7. ~~**Shared memory store + workspaces** — enables real multi-agent collaboration.~~ ✅ *v1 shipped — see Part 3 §6 + §7 / `.claude/specs/shared-memory-workspaces-spec.md`.*
+8. ~~**Federation** — last, after single-fabric is solid.~~ ✅ *v1 implemented (uncommitted) — see Part 3 §11 / `.claude/specs/federation-spec.md`. Direct mail + opt-in topic federation across two `grimd` peers; scroll-spanning and mTLS still post-v1.*
 
 The through-line: **every feature above is impossible or awkward in a library-based orchestrator and natural in a daemon.** That's the story. Lead with it in the README; every feature should visibly reinforce it.

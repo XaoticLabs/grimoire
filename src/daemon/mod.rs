@@ -1,10 +1,16 @@
 pub mod agent_manager;
 pub mod clock;
+pub mod daemon_id;
 pub mod event_bus;
 pub mod executor;
 pub mod worker_registry;
 pub mod worker_rpc_server;
 pub mod orchestrator;
+pub mod peer_client;
+pub mod peer_inbox;
+pub mod peer_outbox;
+pub mod peer_registry;
+pub mod peer_rpc_server;
 pub mod persistence;
 pub mod process_manager;
 pub mod provider;
@@ -18,6 +24,9 @@ pub mod server;
 pub mod supervisor;
 pub mod wake_registry;
 pub mod wake_sources;
+pub mod workspace_db;
+pub mod workspace_registry;
+pub mod workspace_watcher;
 
 use anyhow::Result;
 use std::sync::Arc;
@@ -50,6 +59,9 @@ pub async fn start() -> Result<()> {
     eprintln!();
 
     info!(pid = pid, dir = %dir.display(), "Grimoire daemon starting");
+
+    let daemon_id = daemon_id::load_or_mint(&constants::daemon_id_path())?;
+    info!(daemon_id = %daemon_id, "daemon id loaded");
 
     let db = Arc::new(persistence::Database::open(&constants::db_path())?);
 
@@ -118,8 +130,58 @@ pub async fn start() -> Result<()> {
     let scroll_keeper = Arc::new(scroll_keeper::ScrollKeeper::new(db.clone(), manager.clone()));
     scroll_keeper.clone().start(&event_bus);
 
+    // Workspace registry (workspaces + memory KV + filewatch).
+    let workspace_registry =
+        workspace_registry::WorkspaceRegistry::with_default_git(db.clone(), event_bus.clone());
+    if let Err(e) = workspace_registry.reconcile_on_boot().await {
+        tracing::warn!(error = %e, "workspace registry reconcile failed");
+    }
+
+    // Federation peer registry. Per spec Slice 2: this hosts outbound peer
+    // clients + outbox drainers + dispatch into the inbox handler.
+    let peer_registry = peer_registry::PeerRegistry::new(
+        db.clone(),
+        event_bus.clone(),
+        clock.clone(),
+        daemon_id.clone(),
+    );
+    if let Err(e) = peer_registry.reconcile_on_boot().await {
+        tracing::warn!(error = %e, "peer registry reconcile_on_boot failed");
+    }
+    peer_registry.spawn_all_active().await;
+
+    // Spawn the peer gRPC listener if configured.
+    if let Some(addr) = config.daemon.peer_listen_addr.clone() {
+        let registry_clone = peer_registry.clone();
+        tokio::spawn(async move {
+            match addr.parse::<std::net::SocketAddr>() {
+                Ok(sa) => {
+                    let svc = peer_rpc_server::PeerSvc::new(registry_clone);
+                    if let Err(e) = tonic::transport::Server::builder()
+                        .add_service(svc)
+                        .serve(sa)
+                        .await
+                    {
+                        tracing::error!(error = %e, "peer gRPC listener exited");
+                    }
+                }
+                Err(e) => tracing::warn!(addr = %addr, error = %e, "invalid peer_listen_addr"),
+            }
+        });
+    }
+
     // Start servers (UDS + HTTP)
-    server::run(manager, db, scroll_keeper, wake_registry, supervisor).await?;
+    server::run(
+        manager,
+        db,
+        scroll_keeper,
+        wake_registry,
+        workspace_registry,
+        supervisor,
+        peer_registry,
+        daemon_id,
+    )
+    .await?;
 
     let _ = std::fs::remove_file(constants::socket_path());
     let _ = std::fs::remove_file(constants::pid_path());

@@ -14,6 +14,7 @@ use grimoire::daemon::event_bus::EventBus;
 use grimoire::daemon::persistence::Database;
 use grimoire::daemon::scroll_keeper::ScrollKeeper;
 use grimoire::daemon::wake_registry::WakeRegistry;
+use grimoire::daemon::workspace_registry::WorkspaceRegistry;
 use grimoire::shared::config::Config;
 use grimoire::shared::protocol::RpcRequest;
 use grimoire::shared::types::{Agent, AgentState, RestartPolicy};
@@ -35,6 +36,7 @@ fn seed(db: &Database, id: &str) {
         worker_id: None,
         restart_policy: RestartPolicy::Never,
         restart_count: 0,
+        workspace_id: None,
     };
     db.insert_agent(&agent).unwrap();
 }
@@ -44,6 +46,7 @@ async fn build_state() -> (
     Arc<Database>,
     Arc<ScrollKeeper>,
     Arc<WakeRegistry>,
+    Arc<WorkspaceRegistry>,
     EventBus,
 ) {
     let db = Arc::new(Database::open_in_memory().unwrap());
@@ -53,12 +56,13 @@ async fn build_state() -> (
     let clock: Arc<dyn grimoire::daemon::clock::Clock> =
         Arc::new(grimoire::daemon::clock::SystemClock);
     let wake_registry = WakeRegistry::with_default_sender(db.clone(), bus.clone(), clock);
-    (manager, db, scroll_keeper, wake_registry, bus)
+    let workspace_registry = WorkspaceRegistry::with_default_git(db.clone(), bus.clone());
+    (manager, db, scroll_keeper, wake_registry, workspace_registry, bus)
 }
 
 #[tokio::test]
 async fn mail_send_rejects_supervisor_prefix() {
-    let (manager, db, scroll_keeper, wake_registry, bus) = build_state().await;
+    let (manager, db, scroll_keeper, wake_registry, workspace_registry, bus) = build_state().await;
     seed(&db, "abcd1234");
     let req = RpcRequest {
         method: "mail.send".into(),
@@ -68,12 +72,14 @@ async fn mail_send_rejects_supervisor_prefix() {
             "sender": "supervisor://forged01",
         }),
         id: 1,
+        protocol_version: None,
     };
-    let resp = grimoire::daemon::rpc::handle_rpc(
+    let resp = grimoire::daemon::rpc::handle_rpc_test(
         &manager,
         &db,
         &scroll_keeper,
         &wake_registry,
+        &workspace_registry,
         &bus,
         req,
     )
@@ -88,7 +94,7 @@ async fn mail_send_rejects_supervisor_prefix() {
 
 #[tokio::test]
 async fn mail_send_rejects_wake_prefix() {
-    let (manager, db, scroll_keeper, wake_registry, bus) = build_state().await;
+    let (manager, db, scroll_keeper, wake_registry, workspace_registry, bus) = build_state().await;
     seed(&db, "abcd5678");
     let req = RpcRequest {
         method: "mail.send".into(),
@@ -98,12 +104,14 @@ async fn mail_send_rejects_wake_prefix() {
             "sender": "wake://forged02",
         }),
         id: 1,
+        protocol_version: None,
     };
-    let resp = grimoire::daemon::rpc::handle_rpc(
+    let resp = grimoire::daemon::rpc::handle_rpc_test(
         &manager,
         &db,
         &scroll_keeper,
         &wake_registry,
+        &workspace_registry,
         &bus,
         req,
     )
@@ -114,7 +122,7 @@ async fn mail_send_rejects_wake_prefix() {
 
 #[tokio::test]
 async fn mail_send_accepts_agent_prefix() {
-    let (manager, db, scroll_keeper, wake_registry, bus) = build_state().await;
+    let (manager, db, scroll_keeper, wake_registry, workspace_registry, bus) = build_state().await;
     seed(&db, "abcdef01");
     seed(&db, "fedcba99");
     let req = RpcRequest {
@@ -125,12 +133,14 @@ async fn mail_send_accepts_agent_prefix() {
             "sender": "abcdef01",
         }),
         id: 1,
+        protocol_version: None,
     };
-    let resp = grimoire::daemon::rpc::handle_rpc(
+    let resp = grimoire::daemon::rpc::handle_rpc_test(
         &manager,
         &db,
         &scroll_keeper,
         &wake_registry,
+        &workspace_registry,
         &bus,
         req,
     )

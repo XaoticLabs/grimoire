@@ -28,6 +28,7 @@ fn seed_agent(db: &Database, id: &str, state: AgentState) {
         worker_id: None,
         restart_policy: RestartPolicy::Never,
         restart_count: 0,
+        workspace_id: None,
     };
     db.insert_agent(&agent).unwrap();
 }

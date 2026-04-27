@@ -303,6 +303,7 @@ impl AgentManager {
             worker_id: None,
             restart_policy: RestartPolicy::Never,
             restart_count: 0,
+            workspace_id: None,
         };
 
         self.db.insert_agent(&agent)?;
@@ -416,6 +417,7 @@ impl AgentManager {
                         worker_id: None,
                         restart_policy: RestartPolicy::Never,
                         restart_count: 0,
+                        workspace_id: None,
                     },
                     cancel: None,
                     completion_handle: None,
@@ -790,6 +792,7 @@ impl AgentManager {
             worker_id: None,
             restart_policy: RestartPolicy::Never,
             restart_count: 0,
+            workspace_id: None,
         };
         self.db.insert_agent(&agent)?;
         self.db.update_agent_session_id(&agent_id, session_id)?;

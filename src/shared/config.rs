@@ -73,6 +73,26 @@ pub struct DaemonConfig {
     /// in v1; exposed for tests.
     #[serde(default = "default_tree_depth_cap")]
     pub tree_depth_cap: u32,
+    /// Per-value cap on workspace memory entries (bytes after JSON canonicalization).
+    #[serde(default = "default_workspace_value_cap")]
+    pub workspace_value_cap_bytes: u64,
+    /// Per-workspace total cap on memory KV bytes.
+    #[serde(default = "default_workspace_total_cap")]
+    pub workspace_total_cap_bytes: u64,
+    /// Federation: max queued peer_outbox rows (Pending+InFlight) per peer.
+    #[serde(default = "default_peer_outbox_max_depth")]
+    pub peer_outbox_max_depth: u64,
+    /// Federation: handshake timeout for `peer add`.
+    #[serde(default = "default_peer_handshake_timeout_secs")]
+    pub peer_handshake_timeout_secs: u64,
+    /// Federation: heartbeat interval over the peer channel.
+    #[serde(default = "default_peer_heartbeat_interval_secs")]
+    pub peer_heartbeat_interval_secs: u64,
+    /// Federation: optional `host:port` to bind the peer gRPC listener.
+    /// `None` (default) skips the listener — federation traffic cannot
+    /// arrive but `mail.send` still routes locally.
+    #[serde(default)]
+    pub peer_listen_addr: Option<String>,
 }
 
 impl Default for DaemonConfig {
@@ -84,8 +104,26 @@ impl Default for DaemonConfig {
             max_concurrent_agents: default_max_concurrent(),
             restart_rate_per_min: default_restart_rate_per_min(),
             tree_depth_cap: default_tree_depth_cap(),
+            workspace_value_cap_bytes: default_workspace_value_cap(),
+            workspace_total_cap_bytes: default_workspace_total_cap(),
+            peer_outbox_max_depth: default_peer_outbox_max_depth(),
+            peer_handshake_timeout_secs: default_peer_handshake_timeout_secs(),
+            peer_heartbeat_interval_secs: default_peer_heartbeat_interval_secs(),
+            peer_listen_addr: None,
         }
     }
+}
+
+fn default_peer_outbox_max_depth() -> u64 {
+    10_000
+}
+
+fn default_peer_handshake_timeout_secs() -> u64 {
+    10
+}
+
+fn default_peer_heartbeat_interval_secs() -> u64 {
+    5
 }
 
 fn default_max_concurrent() -> u32 {
@@ -98,6 +136,14 @@ fn default_restart_rate_per_min() -> u32 {
 
 fn default_tree_depth_cap() -> u32 {
     3
+}
+
+fn default_workspace_value_cap() -> u64 {
+    262_144 // 256 KiB
+}
+
+fn default_workspace_total_cap() -> u64 {
+    67_108_864 // 64 MiB
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
