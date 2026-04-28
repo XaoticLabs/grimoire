@@ -58,7 +58,9 @@ Build the frontend.
     let spec = scroll_parser::parse_scroll(spec_content).unwrap();
     assert_eq!(spec.tasks.len(), 3);
 
-    let result = keeper.inscribe(spec, Some(2), Some("/tmp/test.md".to_string())).unwrap();
+    let result = keeper
+        .inscribe(spec, Some(2), Some("/tmp/test.md".to_string()))
+        .unwrap();
 
     assert_eq!(result.scroll.name, "Integration Test");
     assert_eq!(result.scroll.state, ScrollState::Inscribed);
@@ -113,7 +115,10 @@ Work on B.
     let result = keeper.inscribe(spec, None, None).unwrap();
 
     assert_eq!(result.conflicts.len(), 1);
-    assert_eq!(result.conflicts[0].overlapping_patterns, vec!["src/shared.rs"]);
+    assert_eq!(
+        result.conflicts[0].overlapping_patterns,
+        vec!["src/shared.rs"]
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -145,7 +150,12 @@ Do gamma.
     let tasks = db.get_tasks_for_scroll(&result.scroll.id).unwrap();
     assert_eq!(tasks.len(), 3);
     for task in &tasks {
-        assert_eq!(task.state, TaskState::Ready, "Task '{}' should be Ready", task.name);
+        assert_eq!(
+            task.state,
+            TaskState::Ready,
+            "Task '{}' should be Ready",
+            task.name
+        );
     }
 }
 
@@ -255,7 +265,7 @@ Do C.
 
     let status = keeper.status(scroll_id).unwrap();
     assert_eq!(status.total, 3);
-    assert_eq!(status.ready, 1);  // A
+    assert_eq!(status.ready, 1); // A
     assert_eq!(status.blocked, 2); // B, C
     assert_eq!(status.complete, 0);
     assert_eq!(status.active, 0);

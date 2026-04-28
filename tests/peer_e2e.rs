@@ -105,8 +105,15 @@ async fn registered_token_handshake_succeeds() {
     b.db.insert_peer(&peer).unwrap();
 
     let url = format!("http://{}", b.addr);
-    let result = a.registry.register_peer("b".to_string(), url, token, 5).await;
-    assert!(result.is_ok(), "handshake should succeed: {:?}", result.err());
+    let result = a
+        .registry
+        .register_peer("b".to_string(), url, token, 5)
+        .await;
+    assert!(
+        result.is_ok(),
+        "handshake should succeed: {:?}",
+        result.err()
+    );
     let p = result.unwrap();
     assert_eq!(p.daemon_id, "bbbbbbbb");
 }

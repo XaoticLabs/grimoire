@@ -28,12 +28,7 @@ pub trait Provider: Send + Sync {
     fn spawn(&self, task: &str, cwd: &Path, model: Option<&str>) -> Result<SpawnedAgent>;
 
     /// Resume an existing session (returns error if unsupported)
-    fn spawn_resume(
-        &self,
-        session_id: &str,
-        message: &str,
-        cwd: &Path,
-    ) -> Result<SpawnedAgent>;
+    fn spawn_resume(&self, session_id: &str, message: &str, cwd: &Path) -> Result<SpawnedAgent>;
 
     /// Extract session ID from a stdout line (called per-line during monitoring)
     fn extract_session_id(&self, line: &str) -> Option<String>;

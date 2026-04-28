@@ -29,7 +29,7 @@ impl TestClock {
 
     pub fn advance(&self, d: chrono::Duration) {
         let mut g = self.inner.lock().unwrap();
-        *g = *g + d;
+        *g += d;
     }
 
     pub fn set(&self, t: DateTime<Utc>) {

@@ -212,7 +212,13 @@ pub fn format_mail_list(mails: &[Mail]) -> String {
         let preview = preview.replace('\n', " ");
         out.push_str(&format!(
             "{}  {}  {}  {}  {}  {}  {}\n",
-            m.seq, m.id, from, topic, m.state.as_str(), age, preview,
+            m.seq,
+            m.id,
+            from,
+            topic,
+            m.state.as_str(),
+            age,
+            preview,
         ));
     }
     out

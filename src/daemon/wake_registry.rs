@@ -16,7 +16,7 @@ use std::sync::Arc;
 
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
-use chrono::{DateTime, TimeZone, Utc};
+use chrono::{TimeZone, Utc};
 use tokio::sync::Mutex;
 
 use crate::daemon::clock::Clock;
@@ -29,19 +29,12 @@ use crate::daemon::wake_sources::parent_completion::{
 };
 use crate::shared::constants;
 use crate::shared::protocol::StreamEvent;
-use crate::shared::types::{
-    Mail, MailState, WakeSource, WakeSourceKind, WakeSourceState,
-};
+use crate::shared::types::{Mail, MailState, WakeSource, WakeSourceKind, WakeSourceState};
 
 /// Sender seam for wake-fire mail. Default impl writes the row directly.
 #[async_trait]
 pub trait WakeMailSender: Send + Sync {
-    async fn send_wake_mail(
-        &self,
-        wake_id: &str,
-        agent_id: &str,
-        body: &str,
-    ) -> Result<String>;
+    async fn send_wake_mail(&self, wake_id: &str, agent_id: &str, body: &str) -> Result<String>;
 }
 
 /// Default `WakeMailSender` — writes a wake-eligible mail row with
@@ -54,12 +47,7 @@ pub struct DbWakeMailSender {
 
 #[async_trait]
 impl WakeMailSender for DbWakeMailSender {
-    async fn send_wake_mail(
-        &self,
-        wake_id: &str,
-        agent_id: &str,
-        body: &str,
-    ) -> Result<String> {
+    async fn send_wake_mail(&self, wake_id: &str, agent_id: &str, body: &str) -> Result<String> {
         let mail_id = format!("wm{}", &constants::generate_short_id()[..6]);
         let now = unix_now();
         let mail = Mail {
@@ -211,11 +199,10 @@ impl WakeRegistry {
                 Ok(c) => c,
                 Err(_) => continue,
             };
-            let last = src.last_fired_at.and_then(|t| Utc.timestamp_opt(t, 0).single());
-            let registered = Utc
-                .timestamp_opt(src.created_at, 0)
-                .single()
-                .unwrap_or(now);
+            let last = src
+                .last_fired_at
+                .and_then(|t| Utc.timestamp_opt(t, 0).single());
+            let registered = Utc.timestamp_opt(src.created_at, 0).single().unwrap_or(now);
             if cron.evaluate(now, last, registered).is_some() {
                 let body = format!("[cron] {} fired at {}", cfg.expr, now.to_rfc3339());
                 let _ = self.fire(&src.id, &body, None).await;
@@ -387,8 +374,7 @@ impl WakeRegistry {
     /// Token-bucket gate. Returns Ok(true) on accept, Ok(false) on deny.
     async fn consume_token(&self, agent_id: &str) -> Result<bool> {
         let now = self.clock.now().timestamp();
-        let (tokens, last, capacity, refill) =
-            self.db.get_or_init_rate_limit(agent_id, now)?;
+        let (tokens, last, capacity, refill) = self.db.get_or_init_rate_limit(agent_id, now)?;
         // Clamp negative elapsed (clock skew) at 0 so backwards jumps don't
         // mint tokens.
         let elapsed = (now - last).max(0) as f64;
@@ -398,7 +384,8 @@ impl WakeRegistry {
                 .update_rate_limit_tokens(agent_id, new_tokens - 1.0, now)?;
             Ok(true)
         } else {
-            self.db.update_rate_limit_tokens(agent_id, new_tokens, now)?;
+            self.db
+                .update_rate_limit_tokens(agent_id, new_tokens, now)?;
             Ok(false)
         }
     }
@@ -429,25 +416,21 @@ impl WakeRegistry {
             }
 
             // Cron catch-up.
-            if let WakeSourceKind::Cron = src.kind {
-                if let Ok(cfg) = serde_json::from_str::<CronConfig>(&src.config_json) {
-                    if let Ok(cron) = CronSource::new(&cfg.expr) {
-                        let now = self.clock.now();
-                        let last = src
-                            .last_fired_at
-                            .and_then(|t| Utc.timestamp_opt(t, 0).single());
-                        let registered = Utc
-                            .timestamp_opt(src.created_at, 0)
-                            .single()
-                            .unwrap_or(now);
-                        if cron.evaluate(now, last, registered).is_some() {
-                            let body = format!(
-                                "[catch-up] cron {} (last fired: {:?})",
-                                cfg.expr, src.last_fired_at
-                            );
-                            let _ = self.fire(&src.id, &body, None).await;
-                        }
-                    }
+            if let WakeSourceKind::Cron = src.kind
+                && let Ok(cfg) = serde_json::from_str::<CronConfig>(&src.config_json)
+                && let Ok(cron) = CronSource::new(&cfg.expr)
+            {
+                let now = self.clock.now();
+                let last = src
+                    .last_fired_at
+                    .and_then(|t| Utc.timestamp_opt(t, 0).single());
+                let registered = Utc.timestamp_opt(src.created_at, 0).single().unwrap_or(now);
+                if cron.evaluate(now, last, registered).is_some() {
+                    let body = format!(
+                        "[catch-up] cron {} (last fired: {:?})",
+                        cfg.expr, src.last_fired_at
+                    );
+                    let _ = self.fire(&src.id, &body, None).await;
                 }
             }
         }
@@ -466,8 +449,9 @@ impl WakeRegistry {
                 let cfg: FileWatchConfig = serde_json::from_str(&src.config_json)
                     .map_err(|e| anyhow!("invalid_file_watch_config_json: {}", e))?;
                 let source = Arc::new(FileWatchSource::new(cfg)?);
-                let (notify_tx, mut notify_rx) =
-                    tokio::sync::mpsc::channel::<crate::daemon::wake_sources::file_watch::MatchedChange>(256);
+                let (notify_tx, mut notify_rx) = tokio::sync::mpsc::channel::<
+                    crate::daemon::wake_sources::file_watch::MatchedChange,
+                >(256);
                 let watcher = source.clone().arm(notify_tx)?;
 
                 // Debounce drain task: collect changes during a 200ms window
@@ -526,21 +510,16 @@ impl WakeRegistry {
                             new_state,
                             ..
                         } = ev
+                            && source.should_fire(&agent_id, &new_state)
                         {
-                            if source.should_fire(&agent_id, &new_state) {
-                                let body = format!(
-                                    "[parent {} -> {}]",
-                                    agent_id,
-                                    new_state.as_str()
-                                );
-                                let _ = fire_tx
-                                    .send(FireMsg {
-                                        wake_id: wake_id.clone(),
-                                        body,
-                                        via: None,
-                                    })
-                                    .await;
-                            }
+                            let body = format!("[parent {} -> {}]", agent_id, new_state.as_str());
+                            let _ = fire_tx
+                                .send(FireMsg {
+                                    wake_id: wake_id.clone(),
+                                    body,
+                                    via: None,
+                                })
+                                .await;
                         }
                     }
                 });
@@ -574,11 +553,7 @@ fn validate_config(kind: WakeSourceKind, config_json: &str) -> Result<()> {
 // Helper: convenience for callers who want to register without crafting the
 // raw config_json themselves.
 impl WakeRegistry {
-    pub async fn register_cron(
-        self: &Arc<Self>,
-        agent_id: &str,
-        expr: &str,
-    ) -> Result<String> {
+    pub async fn register_cron(self: &Arc<Self>, agent_id: &str, expr: &str) -> Result<String> {
         let cfg = CronConfig {
             expr: expr.to_string(),
         };

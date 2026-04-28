@@ -52,9 +52,9 @@ async fn placement_picks_remote_when_worker_available() {
         .unwrap();
 
     let local = fresh_local();
-    let remote_factory: Arc<dyn Fn(String) -> Arc<dyn grimoire::daemon::executor::Executor>
-            + Send
-            + Sync> = Arc::new(|wid| {
+    let remote_factory: Arc<
+        dyn Fn(String) -> Arc<dyn grimoire::daemon::executor::Executor> + Send + Sync,
+    > = Arc::new(|wid| {
         // Construct a stub RemoteExecutor that records the worker id.
         Arc::new(RemoteExecutor::stub_for_test(wid))
             as Arc<dyn grimoire::daemon::executor::Executor>
@@ -73,9 +73,9 @@ async fn placement_picks_remote_when_worker_available() {
 async fn placement_falls_back_to_local_when_no_worker() {
     let registry = Arc::new(WorkerRegistry::new(Duration::from_secs(30)));
     let local = fresh_local();
-    let remote_factory: Arc<dyn Fn(String) -> Arc<dyn grimoire::daemon::executor::Executor>
-            + Send
-            + Sync> = Arc::new(|_| panic!("remote_factory should not be invoked"));
+    let remote_factory: Arc<
+        dyn Fn(String) -> Arc<dyn grimoire::daemon::executor::Executor> + Send + Sync,
+    > = Arc::new(|_| panic!("remote_factory should not be invoked"));
 
     let placement = LeastLoadedPlacement::new(registry, local.clone(), remote_factory);
     let chosen = placement.pick(&req("claude"));

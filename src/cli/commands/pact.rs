@@ -46,10 +46,7 @@ pub async fn run(
                 "failed" => "failed".red().to_string(),
                 s => s.to_string(),
             };
-            let target = pact
-                .target_id
-                .as_deref()
-                .unwrap_or("-");
+            let target = pact.target_id.as_deref().unwrap_or("-");
             let tpl: String = pact.task_tpl.chars().take(35).collect();
 
             println!(

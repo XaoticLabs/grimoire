@@ -9,9 +9,10 @@ use tokio::time::timeout;
 use tonic::Code;
 
 use grimoire::daemon::worker_registry::WorkerRegistry;
-use grimoire::daemon::worker_rpc_server::test_helpers::{spawn_test_server, TestServerHandle};
+use grimoire::daemon::worker_rpc_server::test_helpers::{TestServerHandle, spawn_test_server};
 use grimoire::shared::worker_proto::{
-    worker_control_client::WorkerControlClient, worker_message, ProviderCap, Register, WorkerMessage,
+    ProviderCap, Register, WorkerMessage, worker_control_client::WorkerControlClient,
+    worker_message,
 };
 
 async fn connect(handle: &TestServerHandle) -> WorkerControlClient<tonic::transport::Channel> {
@@ -41,7 +42,7 @@ async fn register_with_bad_token_returns_unauthenticated() {
     .unwrap();
 
     let resp = client.channel(outbound).await;
-    let err = resp.err().expect("server must reject");
+    let err = resp.expect_err("server must reject");
     assert_eq!(err.code(), Code::Unauthenticated);
     assert_eq!(registry.count(), 0);
 }
@@ -71,7 +72,7 @@ async fn register_with_old_version_returns_failed_precondition() {
     .unwrap();
 
     let resp = client.channel(outbound).await;
-    let err = resp.err().expect("server must reject");
+    let err = resp.expect_err("server must reject");
     assert_eq!(err.code(), Code::FailedPrecondition);
 }
 

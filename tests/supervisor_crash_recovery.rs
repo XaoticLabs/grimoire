@@ -10,9 +10,7 @@ use chrono::{TimeZone, Utc};
 use grimoire::daemon::clock::{Clock, TestClock};
 use grimoire::daemon::event_bus::EventBus;
 use grimoire::daemon::persistence::Database;
-use grimoire::daemon::supervisor::{
-    EscalationMailSender, EscalationOutcome, Supervisor,
-};
+use grimoire::daemon::supervisor::{EscalationMailSender, EscalationOutcome, Supervisor};
 use grimoire::shared::protocol::StreamEvent;
 use grimoire::shared::types::{
     Agent, AgentState, RestartHistoryOutcome, RestartPolicy, SupervisionConfig,
@@ -50,7 +48,7 @@ fn seed(db: &Database, id: &str, state: AgentState) {
 }
 
 fn build(db: Arc<Database>, bus: EventBus, clock: Arc<TestClock>) -> Arc<Supervisor> {
-    let mail: Arc<dyn EscalationMailSender> = Arc::new(NoopMail::default());
+    let mail: Arc<dyn EscalationMailSender> = Arc::new(NoopMail);
     Supervisor::new(db, bus, clock, 30, 3, mail)
 }
 
@@ -69,12 +67,14 @@ async fn boot_promotes_restarting_to_failed() {
     let mut saw = false;
     while let Ok(ev) = rx.try_recv() {
         if let StreamEvent::StateChange {
-            old_state, new_state, ..
+            old_state,
+            new_state,
+            ..
         } = ev
+            && old_state == AgentState::Restarting
+            && new_state == AgentState::Failed
         {
-            if old_state == AgentState::Restarting && new_state == AgentState::Failed {
-                saw = true;
-            }
+            saw = true;
         }
     }
     assert!(saw);

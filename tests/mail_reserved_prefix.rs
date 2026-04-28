@@ -57,7 +57,14 @@ async fn build_state() -> (
         Arc::new(grimoire::daemon::clock::SystemClock);
     let wake_registry = WakeRegistry::with_default_sender(db.clone(), bus.clone(), clock);
     let workspace_registry = WorkspaceRegistry::with_default_git(db.clone(), bus.clone());
-    (manager, db, scroll_keeper, wake_registry, workspace_registry, bus)
+    (
+        manager,
+        db,
+        scroll_keeper,
+        wake_registry,
+        workspace_registry,
+        bus,
+    )
 }
 
 #[tokio::test]

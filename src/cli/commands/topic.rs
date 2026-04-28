@@ -65,8 +65,7 @@ async fn run_unfederate(topic: String, peer: String) -> Result<()> {
     if let Some(err) = resp.error {
         return Err(anyhow!("topic unfederate failed: {}", err.message));
     }
-    let result: TopicUnfederateResult =
-        serde_json::from_value(resp.result.unwrap_or_default())?;
+    let result: TopicUnfederateResult = serde_json::from_value(resp.result.unwrap_or_default())?;
     if result.removed {
         println!("Unfederated topic {} from peer {}", topic, peer);
     } else {

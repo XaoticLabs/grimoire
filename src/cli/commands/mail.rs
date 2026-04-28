@@ -65,10 +65,7 @@ pub async fn run(cmd: MailCommand) -> Result<()> {
 async fn run_send(addr: &str, body: &str) -> Result<()> {
     let mut client = DaemonClient::connect().await?;
     let response = client
-        .call(
-            "mail.send",
-            serde_json::json!({ "to": addr, "body": body }),
-        )
+        .call("mail.send", serde_json::json!({ "to": addr, "body": body }))
         .await?;
 
     if let Some(error) = response.error {
@@ -191,4 +188,3 @@ async fn run_topics() -> Result<()> {
     }
     Ok(())
 }
-

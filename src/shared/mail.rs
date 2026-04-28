@@ -25,7 +25,10 @@ impl std::fmt::Display for Address {
         match self {
             Address::Agent(id) => write!(f, "agent://{}", id),
             Address::Topic(name) => write!(f, "topic://{}", name),
-            Address::FederatedAgent { daemon_id, agent_id } => {
+            Address::FederatedAgent {
+                daemon_id,
+                agent_id,
+            } => {
                 write!(f, "agent://grimd-{}/{}", daemon_id, agent_id)
             }
         }
@@ -35,6 +38,7 @@ impl std::fmt::Display for Address {
 /// Reason a string failed to parse as an `Address`. The error code (`code()`)
 /// is the value returned to RPC callers via `RpcError`.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[allow(clippy::enum_variant_names)]
 pub enum AddressParseError {
     InvalidAgentId,
     InvalidTopicName,
@@ -94,9 +98,8 @@ pub fn parse_address(s: &str) -> Result<Address, AddressParseError> {
 /// Parse the tail of `agent://grimd-<rest>` into `(daemon_id, agent_id)`.
 /// Both must be 8 lowercase hex characters; no extra segments allowed.
 fn parse_federated_agent_tail(s: &str) -> Option<(DaemonId, AgentId)> {
-    let mut parts = s.splitn(2, '/');
-    let daemon = parts.next()?;
-    let agent = parts.next()?;
+    let (daemon, agent) = s.split_once('/')?;
+
     if !validate_daemon_id(daemon) {
         return None;
     }
@@ -127,11 +130,7 @@ pub fn is_valid_topic_name(s: &str) -> bool {
         return false;
     }
     for b in bytes {
-        let ok = b.is_ascii_alphanumeric()
-            || b == b'.'
-            || b == b'_'
-            || b == b':'
-            || b == b'-';
+        let ok = b.is_ascii_alphanumeric() || b == b'.' || b == b'_' || b == b':' || b == b'-';
         if !ok {
             return false;
         }
@@ -220,7 +219,10 @@ mod tests {
     fn parse_address_accepts_federated_form() {
         let out = parse_address("agent://grimd-1a2b3c4d/deadbeef").unwrap();
         match out {
-            Address::FederatedAgent { daemon_id, agent_id } => {
+            Address::FederatedAgent {
+                daemon_id,
+                agent_id,
+            } => {
                 assert_eq!(daemon_id, "1a2b3c4d");
                 assert_eq!(agent_id, "deadbeef");
             }

@@ -23,10 +23,7 @@ tls_cert_path = "/tmp/cert.pem"
 tls_key_path = "/tmp/key.pem"
 "#;
     let cfg: Config = toml::from_str(toml).expect("config parses");
-    let worker: &WorkerConfig = cfg
-        .worker
-        .as_ref()
-        .expect("worker block parsed into Some");
+    let worker: &WorkerConfig = cfg.worker.as_ref().expect("worker block parsed into Some");
     assert_eq!(worker.secret, "shh");
     assert_eq!(worker.listen_addr.to_string(), "127.0.0.1:7878");
     assert_eq!(worker.heartbeat_timeout_secs, 30);

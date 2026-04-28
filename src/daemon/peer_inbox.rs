@@ -32,11 +32,7 @@ impl InboxHandler {
         Self { db, bus, daemon_id }
     }
 
-    pub async fn handle_mail_deliver(
-        &self,
-        peer: &Peer,
-        msg: &MailDeliver,
-    ) -> Result<MailAck> {
+    pub async fn handle_mail_deliver(&self, peer: &Peer, msg: &MailDeliver) -> Result<MailAck> {
         if msg.body.len() > MAX_MAIL_BODY_BYTES {
             return Ok(ack_fail(&msg.mail_id, "body_too_large"));
         }
@@ -58,7 +54,10 @@ impl InboxHandler {
         }
 
         match address {
-            Address::FederatedAgent { daemon_id, agent_id } => {
+            Address::FederatedAgent {
+                daemon_id,
+                agent_id,
+            } => {
                 if daemon_id != self.daemon_id {
                     return Ok(ack_fail(&msg.mail_id, "invalid_recipient"));
                 }
@@ -140,12 +139,7 @@ impl InboxHandler {
         Ok(ack_ok(&msg.mail_id))
     }
 
-    async fn deliver_topic(
-        &self,
-        peer: &Peer,
-        msg: &MailDeliver,
-        topic: &str,
-    ) -> Result<MailAck> {
+    async fn deliver_topic(&self, peer: &Peer, msg: &MailDeliver, topic: &str) -> Result<MailAck> {
         // Local topic fanout — one mail row per local subscriber.
         let subscribers = self.db.list_subscribers_for_topic(topic)?;
         if subscribers.is_empty() {

@@ -80,9 +80,13 @@ fn failure_retries_with_backoff() {
     db.insert_peer(&peer).unwrap();
     seed_outbox_row(&db, &peer.id, "m2", "ob2");
 
-    let row = db.next_outbox_row(&peer.id, unix_now() + 1).unwrap().unwrap();
+    let row = db
+        .next_outbox_row(&peer.id, unix_now() + 1)
+        .unwrap()
+        .unwrap();
     db.mark_outbox_in_flight(&row.id).unwrap();
-    db.mark_outbox_failed_retry(&row.id, unix_now() + 100).unwrap();
+    db.mark_outbox_failed_retry(&row.id, unix_now() + 100)
+        .unwrap();
 
     // Not eligible yet (next_attempt_at is in the future).
     let later = db.next_outbox_row(&peer.id, unix_now()).unwrap();
@@ -102,11 +106,17 @@ fn in_flight_resets_to_pending_on_boot() {
     let peer = peer_with("gamma");
     db.insert_peer(&peer).unwrap();
     seed_outbox_row(&db, &peer.id, "m3", "ob3");
-    let row = db.next_outbox_row(&peer.id, unix_now() + 1).unwrap().unwrap();
+    let row = db
+        .next_outbox_row(&peer.id, unix_now() + 1)
+        .unwrap()
+        .unwrap();
     db.mark_outbox_in_flight(&row.id).unwrap();
     let n = db.reset_outbox_in_flight().unwrap();
     assert_eq!(n, 1);
-    let again = db.next_outbox_row(&peer.id, unix_now() + 1).unwrap().unwrap();
+    let again = db
+        .next_outbox_row(&peer.id, unix_now() + 1)
+        .unwrap()
+        .unwrap();
     assert_eq!(again.state, PeerOutboxState::Pending);
 }
 

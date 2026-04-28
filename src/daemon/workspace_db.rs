@@ -85,7 +85,10 @@ impl Database {
                 branch: row.get(2)?,
                 state: state_str.parse().unwrap_or(WorkspaceState::Active),
                 agent_count: count.max(0) as u32,
-                created_at: Utc.timestamp_opt(created_at, 0).single().unwrap_or_else(Utc::now),
+                created_at: Utc
+                    .timestamp_opt(created_at, 0)
+                    .single()
+                    .unwrap_or_else(Utc::now),
             });
         }
         Ok(out)
@@ -125,11 +128,7 @@ impl Database {
 
     // --- Workspace assignments ---
 
-    pub fn insert_workspace_assignment(
-        &self,
-        workspace_id: &str,
-        agent_id: &str,
-    ) -> Result<()> {
+    pub fn insert_workspace_assignment(&self, workspace_id: &str, agent_id: &str) -> Result<()> {
         let conn = self.workspace_conn_lock();
         // ON CONFLICT DO NOTHING to make assignment idempotent.
         conn.execute(
@@ -248,7 +247,7 @@ impl Database {
     ) -> Result<MemoryWriteOutcome> {
         let conn = self.workspace_conn_lock();
         let txn = conn.unchecked_transaction()?;
-        let cur: Option<(i64, )> = txn
+        let cur: Option<(i64,)> = txn
             .query_row(
                 "SELECT version FROM workspace_memory WHERE workspace_id = ?1 AND key = ?2",
                 params![workspace_id, key],
@@ -257,12 +256,12 @@ impl Database {
             .ok();
         let cur_version = cur.map(|(v,)| v.max(0) as u64).unwrap_or(0);
 
-        if let Some(expected) = expected_version {
-            if cur_version != expected {
-                return Ok(MemoryWriteOutcome::Conflict {
-                    current_version: cur_version,
-                });
-            }
+        if let Some(expected) = expected_version
+            && cur_version != expected
+        {
+            return Ok(MemoryWriteOutcome::Conflict {
+                current_version: cur_version,
+            });
         }
 
         let new_version = cur_version + 1;
@@ -276,7 +275,14 @@ impl Database {
                 version = excluded.version,
                 updated_at = excluded.updated_at,
                 updated_by = excluded.updated_by",
-            params![workspace_id, key, value, new_version as i64, now, updated_by],
+            params![
+                workspace_id,
+                key,
+                value,
+                new_version as i64,
+                now,
+                updated_by
+            ],
         )?;
         txn.commit()?;
         Ok(MemoryWriteOutcome::Written {
@@ -296,7 +302,7 @@ impl Database {
     ) -> Result<MemoryWriteOutcome> {
         let conn = self.workspace_conn_lock();
         let txn = conn.unchecked_transaction()?;
-        let cur: Option<(i64, )> = txn
+        let cur: Option<(i64,)> = txn
             .query_row(
                 "SELECT version FROM workspace_memory WHERE workspace_id = ?1 AND key = ?2",
                 params![workspace_id, key],
@@ -307,12 +313,12 @@ impl Database {
         if cur_version == 0 {
             return Ok(MemoryWriteOutcome::Written { version: 0 });
         }
-        if let Some(expected) = expected_version {
-            if cur_version != expected {
-                return Ok(MemoryWriteOutcome::Conflict {
-                    current_version: cur_version,
-                });
-            }
+        if let Some(expected) = expected_version
+            && cur_version != expected
+        {
+            return Ok(MemoryWriteOutcome::Conflict {
+                current_version: cur_version,
+            });
         }
         txn.execute(
             "DELETE FROM workspace_memory WHERE workspace_id = ?1 AND key = ?2",
@@ -396,4 +402,3 @@ fn row_to_workspace(row: &rusqlite::Row) -> Result<Workspace> {
         created_at: dt,
     })
 }
-

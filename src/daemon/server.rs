@@ -28,6 +28,7 @@ pub struct AppState {
 }
 
 /// Start both UDS and HTTP servers
+#[allow(clippy::too_many_arguments)]
 pub async fn run(
     manager: Arc<AgentManager>,
     db: Arc<super::persistence::Database>,
@@ -107,8 +108,11 @@ async fn run_uds_server(state: AppState) -> Result<()> {
                     let params: BindParams = match serde_json::from_value(req.params.clone()) {
                         Ok(p) => p,
                         Err(e) => {
-                            let err =
-                                RpcResponse::error(req.id, -32602, format!("Invalid params: {}", e));
+                            let err = RpcResponse::error(
+                                req.id,
+                                -32602,
+                                format!("Invalid params: {}", e),
+                            );
                             let _ = write_response(&mut writer, &err).await;
                             continue;
                         }
@@ -146,10 +150,10 @@ async fn run_uds_server(state: AppState) -> Result<()> {
                                 }
 
                                 // Stop streaming if agent finished
-                                if let StreamEvent::StateChange { new_state, .. } = &event {
-                                    if new_state.is_terminal() {
-                                        return;
-                                    }
+                                if let StreamEvent::StateChange { new_state, .. } = &event
+                                    && new_state.is_terminal()
+                                {
+                                    return;
                                 }
                             }
                             Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
@@ -219,9 +223,7 @@ async fn run_http_server(state: AppState) -> Result<()> {
     Ok(())
 }
 
-async fn http_list_agents(
-    State(state): State<AppState>,
-) -> axum::Json<serde_json::Value> {
+async fn http_list_agents(State(state): State<AppState>) -> axum::Json<serde_json::Value> {
     match state.manager.circle(None).await {
         Ok(agents) => axum::Json(serde_json::to_value(CircleResult { agents }).unwrap()),
         Err(e) => axum::Json(serde_json::json!({"error": e.to_string()})),
@@ -249,11 +251,14 @@ async fn http_summon_agent(
         )
         .await
     {
-        Ok(agent) => axum::Json(serde_json::to_value(SummonResult {
-            id: agent.id,
-            name: agent.name,
-            state: agent.state.as_str().to_string(),
-        }).unwrap()),
+        Ok(agent) => axum::Json(
+            serde_json::to_value(SummonResult {
+                id: agent.id,
+                name: agent.name,
+                state: agent.state.as_str().to_string(),
+            })
+            .unwrap(),
+        ),
         Err(e) => axum::Json(serde_json::json!({"error": e.to_string()})),
     }
 }
@@ -353,9 +358,7 @@ async fn http_agent_history(
     }
 }
 
-async fn http_list_scrolls(
-    State(state): State<AppState>,
-) -> axum::Json<serde_json::Value> {
+async fn http_list_scrolls(State(state): State<AppState>) -> axum::Json<serde_json::Value> {
     match state.db.list_scrolls() {
         Ok(scrolls) => axum::Json(serde_json::json!({"scrolls": scrolls})),
         Err(e) => axum::Json(serde_json::json!({"error": e.to_string()})),
@@ -378,15 +381,13 @@ async fn http_inscribe_scroll(
     let content = match std::fs::read_to_string(&spec_path) {
         Ok(c) => c,
         Err(e) => {
-            return axum::Json(serde_json::json!({"error": format!("Failed to read spec: {}", e)}))
+            return axum::Json(serde_json::json!({"error": format!("Failed to read spec: {}", e)}));
         }
     };
 
     let spec = match super::scroll_parser::parse_scroll(&content) {
         Ok(s) => s,
-        Err(e) => {
-            return axum::Json(serde_json::json!({"error": format!("Parse error: {}", e)}))
-        }
+        Err(e) => return axum::Json(serde_json::json!({"error": format!("Parse error: {}", e)})),
     };
 
     match state

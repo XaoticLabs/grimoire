@@ -19,9 +19,7 @@ pub fn should_halt(state: &crate::shared::types::PeerState) -> bool {
 }
 
 /// Convert an outbox row into the wire `MailDeliver` message.
-pub fn row_to_mail_deliver(
-    row: &PeerOutboxRow,
-) -> crate::shared::peer_proto::MailDeliver {
+pub fn row_to_mail_deliver(row: &PeerOutboxRow) -> crate::shared::peer_proto::MailDeliver {
     crate::shared::peer_proto::MailDeliver {
         mail_id: row.mail_id.clone(),
         sender: row.sender.clone().unwrap_or_default(),

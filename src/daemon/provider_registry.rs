@@ -27,7 +27,10 @@ impl ProviderRegistry {
         for (name, provider_config) in &config.providers {
             providers.insert(
                 name.clone(),
-                Arc::new(PlainTextProvider::new(name.clone(), provider_config.clone())),
+                Arc::new(PlainTextProvider::new(
+                    name.clone(),
+                    provider_config.clone(),
+                )),
             );
         }
 

@@ -185,10 +185,10 @@ impl AgentManager {
                 }
             };
 
-            if let Some(ref sid) = result.session_id {
-                if let Err(e) = db.update_agent_session_id(&agent_id, sid) {
-                    error!(agent_id = %agent_id, error = %e, "Failed to store session_id");
-                }
+            if let Some(ref sid) = result.session_id
+                && let Err(e) = db.update_agent_session_id(&agent_id, sid)
+            {
+                error!(agent_id = %agent_id, error = %e, "Failed to store session_id");
             }
 
             // T8: keep-alive agents that complete normally with a session
@@ -268,6 +268,7 @@ impl AgentManager {
             .await
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub async fn enqueue_with_options(
         self: &Arc<Self>,
         task: &str,
@@ -328,8 +329,9 @@ impl AgentManager {
         };
         self.db.enqueue_task(&row)?;
 
-        self.event_bus
-            .publish(StreamEvent::AgentCreated { agent: agent.clone() });
+        self.event_bus.publish(StreamEvent::AgentCreated {
+            agent: agent.clone(),
+        });
         self.event_bus.publish(StreamEvent::AgentQueued {
             agent_id: agent_id.clone(),
             lane: lane.as_str().to_string(),
@@ -424,7 +426,9 @@ impl AgentManager {
                 },
             );
         }
-        let managed = agents.get_mut(&agent_id).expect("just inserted or pre-existing");
+        let managed = agents
+            .get_mut(&agent_id)
+            .expect("just inserted or pre-existing");
         managed.agent.state = AgentState::Active;
         managed.agent.pid = pid;
         managed.cancel = Some(cancel);
@@ -561,8 +565,7 @@ impl AgentManager {
             ));
         }
 
-        self.db
-            .update_agent_state(id, &AgentState::Active, None)?;
+        self.db.update_agent_state(id, &AgentState::Active, None)?;
 
         self.event_bus.publish(StreamEvent::StateChange {
             agent_id: id.to_string(),
@@ -618,16 +621,16 @@ impl AgentManager {
         if result {
             // Cascade: retire wake sources after the state flip. Errors are
             // logged but don't fail the banish (banish must always succeed).
-            if let Some(reg) = self.wake_registry.lock().await.clone() {
-                if let Err(e) = reg.retire_for_agent(id).await {
-                    tracing::warn!(agent_id = %id, error = %e, "wake source retire on banish failed");
-                }
+            if let Some(reg) = self.wake_registry.lock().await.clone()
+                && let Err(e) = reg.retire_for_agent(id).await
+            {
+                tracing::warn!(agent_id = %id, error = %e, "wake source retire on banish failed");
             }
             // Cascade: cancel any pending restart and clear supervision.
-            if let Some(sup) = self.supervisor.lock().await.clone() {
-                if let Err(e) = sup.cancel_pending(id).await {
-                    tracing::warn!(agent_id = %id, error = %e, "supervisor cancel_pending on banish failed");
-                }
+            if let Some(sup) = self.supervisor.lock().await.clone()
+                && let Err(e) = sup.cancel_pending(id).await
+            {
+                tracing::warn!(agent_id = %id, error = %e, "supervisor cancel_pending on banish failed");
             }
             if let Err(e) = self.db.clear_supervision(id) {
                 tracing::warn!(agent_id = %id, error = %e, "clear_supervision on banish failed");
@@ -667,10 +670,10 @@ impl AgentManager {
                 let old_state = managed.agent.state.clone();
                 if let Some(cancel) = managed.cancel.take() {
                     cancel();
-                } else if let Some(pid) = managed.agent.pid {
-                    if let Err(e) = process_manager::kill_process(pid) {
-                        error!(agent_id = %id, error = %e, "Failed to kill agent process");
-                    }
+                } else if let Some(pid) = managed.agent.pid
+                    && let Err(e) = process_manager::kill_process(pid)
+                {
+                    error!(agent_id = %id, error = %e, "Failed to kill agent process");
                 }
 
                 managed.agent.state = AgentState::Banished;

@@ -9,9 +9,7 @@ use grimoire::daemon::event_bus::EventBus;
 use grimoire::daemon::peer_inbox::InboxHandler;
 use grimoire::daemon::persistence::{Database, unix_now};
 use grimoire::shared::peer_proto::MailDeliver;
-use grimoire::shared::types::{
-    Agent, AgentState, Peer, PeerState, RestartPolicy,
-};
+use grimoire::shared::types::{Agent, AgentState, Peer, PeerState, RestartPolicy};
 use std::path::PathBuf;
 use std::sync::Arc;
 

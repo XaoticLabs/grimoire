@@ -37,10 +37,7 @@ fn rpc_request_serialization() {
 
 #[test]
 fn rpc_response_success() {
-    let resp = RpcResponse::success(
-        1,
-        serde_json::json!({"id": "abc12345", "state": "active"}),
-    );
+    let resp = RpcResponse::success(1, serde_json::json!({"id": "abc12345", "state": "active"}));
 
     let json = serde_json::to_string(&resp).unwrap();
     let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
@@ -306,7 +303,11 @@ fn agent_queued_event_serde_roundtrip() {
     let json = serde_json::to_string(&event).unwrap();
     let parsed: StreamEvent = serde_json::from_str(&json).unwrap();
     match parsed {
-        StreamEvent::AgentQueued { agent_id, lane, block_reason } => {
+        StreamEvent::AgentQueued {
+            agent_id,
+            lane,
+            block_reason,
+        } => {
             assert_eq!(agent_id, "abc12345");
             assert_eq!(lane, "adhoc");
             assert_eq!(block_reason.as_deref(), Some("capacity"));
@@ -323,7 +324,9 @@ fn agent_queued_event_serde_roundtrip() {
     let json = serde_json::to_string(&event).unwrap();
     let parsed: StreamEvent = serde_json::from_str(&json).unwrap();
     match parsed {
-        StreamEvent::AgentQueued { lane, block_reason, .. } => {
+        StreamEvent::AgentQueued {
+            lane, block_reason, ..
+        } => {
             assert_eq!(lane, "scroll");
             assert!(block_reason.is_none());
         }
@@ -406,7 +409,6 @@ fn daemon_status_result_includes_queued_and_cap() {
     assert_eq!(json["max_concurrent_agents"].as_u64(), Some(8));
 }
 
-
 // ---------------------------------------------------------------------------
 // QueueListResponse / QueueEntry (Task 11)
 // ---------------------------------------------------------------------------
@@ -452,4 +454,3 @@ fn queue_entry_block_reason_optional() {
     assert!(json["block_reason"].is_null());
     assert!(json["provider"].is_null());
 }
-

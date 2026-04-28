@@ -11,14 +11,10 @@ use grimoire::daemon::agent_manager::AgentManager;
 use grimoire::daemon::clock::TestClock;
 use grimoire::daemon::event_bus::EventBus;
 use grimoire::daemon::persistence::Database;
-use grimoire::daemon::supervisor::{
-    EscalationMailSender, EscalationOutcome, Supervisor,
-};
+use grimoire::daemon::supervisor::{EscalationMailSender, EscalationOutcome, Supervisor};
 use grimoire::shared::config::Config;
 use grimoire::shared::protocol::StreamEvent;
-use grimoire::shared::types::{
-    Agent, AgentState, RestartPolicy, SupervisionConfig,
-};
+use grimoire::shared::types::{Agent, AgentState, RestartPolicy, SupervisionConfig};
 
 #[derive(Default)]
 struct NoopMail;
@@ -65,12 +61,14 @@ async fn banish_restarting_transitions_to_banished() {
     let mut saw = false;
     while let Ok(ev) = rx.try_recv() {
         if let StreamEvent::StateChange {
-            old_state, new_state, ..
+            old_state,
+            new_state,
+            ..
         } = ev
+            && old_state == AgentState::Restarting
+            && new_state == AgentState::Banished
         {
-            if old_state == AgentState::Restarting && new_state == AgentState::Banished {
-                saw = true;
-            }
+            saw = true;
         }
     }
     assert!(saw);
@@ -93,7 +91,7 @@ async fn banish_cancels_pending_restart() {
     .unwrap();
     let now = Utc::now();
     let clock = Arc::new(TestClock::new(now));
-    let mail: Arc<dyn EscalationMailSender> = Arc::new(NoopMail::default());
+    let mail: Arc<dyn EscalationMailSender> = Arc::new(NoopMail);
     let sup = Supervisor::new(db.clone(), bus.clone(), clock, 30, 3, mail);
     sup.schedule_restart("ban00002", 1, now + chrono::Duration::seconds(2), false)
         .await

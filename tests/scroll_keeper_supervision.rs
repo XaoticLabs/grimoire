@@ -13,8 +13,7 @@ use grimoire::daemon::scroll_keeper::ScrollKeeper;
 use grimoire::shared::config::Config;
 use grimoire::shared::protocol::StreamEvent;
 use grimoire::shared::types::{
-    Agent, AgentState, RestartPolicy, Scroll, ScrollState, SupervisionConfig, Task,
-    TaskState,
+    Agent, AgentState, RestartPolicy, Scroll, ScrollState, SupervisionConfig, Task, TaskState,
 };
 
 fn seed_agent(db: &Database, id: &str, state: AgentState) {

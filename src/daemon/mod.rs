@@ -3,8 +3,6 @@ pub mod clock;
 pub mod daemon_id;
 pub mod event_bus;
 pub mod executor;
-pub mod worker_registry;
-pub mod worker_rpc_server;
 pub mod orchestrator;
 pub mod peer_client;
 pub mod peer_inbox;
@@ -24,6 +22,8 @@ pub mod server;
 pub mod supervisor;
 pub mod wake_registry;
 pub mod wake_sources;
+pub mod worker_registry;
+pub mod worker_rpc_server;
 pub mod workspace_db;
 pub mod workspace_registry;
 pub mod workspace_watcher;
@@ -70,7 +70,10 @@ pub async fn start() -> Result<()> {
     let migrated_ids = match db.migrate_dormant_agents() {
         Ok(ids) => {
             if !ids.is_empty() {
-                info!(count = ids.len(), "migrated agents from complete to dormant");
+                info!(
+                    count = ids.len(),
+                    "migrated agents from complete to dormant"
+                );
             }
             ids
         }
@@ -93,7 +96,8 @@ pub async fn start() -> Result<()> {
         });
     }
 
-    let manager = agent_manager::AgentManager::new(db.clone(), event_bus.clone(), config.clone()).await;
+    let manager =
+        agent_manager::AgentManager::new(db.clone(), event_bus.clone(), config.clone()).await;
 
     // Wake registry (cron / file-watch / parent-completion sources).
     let clock: Arc<dyn clock::Clock> = Arc::new(clock::SystemClock);
@@ -127,7 +131,10 @@ pub async fn start() -> Result<()> {
     orch.start(&event_bus);
 
     // Start scroll keeper (listens for agent completions, manages scroll DAGs)
-    let scroll_keeper = Arc::new(scroll_keeper::ScrollKeeper::new(db.clone(), manager.clone()));
+    let scroll_keeper = Arc::new(scroll_keeper::ScrollKeeper::new(
+        db.clone(),
+        manager.clone(),
+    ));
     scroll_keeper.clone().start(&event_bus);
 
     // Workspace registry (workspaces + memory KV + filewatch).

@@ -7,16 +7,16 @@ use crate::shared::protocol::SummonResult;
 /// Parse `--max-restarts <N>/<T>s` into `(max, window_secs)`.
 fn parse_max_restarts(s: &str) -> Result<(u32, u32)> {
     let trimmed = s.trim();
-    if let Some(rest) = trimmed.strip_suffix('s') {
-        if let Some((n, t)) = rest.split_once('/') {
-            let n: u32 = n
-                .parse()
-                .map_err(|_| anyhow!("expected format <N>/<T>s, e.g. 3/60s"))?;
-            let t: u32 = t
-                .parse()
-                .map_err(|_| anyhow!("expected format <N>/<T>s, e.g. 3/60s"))?;
-            return Ok((n, t));
-        }
+    if let Some(rest) = trimmed.strip_suffix('s')
+        && let Some((n, t)) = rest.split_once('/')
+    {
+        let n: u32 = n
+            .parse()
+            .map_err(|_| anyhow!("expected format <N>/<T>s, e.g. 3/60s"))?;
+        let t: u32 = t
+            .parse()
+            .map_err(|_| anyhow!("expected format <N>/<T>s, e.g. 3/60s"))?;
+        return Ok((n, t));
     }
     Err(anyhow!("expected format <N>/<T>s, e.g. 3/60s"))
 }
@@ -70,10 +70,7 @@ pub async fn run(
             .zip(window_t)
             .map(|(n, t)| format!("{}/{}s", n, t))
             .unwrap_or_else(|| "?".into());
-        tail = format!(
-            "(state: {}, restart: {} {})",
-            result.state, restart, mr
-        );
+        tail = format!("(state: {}, restart: {} {})", result.state, restart, mr);
         if let Some(addr) = escalate_to {
             tail.pop(); // remove ')'
             tail = format!("{}, escalate-to: {})", tail, addr);

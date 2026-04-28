@@ -54,12 +54,11 @@ fn wake_sources_table_exists_after_migrate() {
         let mut stmt = c
             .prepare("SELECT name FROM sqlite_master WHERE type='table'")
             .unwrap();
-        let rows = stmt
-            .query_map([], |r| r.get::<_, String>(0))
+
+        stmt.query_map([], |r| r.get::<_, String>(0))
             .unwrap()
             .map(|r| r.unwrap())
-            .collect();
-        rows
+            .collect()
     });
     assert!(names.iter().any(|n| n == "wake_sources"));
     assert!(names.iter().any(|n| n == "wake_rate_limits"));
@@ -139,7 +138,11 @@ fn delete_wake_sources_for_agent_bulk() {
         .unwrap();
     let n = db.delete_wake_sources_for_agent("agent_a").unwrap();
     assert_eq!(n, 2);
-    assert!(db.list_wake_sources_for_agent("agent_a").unwrap().is_empty());
+    assert!(
+        db.list_wake_sources_for_agent("agent_a")
+            .unwrap()
+            .is_empty()
+    );
     assert_eq!(db.list_wake_sources_for_agent("agent_b").unwrap().len(), 1);
 }
 

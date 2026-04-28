@@ -205,7 +205,7 @@ These are only possible because agents are daemons.
 
 - Two `grimd` instances peer with each other. Agents on daemon-A can message agents on daemon-B. Scrolls can span daemons.
 - Use case: a laptop daemon delegates heavy work to the office-server daemon, which delegates sandboxed execution to an ephemeral cloud daemon. All one fabric.
-- **v1 status (uncommitted on `main`):** direct `mail.send` across peers + opt-in topic federation are wired end-to-end. New `DaemonId` minted on first boot (`~/.grimoire/daemon.id`) and surfaced via `grim status`; address parser accepts `agent://grimd-<id>/<id>`. Tonic-based `proto/peer.proto` channel (Hello/HelloAck/Heartbeat/MailDeliver/MailAck) reuses the worker-channel substrate. Outbox + at-least-once delivery with `(sender_daemon_id, sender_seq)` dedupe. CLI: `grim peer add/list/remove/ping`, `grim topic federate/unfederate`. Full implementation in `.claude/specs/federation-spec.md` (T1–T13). 18 new federation tests; full suite at 553 passing. Out-of-scope (still): scroll-spanning, federated workspaces, federated supervision trees, mTLS (gated on worker-channel mTLS), cross-peer wake sources, transitive routing.
+- **v1 status (landed on `main` via `059ac1a feat: federated workers`):** direct `mail.send` across peers + opt-in topic federation are wired end-to-end. New `DaemonId` minted on first boot (`~/.grimoire/daemon.id`) and surfaced via `grim status`; address parser accepts `agent://grimd-<id>/<id>`. Tonic-based `proto/peer.proto` channel (Hello/HelloAck/Heartbeat/MailDeliver/MailAck) reuses the worker-channel substrate. Outbox + at-least-once delivery with `(sender_daemon_id, sender_seq)` dedupe. CLI: `grim peer add/list/remove/ping`, `grim topic federate/unfederate`. Full implementation in `.claude/specs/federation-spec.md` (T1–T13). 18 new federation tests; full suite at 553 passing. Out-of-scope (still): scroll-spanning, federated workspaces, federated supervision trees, mTLS (gated on worker-channel mTLS), cross-peer wake sources, transitive routing.
 
 ### 12. Introspection & eval as first-class
 
@@ -237,6 +237,42 @@ Six-month spine:
 5. ~~**Dormant agents with wake triggers** — THE differentiator. This is what being a daemon is _for_.~~ ✅ *v1 shipped — see Part 3 §5 / `.claude/specs/dormant-agents-wake-triggers-spec.md`.*
 6. ~~**Supervision trees** — layers on top of above; makes scrolls self-healing.~~ ✅ *v1 shipped — see Part 3 §8 / `.claude/specs/supervision-trees-spec.md`.*
 7. ~~**Shared memory store + workspaces** — enables real multi-agent collaboration.~~ ✅ *v1 shipped — see Part 3 §6 + §7 / `.claude/specs/shared-memory-workspaces-spec.md`.*
-8. ~~**Federation** — last, after single-fabric is solid.~~ ✅ *v1 implemented (uncommitted) — see Part 3 §11 / `.claude/specs/federation-spec.md`. Direct mail + opt-in topic federation across two `grimd` peers; scroll-spanning and mTLS still post-v1.*
+8. ~~**Federation** — last, after single-fabric is solid.~~ ✅ *v1 landed on `main` (`059ac1a`) — see Part 3 §11 / `.claude/specs/federation-spec.md`. Direct mail + opt-in topic federation across two `grimd` peers; scroll-spanning and mTLS still post-v1.*
 
-The through-line: **every feature above is impossible or awkward in a library-based orchestrator and natural in a daemon.** That's the story. Lead with it in the README; every feature should visibly reinforce it.
+The six-month spine is complete. The through-line: **every feature above is impossible or awkward in a library-based orchestrator and natural in a daemon.** That's the story. Lead with it in the README; every feature should visibly reinforce it.
+
+---
+
+## Part 6 — Now / Next (post-spine)
+
+With items 1–8 of Part 5 shipped, the next axis of work is **trust & operability** — the things that turn the fabric from "demo-grade" into something a team can actually point at shared infra. Two parallel tracks, ordered by leverage:
+
+### Track A — Enterprise hardening (the gate to multi-user)
+
+The unfinished items from Part 1's "Hardening milestone." None of these are research; they are the table-stakes that everything below assumes.
+
+1. **Auth + protocol versioning on UDS/HTTP/peer RPC** — `protocol.rs` still has no `version` field, the UDS is unauthenticated, and the federation `Hello` exchange has no token. Pick one token model (bearer on header / connection preamble) and apply it uniformly across the three transports. *This also unblocks the v2 webhook wake source (Part 3 §5) and "system" stream for human-originated mail (Part 3 §4).*
+2. **Observability baseline** — Prometheus `/metrics` (queue depth, dispatch latency, restart counts, peer outbox lag, mail backlog) and OTel span export tied to scroll/agent IDs. Cheap given `tracing` is already wired.
+3. **Sandboxing** — cwd jail + `rlimit`/cgroups per agent process, plus a per-agent env allowlist. Today a summoned agent inherits the daemon's full env and FS.
+
+### Track B — Daemon-native features still on the table
+
+The Part 3 items that don't yet have a v1:
+
+4. **§10 — Policy & budget as daemon primitives.** `grim budget create … --daily $50`, allow/deny rules per provider/cwd/token, enforced at admission. Largest "enterprise sell" lever and a natural extension of the scheduler's existing admission hook.
+5. **§9 — Time-travel & replay.** The durable event log (Part 2 §3) already records everything; what's missing is a replay cursor API and `grim replay <agent-id> --until <event>` / `grim fork <agent-id> @event`. Mostly a read-side feature on top of existing data.
+6. **§12 — Introspection & eval.** `grim eval <agent-id> --rubric <file>` runs an evaluator agent against a transcript and stores the score alongside the agent. Pairs well with §9 (replay → eval → fork-and-retry).
+
+### Recommended next pickup
+
+**Track A §1 (auth + protocol versioning) first.** Reasons:
+
+- It's the smallest item that unlocks the most downstream work — webhook wake sources, dashboard auth, the "system" mail stream, and federation mTLS all currently say "gated on auth-token hardening."
+- Without it, every demo from Part 4 (standing review team, laptop grid, federation) has a "...and don't run this on a shared machine" asterisk.
+- It's a one- to two-day spec; everything else in this section is a multi-day spec.
+
+After that, **Track B §4 (policy & budget)** is the highest-leverage feature pickup, because the scheduler already owns the admission decision — adding budget/policy is mostly schema + a check function, not new architecture.
+
+### v2 backlog (deferred, not forgotten)
+
+Per-feature v2 work already enumerated in Part 3: webhook wake source (§5), dashboard wake-source surfacing (§5), `grim context <id>` show/compact/fork (§6), vector memory (§6), RO observer ACLs (§7), per-workspace watch-ignore overrides (§7), supervision-tree dashboard view + topic/webhook escalation (§8), federation scroll-spanning + mTLS + cross-peer wake sources (§11). Pick these up opportunistically when the parent feature gets touched.

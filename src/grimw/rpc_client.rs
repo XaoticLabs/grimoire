@@ -70,8 +70,7 @@ pub async fn run(
     let hb_dispatcher = dispatcher.clone();
     let hb_handle = tokio::spawn(async move {
         let mut seq: u64 = 0;
-        let mut interval =
-            tokio::time::interval(Duration::from_secs(HEARTBEAT_INTERVAL_SECS));
+        let mut interval = tokio::time::interval(Duration::from_secs(HEARTBEAT_INTERVAL_SECS));
         // First tick fires immediately; skip it so the daemon receives the
         // first Register before any Heartbeat.
         interval.tick().await;

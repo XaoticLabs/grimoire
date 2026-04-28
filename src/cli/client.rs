@@ -16,9 +16,12 @@ pub struct DaemonClient {
 impl DaemonClient {
     pub async fn connect() -> Result<Self> {
         let path = constants::socket_path();
-        let stream = UnixStream::connect(&path)
-            .await
-            .with_context(|| format!("Cannot connect to daemon at {}. Is grimd running? Start it with: grim daemon", path.display()))?;
+        let stream = UnixStream::connect(&path).await.with_context(|| {
+            format!(
+                "Cannot connect to daemon at {}. Is grimd running? Start it with: grim daemon",
+                path.display()
+            )
+        })?;
 
         let (reader, writer) = stream.into_split();
         Ok(Self {
@@ -49,16 +52,13 @@ impl DaemonClient {
 
         Ok(response)
     }
-
 }
 
 /// Resolve a short ID prefix to a full agent ID.
 /// Queries the daemon for all agents and finds the unique match.
 pub async fn resolve_agent_id(prefix: &str) -> Result<String> {
     let mut client = DaemonClient::connect().await?;
-    let response = client
-        .call("agent.circle", serde_json::json!({}))
-        .await?;
+    let response = client.call("agent.circle", serde_json::json!({})).await?;
 
     if let Some(error) = response.error {
         anyhow::bail!("Failed to list agents: {}", error.message);

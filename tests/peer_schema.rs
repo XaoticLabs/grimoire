@@ -97,11 +97,23 @@ fn topic_federation_direction_merge_idempotent() {
     let peer = fake_peer("gamma", "0123456789abcdef0123456789abcdef");
     db.insert_peer(&peer).unwrap();
     let dir1 = db
-        .upsert_topic_federation("f1", &peer.id, "pr-opened", FederationDirection::Outbound, unix_now())
+        .upsert_topic_federation(
+            "f1",
+            &peer.id,
+            "pr-opened",
+            FederationDirection::Outbound,
+            unix_now(),
+        )
         .unwrap();
     assert_eq!(dir1, FederationDirection::Outbound);
     let dir2 = db
-        .upsert_topic_federation("f2", &peer.id, "pr-opened", FederationDirection::Inbound, unix_now())
+        .upsert_topic_federation(
+            "f2",
+            &peer.id,
+            "pr-opened",
+            FederationDirection::Inbound,
+            unix_now(),
+        )
         .unwrap();
     assert_eq!(dir2, FederationDirection::Both);
 }

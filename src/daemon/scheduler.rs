@@ -64,10 +64,7 @@ pub struct DbStateLookup {
 
 impl AgentStateLookup for DbStateLookup {
     fn get_state_and_session(&self, id: &str) -> Result<Option<(AgentState, Option<String>)>> {
-        Ok(self
-            .db
-            .get_agent(id)?
-            .map(|a| (a.state, a.session_id)))
+        Ok(self.db.get_agent(id)?.map(|a| (a.state, a.session_id)))
     }
 }
 
@@ -450,4 +447,3 @@ impl Drop for SchedulerHandle {
         self.handle.abort();
     }
 }
-

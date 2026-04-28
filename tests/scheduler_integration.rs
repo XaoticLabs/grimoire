@@ -70,7 +70,10 @@ impl ControlledExecutor {
 impl Executor for ControlledExecutor {
     async fn start(&self, req: ExecuteRequest) -> Result<ExecutorHandle> {
         let (done_tx, done_rx) = oneshot::channel::<MonitorResult>();
-        self.pending.lock().await.insert(req.agent_id.clone(), done_tx);
+        self.pending
+            .lock()
+            .await
+            .insert(req.agent_id.clone(), done_tx);
         self.started.lock().await.push(req.agent_id.clone());
         let (cancel_tx, _cancel_rx) = oneshot::channel::<()>();
         let completion = tokio::spawn(async move {
@@ -224,7 +227,14 @@ async fn restart_recovery_keeps_queued_loses_active() {
         let h = Harness::build_with_db(db.clone(), 0).await;
         for _ in 0..3 {
             h.manager
-                .enqueue("queued task", None, None, None, Path::new("/tmp"), Lane::Adhoc)
+                .enqueue(
+                    "queued task",
+                    None,
+                    None,
+                    None,
+                    Path::new("/tmp"),
+                    Lane::Adhoc,
+                )
                 .await
                 .unwrap();
         }

@@ -12,9 +12,7 @@ use crate::shared::worker_proto::{
     DaemonMessage, WorkerMessage, worker_control_server::WorkerControl, worker_message,
 };
 
-use super::worker_registry::{
-    RegisterParams, WorkerRegistry, worker_version_meets_minimum,
-};
+use super::worker_registry::{RegisterParams, WorkerRegistry, worker_version_meets_minimum};
 
 /// Routes inbound TaskEvent/TaskFinished/TaskAccepted/TaskRejected back to a
 /// per-agent channel registered by RemoteExecutor (Task 6).
@@ -31,6 +29,9 @@ impl WorkerControl for WorkerControlService {
     type ChannelStream =
         Pin<Box<dyn Stream<Item = Result<DaemonMessage, Status>> + Send + 'static>>;
 
+    // `tonic::Status` is large but the trait fixes the Err type — boxing here would
+    // change the API generated from the proto definition.
+    #[allow(clippy::result_large_err)]
     async fn channel(
         &self,
         request: Request<Streaming<WorkerMessage>>,
@@ -38,9 +39,10 @@ impl WorkerControl for WorkerControlService {
         let mut inbound = request.into_inner();
 
         // First message must be Register.
-        let first = inbound.message().await.map_err(|e| {
-            Status::aborted(format!("read register: {}", e))
-        })?;
+        let first = inbound
+            .message()
+            .await
+            .map_err(|e| Status::aborted(format!("read register: {}", e)))?;
         let register = match first {
             Some(WorkerMessage {
                 kind: Some(worker_message::Kind::Register(r)),
@@ -110,8 +112,10 @@ impl WorkerControl for WorkerControlService {
         });
 
         let outbound = ReceiverStream::new(assign_rx).map(Ok);
-        let stream: Self::ChannelStream =
-            Box::pin(tokio_stream::StreamExt::map(outbound, |r: Result<DaemonMessage, Status>| r));
+        let stream: Self::ChannelStream = Box::pin(tokio_stream::StreamExt::map(
+            outbound,
+            |r: Result<DaemonMessage, Status>| r,
+        ));
         Ok(Response::new(stream))
     }
 }

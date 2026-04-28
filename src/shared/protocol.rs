@@ -1,7 +1,10 @@
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
-use super::types::{Agent, AgentEvent, AgentId, AgentState, AgentSummary, DaemonId, Mail, MailState, MemoryListItem, TaskConflict, TaskState, ScrollId, WakeSource, Workspace, WorkspaceId, WorkspaceListEntry};
+use super::types::{
+    Agent, AgentEvent, AgentId, AgentState, AgentSummary, DaemonId, Mail, MailState,
+    MemoryListItem, ScrollId, TaskConflict, TaskState, WakeSource, WorkspaceId, WorkspaceListEntry,
+};
 
 /// JSON-RPC request from CLI to daemon
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -894,7 +897,10 @@ mod tests {
             restart_count: 0,
             workspace_id: None,
         };
-        assert_eq!(StreamEvent::AgentCreated { agent }.agent_id(), Some("test1234"));
+        assert_eq!(
+            StreamEvent::AgentCreated { agent }.agent_id(),
+            Some("test1234")
+        );
 
         // AgentEvent event
         let event = StreamEvent::AgentEvent {

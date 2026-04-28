@@ -20,10 +20,7 @@ pub fn format_stream_json(line: &str) -> Option<String> {
 
 fn format_system(v: &serde_json::Value) -> Option<String> {
     let model = v.get("model").and_then(|m| m.as_str()).unwrap_or("unknown");
-    let session_id = v
-        .get("session_id")
-        .and_then(|s| s.as_str())
-        .unwrap_or("?");
+    let session_id = v.get("session_id").and_then(|s| s.as_str()).unwrap_or("?");
     let short_session = &session_id[..8.min(session_id.len())];
 
     Some(format!(
@@ -54,7 +51,10 @@ fn format_assistant(v: &serde_json::Value) -> Option<String> {
                     .get("name")
                     .and_then(|n| n.as_str())
                     .unwrap_or("unknown");
-                let input = block.get("input").cloned().unwrap_or(serde_json::Value::Null);
+                let input = block
+                    .get("input")
+                    .cloned()
+                    .unwrap_or(serde_json::Value::Null);
                 output.push_str(&format_tool_call(name, &input));
             }
             _ => {}
@@ -109,14 +109,8 @@ fn format_tool_use(v: &serde_json::Value) -> Option<String> {
 }
 
 fn format_tool_result(v: &serde_json::Value) -> Option<String> {
-    let name = v
-        .get("name")
-        .and_then(|n| n.as_str())
-        .unwrap_or("tool");
-    let is_error = v
-        .get("is_error")
-        .and_then(|e| e.as_bool())
-        .unwrap_or(false);
+    let name = v.get("name").and_then(|n| n.as_str()).unwrap_or("tool");
+    let is_error = v.get("is_error").and_then(|e| e.as_bool()).unwrap_or(false);
 
     if is_error {
         let error_text = v
@@ -140,7 +134,12 @@ fn format_tool_result(v: &serde_json::Value) -> Option<String> {
         if let Some(text) = output {
             let lines: Vec<&str> = text.lines().collect();
             if lines.len() <= 5 {
-                Some(format!("  {} {}\n{}\n", "✓".green(), name.dimmed(), text.dimmed()))
+                Some(format!(
+                    "  {} {}\n{}\n",
+                    "✓".green(),
+                    name.dimmed(),
+                    text.dimmed()
+                ))
             } else {
                 // Truncate long output
                 let preview: String = lines[..3].join("\n");
@@ -160,7 +159,10 @@ fn format_tool_result(v: &serde_json::Value) -> Option<String> {
 }
 
 fn format_result(v: &serde_json::Value) -> Option<String> {
-    let subtype = v.get("subtype").and_then(|s| s.as_str()).unwrap_or("unknown");
+    let subtype = v
+        .get("subtype")
+        .and_then(|s| s.as_str())
+        .unwrap_or("unknown");
     let duration_ms = v.get("duration_ms").and_then(|d| d.as_u64()).unwrap_or(0);
     let cost = v.get("total_cost_usd").and_then(|c| c.as_f64());
     let turns = v.get("num_turns").and_then(|t| t.as_u64()).unwrap_or(0);
@@ -224,7 +226,8 @@ mod tests {
 
     #[test]
     fn tool_result_error() {
-        let line = r#"{"type":"tool_result","name":"Bash","is_error":true,"content":"command not found"}"#;
+        let line =
+            r#"{"type":"tool_result","name":"Bash","is_error":true,"content":"command not found"}"#;
         let result = format_stream_json(line).unwrap();
         assert!(result.contains("command not found"));
     }

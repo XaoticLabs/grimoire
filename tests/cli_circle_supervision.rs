@@ -4,12 +4,8 @@ use std::path::PathBuf;
 
 use chrono::Utc;
 
-use grimoire::cli::formatters::{
-    format_circle_text, format_status_supervision_block,
-};
-use grimoire::shared::types::{
-    Agent, AgentState, AgentSummary, RestartPolicy, SupervisionConfig,
-};
+use grimoire::cli::formatters::{format_circle_text, format_status_supervision_block};
+use grimoire::shared::types::{Agent, AgentState, AgentSummary, RestartPolicy, SupervisionConfig};
 
 fn agent(id: &str, policy: RestartPolicy, count: u32) -> Agent {
     Agent {

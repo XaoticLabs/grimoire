@@ -11,10 +11,8 @@ use tempfile::TempDir;
 
 use grimoire::daemon::event_bus::EventBus;
 use grimoire::daemon::persistence::Database;
-use grimoire::daemon::workspace_registry::{
-    GitError, GitRunner, WorkspaceRegistry,
-};
 use grimoire::daemon::workspace_db::MemoryWriteOutcome;
+use grimoire::daemon::workspace_registry::{GitError, GitRunner, WorkspaceRegistry};
 use grimoire::shared::types::{Workspace, WorkspaceState};
 
 /// Fake `GitRunner` that creates the target dir on add and removes it on
@@ -101,7 +99,10 @@ async fn memory_put_get_roundtrip() {
     reg.create("ws", &repo, "wip").await.unwrap();
 
     let bytes = serde_json::to_vec(&serde_json::json!("hello")).unwrap();
-    match db.memory_put_cas("ws", "greeting", &bytes, None, "system").unwrap() {
+    match db
+        .memory_put_cas("ws", "greeting", &bytes, None, "system")
+        .unwrap()
+    {
         MemoryWriteOutcome::Written { version } => assert_eq!(version, 1),
         _ => panic!("expected Written"),
     }
@@ -118,8 +119,10 @@ async fn memory_cas_conflict_surfaces_current_version() {
     reg.create("ws", &repo, "wip").await.unwrap();
 
     let bytes = serde_json::to_vec(&serde_json::json!(1)).unwrap();
-    db.memory_put_cas("ws", "k", &bytes, None, "system").unwrap();
-    db.memory_put_cas("ws", "k", &bytes, Some(1), "system").unwrap();
+    db.memory_put_cas("ws", "k", &bytes, None, "system")
+        .unwrap();
+    db.memory_put_cas("ws", "k", &bytes, Some(1), "system")
+        .unwrap();
 
     match db
         .memory_put_cas("ws", "k", &bytes, Some(1), "system")
@@ -137,11 +140,14 @@ async fn memory_list_prefix_segment_aligned() {
     reg.create("ws", &repo, "wip").await.unwrap();
 
     let v = serde_json::to_vec(&serde_json::json!("x")).unwrap();
-    db.memory_put_cas("ws", "findings", &v, None, "system").unwrap();
-    db.memory_put_cas("ws", "findings/auth", &v, None, "system").unwrap();
+    db.memory_put_cas("ws", "findings", &v, None, "system")
+        .unwrap();
+    db.memory_put_cas("ws", "findings/auth", &v, None, "system")
+        .unwrap();
     db.memory_put_cas("ws", "findings/auth/token", &v, None, "system")
         .unwrap();
-    db.memory_put_cas("ws", "findingsX", &v, None, "system").unwrap();
+    db.memory_put_cas("ws", "findingsX", &v, None, "system")
+        .unwrap();
 
     let items = db.memory_list_prefix("ws", Some("findings")).unwrap();
     let keys: Vec<_> = items.iter().map(|i| i.key.clone()).collect();
@@ -153,8 +159,8 @@ async fn memory_list_prefix_segment_aligned() {
 
 #[tokio::test]
 async fn destroy_with_running_agent_refused() {
-    use grimoire::shared::types::{Agent, AgentState, RestartPolicy};
     use chrono::Utc;
+    use grimoire::shared::types::{Agent, AgentState, RestartPolicy};
 
     let (db, _bus, reg, td) = build_registry().await;
     let repo = fake_git_repo(&td);
@@ -192,8 +198,8 @@ async fn destroy_with_running_agent_refused() {
 
 #[tokio::test]
 async fn assign_idempotent_for_same_pair() {
-    use grimoire::shared::types::{Agent, AgentState, RestartPolicy};
     use chrono::Utc;
+    use grimoire::shared::types::{Agent, AgentState, RestartPolicy};
 
     let (db, _bus, reg, td) = build_registry().await;
     let repo = fake_git_repo(&td);
@@ -251,7 +257,10 @@ async fn boot_reconcile_orphan_dir_emits_event_and_preserves() {
         }
     }
     assert!(found, "expected WorkspaceOrphanDirDetected");
-    assert!(root.join("orphan-1").exists(), "orphan dir must be preserved");
+    assert!(
+        root.join("orphan-1").exists(),
+        "orphan dir must be preserved"
+    );
 }
 
 #[tokio::test]

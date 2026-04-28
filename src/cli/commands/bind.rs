@@ -44,16 +44,21 @@ pub async fn run(id: String, tail: Option<usize>) -> Result<()> {
                     }
                 }
                 StreamEvent::StateChange { ref new_state, .. } => {
-                    println!("\n{} Agent state: {}", "→".yellow(), new_state.to_string().bold());
+                    println!(
+                        "\n{} Agent state: {}",
+                        "→".yellow(),
+                        new_state.to_string().bold()
+                    );
                     if new_state.is_terminal() {
                         break;
                     }
                 }
                 StreamEvent::AgentEvent { event } => {
                     if event.event_type == "stdout" {
-                        match stream_formatter::format_stream_json(&event.payload) {
-                            Some(formatted) => println!("{}", formatted),
-                            None => {}
+                        if let Some(formatted) =
+                            stream_formatter::format_stream_json(&event.payload)
+                        {
+                            println!("{}", formatted)
                         }
                     } else if event.event_type == "stderr" {
                         eprintln!("{}", event.payload.dimmed());

@@ -51,12 +51,7 @@ impl Provider for ClaudeProvider {
         Ok(SpawnedAgent { child, pid })
     }
 
-    fn spawn_resume(
-        &self,
-        session_id: &str,
-        message: &str,
-        cwd: &Path,
-    ) -> Result<SpawnedAgent> {
+    fn spawn_resume(&self, session_id: &str, message: &str, cwd: &Path) -> Result<SpawnedAgent> {
         let mut cmd = Command::new(&self.binary);
         cmd.arg("--print")
             .arg("--output-format")
@@ -87,12 +82,11 @@ impl Provider for ClaudeProvider {
 
     fn extract_result(&self, stdout_lines: &[String]) -> Option<String> {
         for line in stdout_lines.iter().rev() {
-            if let Ok(v) = serde_json::from_str::<serde_json::Value>(line) {
-                if v.get("type").and_then(|t| t.as_str()) == Some("result") {
-                    if let Some(result) = v.get("result").and_then(|r| r.as_str()) {
-                        return Some(result.to_string());
-                    }
-                }
+            if let Ok(v) = serde_json::from_str::<serde_json::Value>(line)
+                && v.get("type").and_then(|t| t.as_str()) == Some("result")
+                && let Some(result) = v.get("result").and_then(|r| r.as_str())
+            {
+                return Some(result.to_string());
             }
         }
         None

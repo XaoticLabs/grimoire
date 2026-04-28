@@ -11,8 +11,8 @@ use tokio::task::JoinHandle;
 
 use crate::shared::types::{AgentId, AgentState};
 use crate::shared::worker_proto::{
-    AssignTask, CancelTask, DaemonMessage, TaskEvent, TaskFinished, TaskState,
-    daemon_message, task_event::EventKind,
+    AssignTask, CancelTask, DaemonMessage, TaskEvent, TaskFinished, TaskState, daemon_message,
+    task_event::EventKind,
 };
 
 use super::event_bus::EventBus;
@@ -319,7 +319,10 @@ impl LeastLoadedPlacement {
 impl Placement for LeastLoadedPlacement {
     fn pick(&self, req: &ExecuteRequest) -> Arc<dyn Executor> {
         let constraint = VersionReq::parse("*").unwrap();
-        match self.registry.pick_least_loaded(&req.provider_name, &constraint) {
+        match self
+            .registry
+            .pick_least_loaded(&req.provider_name, &constraint)
+        {
             Some(worker_id) => (self.remote_factory)(worker_id),
             None => self.local.clone(),
         }

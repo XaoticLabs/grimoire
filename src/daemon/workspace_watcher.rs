@@ -47,8 +47,8 @@ impl WorkspaceWatcher {
         db: Arc<Database>,
         bus: EventBus,
     ) -> Result<WorkspaceWatcherHandle> {
-        let canonical_root = std::fs::canonicalize(&root)
-            .map_err(|e| anyhow!("workspace_root_missing: {e}"))?;
+        let canonical_root =
+            std::fs::canonicalize(&root).map_err(|e| anyhow!("workspace_root_missing: {e}"))?;
 
         let ignore_set = build_default_ignores()?;
 
@@ -139,12 +139,7 @@ impl WorkspaceWatcher {
     }
 }
 
-fn emit_batch(
-    workspace_id: &str,
-    db: &Database,
-    bus: &EventBus,
-    buffer: &mut Vec<ChangeRecord>,
-) {
+fn emit_batch(workspace_id: &str, db: &Database, bus: &EventBus, buffer: &mut Vec<ChangeRecord>) {
     if buffer.is_empty() {
         return;
     }
@@ -158,7 +153,11 @@ fn emit_batch(
         0
     };
     let take = total.min(WORKSPACE_WATCH_BATCH_MAX);
-    let paths: Vec<String> = buffer.iter().take(take).map(|r| r.rel_path.clone()).collect();
+    let paths: Vec<String> = buffer
+        .iter()
+        .take(take)
+        .map(|r| r.rel_path.clone())
+        .collect();
     let kinds: Vec<String> = buffer.iter().take(take).map(|r| r.kind.clone()).collect();
 
     bus.publish(StreamEvent::WorkspaceFileChanged {

@@ -7,9 +7,7 @@ use chrono::Utc;
 use grimoire::daemon::persistence::Database;
 use grimoire::daemon::scheduler::Scheduler;
 use grimoire::shared::protocol::StreamEvent;
-use grimoire::shared::types::{
-    Agent, AgentState, RestartHistoryOutcome, RestartPolicy,
-};
+use grimoire::shared::types::{Agent, AgentState, RestartHistoryOutcome, RestartPolicy};
 
 fn seed_agent(db: &Database, id: &str, state: AgentState) {
     let agent = Agent {

@@ -6,17 +6,14 @@
 
 use prost::Message;
 
-use grimoire::shared::worker_proto::{
-    assign_task::OptionalModel,
-    daemon_message,
-    task_event::EventKind,
-    worker_control_client::WorkerControlClient,
-    worker_control_server::WorkerControlServer,
-    worker_message, AssignTask, CancelTask, DaemonMessage, Heartbeat, ProviderCap, Register,
-    TaskAccepted, TaskEvent, TaskFinished, TaskRejected, TaskState, WorkerMessage,
-};
 #[allow(unused_imports)]
 use grimoire::shared::worker_proto::assign_task::OptionalResumeSessionId;
+use grimoire::shared::worker_proto::{
+    AssignTask, CancelTask, DaemonMessage, Heartbeat, ProviderCap, Register, TaskAccepted,
+    TaskEvent, TaskFinished, TaskRejected, TaskState, WorkerMessage, assign_task::OptionalModel,
+    daemon_message, task_event::EventKind, worker_control_client::WorkerControlClient,
+    worker_control_server::WorkerControlServer, worker_message,
+};
 
 #[test]
 fn worker_proto_register_message_roundtrip() {

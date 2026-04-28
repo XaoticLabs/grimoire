@@ -231,7 +231,11 @@ fn append_event_sets_kind_per_variant() {
         let kind: String = conn
             .query_row("SELECT kind FROM events WHERE id = ?1", [id], |r| r.get(0))
             .unwrap();
-        assert_eq!(kind, expected_kind, "kind mismatch for variant {}", expected_kind);
+        assert_eq!(
+            kind, expected_kind,
+            "kind mismatch for variant {}",
+            expected_kind
+        );
     }
 }
 
@@ -301,7 +305,12 @@ fn append_event_scopes_are_independent() {
     .unwrap();
     db.append_event(&StreamEvent::ScrollProgress {
         scroll_id: "S".to_string(),
-        total: 1, complete: 0, active: 1, blocked: 0, failed: 0, skipped: 0,
+        total: 1,
+        complete: 0,
+        active: 1,
+        blocked: 0,
+        failed: 0,
+        skipped: 0,
     })
     .unwrap();
     db.append_event(&StreamEvent::Output {
@@ -312,7 +321,12 @@ fn append_event_scopes_are_independent() {
     .unwrap();
     db.append_event(&StreamEvent::ScrollProgress {
         scroll_id: "S".to_string(),
-        total: 1, complete: 0, active: 1, blocked: 0, failed: 0, skipped: 0,
+        total: 1,
+        complete: 0,
+        active: 1,
+        blocked: 0,
+        failed: 0,
+        skipped: 0,
     })
     .unwrap();
     db.append_event(&StreamEvent::Output {
@@ -370,8 +384,18 @@ fn append_event_populates_scroll_id_only_for_scroll_variants() {
                 |r| Ok((r.get(0)?, r.get(1)?)),
             )
             .unwrap();
-        assert_eq!(a.is_some(), agent_present, "agent_id presence wrong for {}", kind);
-        assert_eq!(s.is_some(), scroll_present, "scroll_id presence wrong for {}", kind);
+        assert_eq!(
+            a.is_some(),
+            agent_present,
+            "agent_id presence wrong for {}",
+            kind
+        );
+        assert_eq!(
+            s.is_some(),
+            scroll_present,
+            "scroll_id presence wrong for {}",
+            kind
+        );
     }
 }
 
@@ -388,7 +412,12 @@ fn append_event_returns_monotonic_id() {
                 line: format!("{}", i),
             })
             .unwrap();
-        assert!(id > last, "id should strictly increase: prev={} new={}", last, id);
+        assert!(
+            id > last,
+            "id should strictly increase: prev={} new={}",
+            last,
+            id
+        );
         last = id;
     }
 }
@@ -666,14 +695,16 @@ fn scroll_task_lifecycle() {
     assert!(ready.is_empty()); // C is blocked, A and B are Ready (not blocked)
 
     // Complete A
-    db.update_task_state("task-a", &TaskState::Complete).unwrap();
+    db.update_task_state("task-a", &TaskState::Complete)
+        .unwrap();
 
     // C still not ready (B not complete)
     let ready = db.find_ready_tasks("scroll-1").unwrap();
     assert!(ready.is_empty());
 
     // Complete B
-    db.update_task_state("task-b", &TaskState::Complete).unwrap();
+    db.update_task_state("task-b", &TaskState::Complete)
+        .unwrap();
 
     // Now C should be ready (both deps complete)
     let ready = db.find_ready_tasks("scroll-1").unwrap();
@@ -719,7 +750,8 @@ fn scroll_state_transitions_and_active_count() {
     db.insert_task(&task).unwrap();
 
     // Activate scroll
-    db.update_scroll_state("scroll-st", &ScrollState::Active).unwrap();
+    db.update_scroll_state("scroll-st", &ScrollState::Active)
+        .unwrap();
     let s = db.get_scroll("scroll-st").unwrap().unwrap();
     assert_eq!(s.state, ScrollState::Active);
 
@@ -735,11 +767,13 @@ fn scroll_state_transitions_and_active_count() {
     assert_eq!(found.id, "task-st-1");
 
     // Complete the task
-    db.update_task_state("task-st-1", &TaskState::Complete).unwrap();
+    db.update_task_state("task-st-1", &TaskState::Complete)
+        .unwrap();
     assert_eq!(db.count_active_tasks("scroll-st").unwrap(), 0);
 
     // Complete scroll
-    db.update_scroll_state("scroll-st", &ScrollState::Complete).unwrap();
+    db.update_scroll_state("scroll-st", &ScrollState::Complete)
+        .unwrap();
     let s = db.get_scroll("scroll-st").unwrap().unwrap();
     assert_eq!(s.state, ScrollState::Complete);
 }
@@ -951,7 +985,10 @@ fn peek_next_dispatch_orders_adhoc_before_scroll() {
         .unwrap();
 
     let next = db.peek_next_dispatch().unwrap().expect("row");
-    assert_eq!(next.id, "adhoc001", "ad-hoc lane should drain before scroll");
+    assert_eq!(
+        next.id, "adhoc001",
+        "ad-hoc lane should drain before scroll"
+    );
 }
 
 #[test]
@@ -986,7 +1023,11 @@ fn claim_for_dispatch_is_atomic() {
     assert!(!again, "second claim returns false (row gone)");
 
     let agent = db.get_agent("claim001").unwrap().unwrap();
-    assert_eq!(agent.state, AgentState::Summoning, "agent flipped to summoning");
+    assert_eq!(
+        agent.state,
+        AgentState::Summoning,
+        "agent flipped to summoning"
+    );
     assert_eq!(db.count_queued().unwrap(), 0);
 }
 
@@ -1003,17 +1044,16 @@ fn requeue_preserves_enqueued_at() {
 
     // Add a younger competitor in the same lane.
     db.insert_agent(&make_queued_agent("rival001")).unwrap();
-    db.enqueue_task(&make_queue_row(
-        "rival001",
-        "adhoc",
-        Utc::now(),
-    ))
-    .unwrap();
+    db.enqueue_task(&make_queue_row("rival001", "adhoc", Utc::now()))
+        .unwrap();
 
     db.requeue(&row).unwrap();
 
     let next = db.peek_next_dispatch().unwrap().expect("row");
-    assert_eq!(next.id, "requeue1", "requeued row keeps original enqueued_at");
+    assert_eq!(
+        next.id, "requeue1",
+        "requeued row keeps original enqueued_at"
+    );
     assert_eq!(next.enqueued_at.to_rfc3339(), original_t.to_rfc3339());
 
     let agent = db.get_agent("requeue1").unwrap().unwrap();
@@ -1127,12 +1167,30 @@ fn restart_recovery_fails_active_and_summoning_only() {
 
     let _ = db.restart_recovery().unwrap();
 
-    assert_eq!(db.get_agent("act00001").unwrap().unwrap().state, AgentState::Failed);
-    assert_eq!(db.get_agent("sum00001").unwrap().unwrap().state, AgentState::Failed);
-    assert_eq!(db.get_agent("que00001").unwrap().unwrap().state, AgentState::Queued);
-    assert_eq!(db.get_agent("cmp00001").unwrap().unwrap().state, AgentState::Complete);
-    assert_eq!(db.get_agent("fld00001").unwrap().unwrap().state, AgentState::Failed);
-    assert_eq!(db.get_agent("ban00001").unwrap().unwrap().state, AgentState::Banished);
+    assert_eq!(
+        db.get_agent("act00001").unwrap().unwrap().state,
+        AgentState::Failed
+    );
+    assert_eq!(
+        db.get_agent("sum00001").unwrap().unwrap().state,
+        AgentState::Failed
+    );
+    assert_eq!(
+        db.get_agent("que00001").unwrap().unwrap().state,
+        AgentState::Queued
+    );
+    assert_eq!(
+        db.get_agent("cmp00001").unwrap().unwrap().state,
+        AgentState::Complete
+    );
+    assert_eq!(
+        db.get_agent("fld00001").unwrap().unwrap().state,
+        AgentState::Failed
+    );
+    assert_eq!(
+        db.get_agent("ban00001").unwrap().unwrap().state,
+        AgentState::Banished
+    );
 }
 
 #[test]
@@ -1172,8 +1230,7 @@ fn restart_recovery_returns_old_states_per_failed_agent() {
 
     let report = db.restart_recovery().unwrap();
 
-    let mut by_id: std::collections::HashMap<_, _> =
-        report.failed.into_iter().collect();
+    let mut by_id: std::collections::HashMap<_, _> = report.failed.into_iter().collect();
     assert_eq!(by_id.remove("oldact01"), Some(AgentState::Active));
     assert_eq!(by_id.remove("oldsum01"), Some(AgentState::Summoning));
     assert!(by_id.is_empty());
@@ -1236,8 +1293,10 @@ fn mail_table_schema_after_migration() {
 #[test]
 fn insert_mail_assigns_per_recipient_seq() {
     let db = test_db();
-    db.insert_mail(&make_mail("m000001a", "rcp00001", "hello")).unwrap();
-    db.insert_mail(&make_mail("m000001b", "rcp00001", "hello2")).unwrap();
+    db.insert_mail(&make_mail("m000001a", "rcp00001", "hello"))
+        .unwrap();
+    db.insert_mail(&make_mail("m000001b", "rcp00001", "hello2"))
+        .unwrap();
     let listed = db
         .list_mail_by_recipient("rcp00001", None, None, 100)
         .unwrap();
@@ -1277,7 +1336,9 @@ fn list_mail_clamps_limit() {
         let id = format!("clamp{:03}", i);
         db.insert_mail(&make_mail(&id, "rclamp", "x")).unwrap();
     }
-    let huge = db.list_mail_by_recipient("rclamp", None, None, 5_000).unwrap();
+    let huge = db
+        .list_mail_by_recipient("rclamp", None, None, 5_000)
+        .unwrap();
     assert!(huge.len() <= 1000);
     assert_eq!(huge.len(), 5);
 }
@@ -1299,8 +1360,10 @@ fn list_mail_after_seq_excludes_cursor() {
 #[test]
 fn set_mail_state_delivered_sets_delivered_at() {
     let db = test_db();
-    db.insert_mail(&make_mail("delv0001", "rdelv", "x")).unwrap();
-    db.set_mail_state("delv0001", MailState::Delivered, None).unwrap();
+    db.insert_mail(&make_mail("delv0001", "rdelv", "x"))
+        .unwrap();
+    db.set_mail_state("delv0001", MailState::Delivered, None)
+        .unwrap();
     let m = db.get_mail("delv0001").unwrap().unwrap();
     assert!(m.delivered_at.is_some());
     assert_eq!(m.state, MailState::Delivered);
@@ -1309,8 +1372,10 @@ fn set_mail_state_delivered_sets_delivered_at() {
 #[test]
 fn set_mail_state_failed_records_reason() {
     let db = test_db();
-    db.insert_mail(&make_mail("fail0001", "rfail", "x")).unwrap();
-    db.set_mail_state("fail0001", MailState::Failed, Some("banished")).unwrap();
+    db.insert_mail(&make_mail("fail0001", "rfail", "x"))
+        .unwrap();
+    db.set_mail_state("fail0001", MailState::Failed, Some("banished"))
+        .unwrap();
     let m = db.get_mail("fail0001").unwrap().unwrap();
     assert_eq!(m.state, MailState::Failed);
     assert_eq!(m.fail_reason.as_deref(), Some("banished"));
@@ -1328,7 +1393,8 @@ fn list_pending_wake_eligible_filters() {
     let mut m3 = make_mail("wake0003", "rwake", "c");
     m3.wake_eligible = true;
     db.insert_mail(&m3).unwrap();
-    db.set_mail_state("wake0003", MailState::Delivered, None).unwrap();
+    db.set_mail_state("wake0003", MailState::Delivered, None)
+        .unwrap();
 
     let pending = db.list_pending_wake_eligible("rwake").unwrap();
     assert_eq!(pending.len(), 1);

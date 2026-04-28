@@ -18,12 +18,17 @@ use crate::shared::worker_proto::{
 
 use super::config::ProviderConfig;
 
+/// Per-task slot holding the spawned child process (None once finished/cancelled).
+pub type ChildSlot = Arc<Mutex<Option<Child>>>;
+/// Map of task_id → child slot for all in-flight tasks.
+pub type RunningTasks = Arc<Mutex<HashMap<String, ChildSlot>>>;
+
 #[derive(Clone)]
 pub struct TaskDispatcher {
     pub providers: HashMap<String, ProviderConfig>,
     pub in_flight: Arc<AtomicU32>,
     pub max_concurrent: u32,
-    pub running: Arc<Mutex<HashMap<String, Arc<Mutex<Option<Child>>>>>>,
+    pub running: RunningTasks,
     pub draining: Arc<std::sync::atomic::AtomicBool>,
 }
 
@@ -203,10 +208,7 @@ impl TaskDispatcher {
                 }
                 Err(e) => {
                     error!(error = %e, "wait failed");
-                    (
-                        crate::shared::worker_proto::TaskState::Failed as i32,
-                        None,
-                    )
+                    (crate::shared::worker_proto::TaskState::Failed as i32, None)
                 }
             };
 

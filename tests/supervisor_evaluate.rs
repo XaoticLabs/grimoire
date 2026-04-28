@@ -61,7 +61,7 @@ fn build_supervisor(
     tree_depth_cap: u32,
 ) -> Arc<Supervisor> {
     let bus = EventBus::new(db.clone());
-    let mail: Arc<dyn EscalationMailSender> = Arc::new(NoopMail::default());
+    let mail: Arc<dyn EscalationMailSender> = Arc::new(NoopMail);
     Supervisor::new(db, bus, clock, rate_per_min, tree_depth_cap, mail)
 }
 

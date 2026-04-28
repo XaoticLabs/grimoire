@@ -52,12 +52,7 @@ pub type CapturedSessionId = Option<String>;
 
 /// Persist a single output line as an `AgentEvent` row. Shared between the
 /// local consume_lines path and the future RemoteExecutor.
-pub fn persist_event(
-    db: &Database,
-    agent_id: &str,
-    source: LineSource,
-    line: &str,
-) -> Result<()> {
+pub fn persist_event(db: &Database, agent_id: &str, source: LineSource, line: &str) -> Result<()> {
     let event = AgentEvent {
         id: None,
         agent_id: agent_id.to_string(),
@@ -92,10 +87,10 @@ where
 {
     let mut session_id: Option<String> = None;
     while let Some(LineEvent { source, line }) = lines.next().await {
-        if let Some(p) = &provider {
-            if let Some(sid) = p.extract_session_id(&line) {
-                session_id = Some(sid);
-            }
+        if let Some(p) = &provider
+            && let Some(sid) = p.extract_session_id(&line)
+        {
+            session_id = Some(sid);
         }
         if let Err(e) = persist_event(&db, &agent_id, source, &line) {
             error!(?source, error = %e, "failed to persist event");
@@ -135,8 +130,8 @@ pub async fn monitor_agent(
     let stdout = child.stdout.take();
     let stderr = child.stderr.take();
 
-    let merged = line_stream(stdout, LineSource::Stdout)
-        .merge(line_stream(stderr, LineSource::Stderr));
+    let merged =
+        line_stream(stdout, LineSource::Stdout).merge(line_stream(stderr, LineSource::Stderr));
 
     let consume = tokio::spawn(consume_lines(
         agent_id.clone(),

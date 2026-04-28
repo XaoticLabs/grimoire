@@ -5,9 +5,7 @@ use clap::Subcommand;
 use colored::Colorize;
 
 use crate::cli::client::DaemonClient;
-use crate::shared::protocol::{
-    PeerAddResult, PeerListResult, PeerPingResult, PeerRemoveResult,
-};
+use crate::shared::protocol::{PeerAddResult, PeerListResult, PeerPingResult, PeerRemoveResult};
 
 #[derive(Debug, Subcommand)]
 pub enum PeerCommand {
@@ -70,8 +68,8 @@ async fn run_list() -> Result<()> {
         return Ok(());
     }
     println!(
-        "{:<20} {:<14} {:<10} {:<28} {}",
-        "NAME", "DAEMON_ID", "STATE", "URL", "OUTBOX"
+        "{:<20} {:<14} {:<10} {:<28} OUTBOX",
+        "NAME", "DAEMON_ID", "STATE", "URL"
     );
     for p in &result.peers {
         let dimm: &str = if p.daemon_id.is_empty() {

@@ -7,9 +7,8 @@ use std::sync::Mutex;
 use crate::shared::protocol::StreamEvent;
 use crate::shared::types::{
     Agent, AgentEvent, AgentId, AgentState, Mail, MailState, Pact, PactState,
-    RestartHistoryOutcome, RestartPolicy, Scroll, ScrollState, Subscription,
-    SupervisionConfig, Task, TaskId, TaskState, WakeSource, WakeSourceKind,
-    WakeSourceState,
+    RestartHistoryOutcome, RestartPolicy, Scroll, ScrollState, Subscription, SupervisionConfig,
+    Task, TaskId, TaskState, WakeSource, WakeSourceKind, WakeSourceState,
 };
 
 /// One row in the `task_queue` table — work that has been requested but not
@@ -37,6 +36,9 @@ pub struct RecoveryReport {
     pub failed: Vec<(AgentId, AgentState)>,
     pub queued_remaining: usize,
 }
+
+/// One outbox fanout row: (peer_id, outbox_id, mail_id, recipient, body, sender, created_at).
+pub type OutboxFanoutRow = (String, String, String, String, String, Option<String>, i64);
 
 pub struct Database {
     conn: Mutex<Connection>,
@@ -131,17 +133,13 @@ impl Database {
         )?;
 
         // Migration: add provider column if missing (for existing DBs)
-        let has_provider: bool = conn
-            .prepare("SELECT provider FROM agents LIMIT 0")
-            .is_ok();
+        let has_provider: bool = conn.prepare("SELECT provider FROM agents LIMIT 0").is_ok();
         if !has_provider {
             conn.execute_batch("ALTER TABLE agents ADD COLUMN provider TEXT;")?;
         }
 
         // Migration: add worker_id column if missing.
-        let has_worker_id: bool = conn
-            .prepare("SELECT worker_id FROM agents LIMIT 0")
-            .is_ok();
+        let has_worker_id: bool = conn.prepare("SELECT worker_id FROM agents LIMIT 0").is_ok();
         if !has_worker_id {
             conn.execute_batch("ALTER TABLE agents ADD COLUMN worker_id TEXT;")?;
         }
@@ -720,12 +718,11 @@ impl Database {
         let mut rows = stmt.query(params![agent_id])?;
         while let Some(row) = rows.next()? {
             let payload: String = row.get(0)?;
-            if let Ok(v) = serde_json::from_str::<serde_json::Value>(&payload) {
-                if v.get("type").and_then(|t| t.as_str()) == Some("result") {
-                    if let Some(result) = v.get("result").and_then(|r| r.as_str()) {
-                        return Ok(Some(result.to_string()));
-                    }
-                }
+            if let Ok(v) = serde_json::from_str::<serde_json::Value>(&payload)
+                && v.get("type").and_then(|t| t.as_str()) == Some("result")
+                && let Some(result) = v.get("result").and_then(|r| r.as_str())
+            {
+                return Ok(Some(result.to_string()));
             }
         }
         Ok(None)
@@ -874,9 +871,8 @@ impl Database {
     /// Get task IDs that a task depends on
     pub fn get_task_dependencies(&self, task_id: &str) -> Result<Vec<TaskId>> {
         let conn = self.conn.lock().unwrap();
-        let mut stmt = conn.prepare(
-            "SELECT depends_on_id FROM task_dependencies WHERE task_id = ?1",
-        )?;
+        let mut stmt =
+            conn.prepare("SELECT depends_on_id FROM task_dependencies WHERE task_id = ?1")?;
         let mut rows = stmt.query(params![task_id])?;
         let mut deps = Vec::new();
         while let Some(row) = rows.next()? {
@@ -888,9 +884,8 @@ impl Database {
     /// Get task IDs that depend on a given task (downstream)
     pub fn get_task_dependents(&self, task_id: &str) -> Result<Vec<TaskId>> {
         let conn = self.conn.lock().unwrap();
-        let mut stmt = conn.prepare(
-            "SELECT task_id FROM task_dependencies WHERE depends_on_id = ?1",
-        )?;
+        let mut stmt =
+            conn.prepare("SELECT task_id FROM task_dependencies WHERE depends_on_id = ?1")?;
         let mut rows = stmt.query(params![task_id])?;
         let mut deps = Vec::new();
         while let Some(row) = rows.next()? {
@@ -1090,9 +1085,8 @@ impl Database {
         let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
 
         let failed: Vec<(AgentId, AgentState)> = {
-            let mut stmt = tx.prepare(
-                "SELECT id, state FROM agents WHERE state IN ('active', 'summoning')",
-            )?;
+            let mut stmt =
+                tx.prepare("SELECT id, state FROM agents WHERE state IN ('active', 'summoning')")?;
             let rows = stmt.query_map([], |row| {
                 let id: String = row.get(0)?;
                 let state: String = row.get(1)?;
@@ -1248,11 +1242,7 @@ impl Database {
     /// Per-agent token-bucket row used by the rate limiter (Task 6).
     /// Returns `(tokens, last_refill_at, capacity, refill_per_sec)`. If the
     /// row doesn't exist yet, it is created at full capacity.
-    pub fn get_or_init_rate_limit(
-        &self,
-        agent_id: &str,
-        now: i64,
-    ) -> Result<(f64, i64, i64, f64)> {
+    pub fn get_or_init_rate_limit(&self, agent_id: &str, now: i64) -> Result<(f64, i64, i64, f64)> {
         let mut conn = self.conn.lock().unwrap();
         let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
         let row: Option<(f64, i64, i64, f64)> = tx
@@ -1436,7 +1426,11 @@ impl Database {
 
     /// Insert a mail row but use a caller-provided `seq` value. Used by topic
     /// fanout when inserting multiple rows in a single transaction.
-    fn insert_mail_with_seq_in_tx(tx: &rusqlite::Transaction<'_>, mail: &Mail, seq: i64) -> Result<()> {
+    fn insert_mail_with_seq_in_tx(
+        tx: &rusqlite::Transaction<'_>,
+        mail: &Mail,
+        seq: i64,
+    ) -> Result<()> {
         tx.execute(
             "INSERT INTO mail (id, recipient_id, sender_id, topic, body, in_reply_to, state, fail_reason, created_at, delivered_at, seq, wake_eligible)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
@@ -1466,8 +1460,7 @@ impl Database {
     pub fn insert_mail_batch_with_outbox(
         &self,
         mails: &[Mail],
-        outbox_fanout: &[(String, String, String, String, String, Option<String>, i64)],
-        // (peer_id, outbox_id, mail_id, recipient, body, sender, created_at)
+        outbox_fanout: &[OutboxFanoutRow],
     ) -> Result<()> {
         if mails.is_empty() && outbox_fanout.is_empty() {
             return Ok(());
@@ -1485,9 +1478,7 @@ impl Database {
             )?;
             Self::insert_mail_with_seq_in_tx(&tx, m, seq)?;
         }
-        for (peer_id, outbox_id, mail_id, recipient, body, sender, created_at) in
-            outbox_fanout
-        {
+        for (peer_id, outbox_id, mail_id, recipient, body, sender, created_at) in outbox_fanout {
             let sender_seq: i64 = tx.query_row(
                 "SELECT COALESCE(MAX(sender_seq) + 1, 1) FROM peer_outbox WHERE peer_id = ?1",
                 params![peer_id],
@@ -1772,11 +1763,7 @@ impl Database {
 
     // --- Supervision methods ---
 
-    pub fn set_supervision(
-        &self,
-        agent_id: &str,
-        cfg: &SupervisionConfig,
-    ) -> Result<()> {
+    pub fn set_supervision(&self, agent_id: &str, cfg: &SupervisionConfig) -> Result<()> {
         let conn = self.conn.lock().unwrap();
         conn.execute(
             "UPDATE agents SET restart_policy = ?1, max_restarts = ?2, \
@@ -1793,8 +1780,9 @@ impl Database {
     }
 
     pub fn get_supervision(&self, agent_id: &str) -> Result<Option<SupervisionConfig>> {
+        type SupervisionRow = (String, Option<u32>, Option<u32>, Option<String>);
         let conn = self.conn.lock().unwrap();
-        let row: Option<(String, Option<u32>, Option<u32>, Option<String>)> = conn
+        let row: Option<SupervisionRow> = conn
             .query_row(
                 "SELECT restart_policy, max_restarts, restart_window_secs, escalate_to \
                  FROM agents WHERE id = ?1",
@@ -1866,11 +1854,7 @@ impl Database {
         Ok(conn.last_insert_rowid())
     }
 
-    pub fn count_restarts_in_window(
-        &self,
-        agent_id: &str,
-        window_start: i64,
-    ) -> Result<u32> {
+    pub fn count_restarts_in_window(&self, agent_id: &str, window_start: i64) -> Result<u32> {
         let conn = self.conn.lock().unwrap();
         let n: i64 = conn.query_row(
             "SELECT COUNT(*) FROM restart_history \
@@ -1901,10 +1885,7 @@ impl Database {
     }
 
     /// Time of the most recent `restart_history` row for `agent_id`, or `None`.
-    pub fn latest_restart_history_attempted_at(
-        &self,
-        agent_id: &str,
-    ) -> Result<Option<i64>> {
+    pub fn latest_restart_history_attempted_at(&self, agent_id: &str) -> Result<Option<i64>> {
         let conn = self.conn.lock().unwrap();
         let v: Option<i64> = conn
             .query_row(
@@ -1953,10 +1934,7 @@ impl Database {
     /// Return `true` if there is an `Escalated` event for `agent_id` whose
     /// row id is later than the latest `restart_history` row for the agent.
     /// Used by boot replay to skip re-escalation.
-    pub fn has_escalated_event_after_latest_history(
-        &self,
-        agent_id: &str,
-    ) -> Result<bool> {
+    pub fn has_escalated_event_after_latest_history(&self, agent_id: &str) -> Result<bool> {
         let conn = self.conn.lock().unwrap();
         // Find the latest restart_history attempted_at; we'll compare to the
         // event's `ts` (RFC3339 string). For determinism we lookup the most
@@ -1996,7 +1974,10 @@ impl Database {
     }
 
     /// Get all dependency edges for a scroll (for cycle detection)
-    pub fn get_all_dependencies_for_scroll(&self, scroll_id: &str) -> Result<Vec<(TaskId, TaskId)>> {
+    pub fn get_all_dependencies_for_scroll(
+        &self,
+        scroll_id: &str,
+    ) -> Result<Vec<(TaskId, TaskId)>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
             "SELECT rd.task_id, rd.depends_on_id
@@ -2352,11 +2333,7 @@ impl Database {
         Ok(out)
     }
 
-    pub fn topic_federation_inbound_authorized(
-        &self,
-        peer_id: &str,
-        topic: &str,
-    ) -> Result<bool> {
+    pub fn topic_federation_inbound_authorized(&self, peer_id: &str, topic: &str) -> Result<bool> {
         let conn = self.conn.lock().unwrap();
         let dir: Option<String> = conn
             .query_row(
@@ -2411,9 +2388,7 @@ fn row_to_outbox(row: &rusqlite::Row) -> Result<crate::shared::types::PeerOutbox
     })
 }
 
-fn row_to_topic_federation(
-    row: &rusqlite::Row,
-) -> Result<crate::shared::types::TopicFederation> {
+fn row_to_topic_federation(row: &rusqlite::Row) -> Result<crate::shared::types::TopicFederation> {
     use crate::shared::types::{FederationDirection, TopicFederation};
     let dir: String = row.get(3)?;
     Ok(TopicFederation {
@@ -2558,7 +2533,8 @@ fn row_to_agent(row: &rusqlite::Row) -> Result<Agent> {
     let cwd_str: String = row.get(6)?;
     let created_str: String = row.get(10)?;
     let updated_str: String = row.get(11)?;
-    let policy_str: String = row.get::<_, Option<String>>(13)?
+    let policy_str: String = row
+        .get::<_, Option<String>>(13)?
         .unwrap_or_else(|| "never".to_string());
     let restart_count: i64 = row.get::<_, Option<i64>>(14)?.unwrap_or(0);
 
@@ -2697,7 +2673,8 @@ mod tests {
     fn agent_session_id_update() {
         let db = test_db();
         db.insert_agent(&make_agent("sess1111")).unwrap();
-        db.update_agent_session_id("sess1111", "session-abc").unwrap();
+        db.update_agent_session_id("sess1111", "session-abc")
+            .unwrap();
 
         let fetched = db.get_agent("sess1111").unwrap().unwrap();
         assert_eq!(fetched.session_id.as_deref(), Some("session-abc"));
@@ -2777,7 +2754,11 @@ mod tests {
 
         db.update_pact_fired("pact0001", "target01").unwrap();
 
-        assert!(db.get_pending_pacts_for_agent("pact1111").unwrap().is_empty());
+        assert!(
+            db.get_pending_pacts_for_agent("pact1111")
+                .unwrap()
+                .is_empty()
+        );
         let fired = db.list_pacts(None).unwrap();
         assert_eq!(fired[0].state, PactState::Fired);
         assert_eq!(fired[0].target_id.as_deref(), Some("target01"));
@@ -2793,8 +2774,12 @@ mod tests {
         let fetched = db.get_scroll("scr11111").unwrap().unwrap();
         assert_eq!(fetched.state, ScrollState::Inscribed);
 
-        db.update_scroll_state("scr11111", &ScrollState::Active).unwrap();
-        assert_eq!(db.get_scroll("scr11111").unwrap().unwrap().state, ScrollState::Active);
+        db.update_scroll_state("scr11111", &ScrollState::Active)
+            .unwrap();
+        assert_eq!(
+            db.get_scroll("scr11111").unwrap().unwrap().state,
+            ScrollState::Active
+        );
         assert_eq!(db.list_scrolls().unwrap().len(), 1);
     }
 
@@ -2834,9 +2819,12 @@ mod tests {
         let db = test_db();
         db.insert_scroll(&make_scroll("scr44444")).unwrap();
 
-        db.insert_task(&make_task("cnt_a001", "scr44444", TaskState::Active)).unwrap();
-        db.insert_task(&make_task("cnt_b001", "scr44444", TaskState::Active)).unwrap();
-        db.insert_task(&make_task("cnt_c001", "scr44444", TaskState::Complete)).unwrap();
+        db.insert_task(&make_task("cnt_a001", "scr44444", TaskState::Active))
+            .unwrap();
+        db.insert_task(&make_task("cnt_b001", "scr44444", TaskState::Active))
+            .unwrap();
+        db.insert_task(&make_task("cnt_c001", "scr44444", TaskState::Complete))
+            .unwrap();
 
         assert_eq!(db.count_active_tasks("scr44444").unwrap(), 2);
     }
@@ -2845,7 +2833,8 @@ mod tests {
     fn task_agent_lookup() {
         let db = test_db();
         db.insert_scroll(&make_scroll("scr55555")).unwrap();
-        db.insert_task(&make_task("lkp_a001", "scr55555", TaskState::Ready)).unwrap();
+        db.insert_task(&make_task("lkp_a001", "scr55555", TaskState::Ready))
+            .unwrap();
 
         db.update_task_agent("lkp_a001", "myagent1").unwrap();
 
@@ -2878,9 +2867,12 @@ mod tests {
     fn task_dependents() {
         let db = test_db();
         db.insert_scroll(&make_scroll("scr66666")).unwrap();
-        db.insert_task(&make_task("dep_a001", "scr66666", TaskState::Complete)).unwrap();
-        db.insert_task(&make_task("dep_b001", "scr66666", TaskState::Blocked)).unwrap();
-        db.insert_task(&make_task("dep_c001", "scr66666", TaskState::Blocked)).unwrap();
+        db.insert_task(&make_task("dep_a001", "scr66666", TaskState::Complete))
+            .unwrap();
+        db.insert_task(&make_task("dep_b001", "scr66666", TaskState::Blocked))
+            .unwrap();
+        db.insert_task(&make_task("dep_c001", "scr66666", TaskState::Blocked))
+            .unwrap();
         db.insert_task_dependency("dep_b001", "dep_a001").unwrap();
         db.insert_task_dependency("dep_c001", "dep_a001").unwrap();
 
@@ -2894,8 +2886,10 @@ mod tests {
     fn all_dependencies_for_scroll() {
         let db = test_db();
         db.insert_scroll(&make_scroll("scr77777")).unwrap();
-        db.insert_task(&make_task("edg_a001", "scr77777", TaskState::Complete)).unwrap();
-        db.insert_task(&make_task("edg_b001", "scr77777", TaskState::Blocked)).unwrap();
+        db.insert_task(&make_task("edg_a001", "scr77777", TaskState::Complete))
+            .unwrap();
+        db.insert_task(&make_task("edg_b001", "scr77777", TaskState::Blocked))
+            .unwrap();
         db.insert_task_dependency("edg_b001", "edg_a001").unwrap();
 
         let edges = db.get_all_dependencies_for_scroll("scr77777").unwrap();

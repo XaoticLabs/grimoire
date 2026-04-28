@@ -11,9 +11,7 @@ use chrono::{TimeZone, Utc};
 use grimoire::daemon::clock::{Clock, TestClock};
 use grimoire::daemon::event_bus::EventBus;
 use grimoire::daemon::persistence::Database;
-use grimoire::daemon::supervisor::{
-    EscalationMailSender, EscalationOutcome, Supervisor,
-};
+use grimoire::daemon::supervisor::{EscalationMailSender, EscalationOutcome, Supervisor};
 use grimoire::shared::protocol::StreamEvent;
 use grimoire::shared::types::{
     Agent, AgentState, RestartHistoryOutcome, RestartPolicy, SupervisionConfig,
@@ -56,12 +54,8 @@ fn seed(db: &Database, id: &str, state: AgentState) {
     db.insert_agent(&agent).unwrap();
 }
 
-fn build(
-    db: Arc<Database>,
-    bus: EventBus,
-    clock: Arc<TestClock>,
-) -> Arc<Supervisor> {
-    let mail: Arc<dyn EscalationMailSender> = Arc::new(NoopMail::default());
+fn build(db: Arc<Database>, bus: EventBus, clock: Arc<TestClock>) -> Arc<Supervisor> {
+    let mail: Arc<dyn EscalationMailSender> = Arc::new(NoopMail);
     Supervisor::new(db, bus, clock, 30, 3, mail)
 }
 
@@ -102,10 +96,10 @@ async fn failed_event_writes_history_row_and_flips_to_restarting() {
     while let Ok(ev) = rx.try_recv() {
         match ev {
             StreamEvent::StateChange {
-                old_state, new_state, ..
-            } if old_state == AgentState::Failed
-                && new_state == AgentState::Restarting =>
-            {
+                old_state,
+                new_state,
+                ..
+            } if old_state == AgentState::Failed && new_state == AgentState::Restarting => {
                 saw_state_change = true;
             }
             StreamEvent::RestartScheduled { .. } => saw_scheduled = true,
@@ -136,8 +130,7 @@ async fn policy_never_is_silent() {
     while let Ok(ev) = rx.try_recv() {
         if matches!(
             ev,
-            StreamEvent::RestartScheduled { .. }
-                | StreamEvent::RestartBudgetExhausted { .. }
+            StreamEvent::RestartScheduled { .. } | StreamEvent::RestartBudgetExhausted { .. }
         ) {
             panic!("unexpected supervisor event");
         }

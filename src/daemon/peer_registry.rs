@@ -13,7 +13,7 @@ use tokio::sync::Mutex;
 use tokio::sync::Notify;
 
 use crate::shared::constants::generate_short_id;
-use crate::shared::protocol::{PeerSummary, StreamEvent};
+use crate::shared::protocol::PeerSummary;
 use crate::shared::types::{DaemonId, Peer, PeerState};
 
 use super::clock::Clock;
@@ -44,7 +44,11 @@ impl PeerRegistry {
         clock: Arc<dyn Clock>,
         daemon_id: DaemonId,
     ) -> Arc<Self> {
-        let inbox = Arc::new(InboxHandler::new(db.clone(), bus.clone(), daemon_id.clone()));
+        let inbox = Arc::new(InboxHandler::new(
+            db.clone(),
+            bus.clone(),
+            daemon_id.clone(),
+        ));
         Arc::new(Self {
             db,
             bus,
@@ -93,11 +97,7 @@ impl PeerRegistry {
             return Ok(());
         }
         let notify = Arc::new(Notify::new());
-        let client = super::peer_client::spawn(
-            self.clone(),
-            peer.clone(),
-            notify.clone(),
-        );
+        let client = super::peer_client::spawn(self.clone(), peer.clone(), notify.clone());
         guard.insert(
             peer.id.clone(),
             PeerHandle {
@@ -165,8 +165,7 @@ impl PeerRegistry {
         self.ensure_connected(&peer).await?;
 
         // Wait for handshake to complete (Active) or timeout.
-        let deadline =
-            std::time::Instant::now() + std::time::Duration::from_secs(timeout_secs);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(timeout_secs);
         loop {
             match self.db.get_peer_by_name(&name)? {
                 Some(p) if p.state == PeerState::Active => return Ok(p),
@@ -217,10 +216,10 @@ impl PeerRegistry {
         // Mark Removing so any in-flight drainer halts cleanly.
         self.db.set_peer_state(&peer.id, PeerState::Removing)?;
         // Tear down client task.
-        if let Some(handle) = self.handles.lock().await.remove(&peer.id) {
-            if let Some(client) = handle.client {
-                client.shutdown().await;
-            }
+        if let Some(handle) = self.handles.lock().await.remove(&peer.id)
+            && let Some(client) = handle.client
+        {
+            client.shutdown().await;
         }
         // Cascade-delete via FK; mail rows are retained by design.
         self.db.delete_peer(&peer.id)?;
@@ -247,9 +246,9 @@ pub fn is_valid_peer_name(s: &str) -> bool {
     if !bytes[0].is_ascii_alphanumeric() {
         return false;
     }
-    bytes.iter().all(|&b| {
-        b.is_ascii_alphanumeric() || b == b'.' || b == b'_' || b == b'-'
-    })
+    bytes
+        .iter()
+        .all(|&b| b.is_ascii_alphanumeric() || b == b'.' || b == b'_' || b == b'-')
 }
 
 pub fn is_valid_bearer_token(s: &str) -> bool {
@@ -276,6 +275,8 @@ mod tests {
     fn token_shape() {
         assert!(is_valid_bearer_token("0123456789abcdef!"));
         assert!(!is_valid_bearer_token("short"));
-        assert!(!is_valid_bearer_token("with spaces                                "));
+        assert!(!is_valid_bearer_token(
+            "with spaces                                "
+        ));
     }
 }

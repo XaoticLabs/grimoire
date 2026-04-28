@@ -15,10 +15,9 @@ use grimoire::daemon::persistence::Database;
 use grimoire::shared::protocol::StreamEvent;
 use grimoire::shared::types::{Agent, AgentState};
 use grimoire::shared::worker_proto::{
-    daemon_message, task_event::EventKind, AssignTask, CancelTask, DaemonMessage, TaskEvent,
-    TaskFinished, TaskState,
+    AssignTask, CancelTask, DaemonMessage, TaskEvent, TaskFinished, TaskState, daemon_message,
+    task_event::EventKind,
 };
-
 
 fn seed_agent(db: &Database, id: &str) {
     let now = chrono::Utc::now();
@@ -76,9 +75,7 @@ async fn remote_executor_sends_assign_task_to_worker_channel() {
         .unwrap()
         .unwrap();
     match msg.kind {
-        Some(daemon_message::Kind::AssignTask(AssignTask {
-            agent_id, task, ..
-        })) => {
+        Some(daemon_message::Kind::AssignTask(AssignTask { agent_id, task, .. })) => {
             assert_eq!(agent_id, "a-1");
             assert_eq!(task, "echo hi");
         }
@@ -138,13 +135,7 @@ async fn remote_executor_completion_resolves_on_task_finished() {
     let db = Arc::new(Database::open_in_memory().unwrap());
     let bus = EventBus::new(db.clone());
 
-    let exec = RemoteExecutor::for_test(
-        "w-1".to_string(),
-        assign_tx,
-        inbound_rx,
-        bus,
-        db,
-    );
+    let exec = RemoteExecutor::for_test("w-1".to_string(), assign_tx, inbound_rx, bus, db);
     let handle = exec.start(build_request("a-3")).await.unwrap();
 
     inbound_tx
@@ -174,13 +165,7 @@ async fn remote_executor_cancel_sends_cancel_task() {
     let db = Arc::new(Database::open_in_memory().unwrap());
     let bus = EventBus::new(db.clone());
 
-    let exec = RemoteExecutor::for_test(
-        "w-1".to_string(),
-        assign_tx,
-        inbound_rx,
-        bus,
-        db,
-    );
+    let exec = RemoteExecutor::for_test("w-1".to_string(), assign_tx, inbound_rx, bus, db);
     let handle = exec.start(build_request("a-4")).await.unwrap();
     let _ = assign_rx.recv().await; // AssignTask
 
@@ -205,13 +190,7 @@ async fn remote_executor_worker_lost_resolves_failed() {
     let db = Arc::new(Database::open_in_memory().unwrap());
     let bus = EventBus::new(db.clone());
 
-    let exec = RemoteExecutor::for_test(
-        "w-1".to_string(),
-        assign_tx,
-        inbound_rx,
-        bus,
-        db,
-    );
+    let exec = RemoteExecutor::for_test("w-1".to_string(), assign_tx, inbound_rx, bus, db);
     let handle = exec.start(build_request("a-5")).await.unwrap();
 
     // Simulate eviction by dropping the inbound side; the executor must

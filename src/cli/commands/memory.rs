@@ -3,9 +3,7 @@ use clap::Subcommand;
 use colored::Colorize;
 
 use crate::cli::client::DaemonClient;
-use crate::shared::protocol::{
-    MemoryGetResult, MemoryListResult, MemoryPutResult,
-};
+use crate::shared::protocol::{MemoryGetResult, MemoryListResult, MemoryPutResult};
 
 #[derive(Debug, Subcommand)]
 pub enum MemoryCommand {
@@ -55,8 +53,7 @@ pub async fn run(cmd: MemoryCommand) -> Result<()> {
 
 fn parse_value(input: &str) -> Result<serde_json::Value> {
     if let Some(path) = input.strip_prefix('@') {
-        let data = std::fs::read(path)
-            .map_err(|e| anyhow!("cannot read {}: {}", path, e))?;
+        let data = std::fs::read(path).map_err(|e| anyhow!("cannot read {}: {}", path, e))?;
         let s = String::from_utf8(data).map_err(|e| anyhow!("file not utf8: {}", e))?;
         serde_json::from_str(&s).map_err(|e| anyhow!("invalid JSON in {}: {}", path, e))
     } else {
@@ -138,17 +135,16 @@ async fn run_list(workspace: &str, prefix: Option<&str>) -> Result<()> {
     } else {
         println!("KEY\tVERSION\tSIZE\tUPDATED_AT");
         for e in &r.entries {
-            println!("{}\t{}\t{}\t{}", e.key, e.version, e.value_size, e.updated_at);
+            println!(
+                "{}\t{}\t{}\t{}",
+                e.key, e.version, e.value_size, e.updated_at
+            );
         }
     }
     Ok(())
 }
 
-async fn run_delete(
-    workspace: &str,
-    key: &str,
-    expected_version: Option<u64>,
-) -> Result<()> {
+async fn run_delete(workspace: &str, key: &str, expected_version: Option<u64>) -> Result<()> {
     let mut client = DaemonClient::connect().await?;
     let mut params = serde_json::json!({
         "workspace_id": workspace,

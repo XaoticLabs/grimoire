@@ -10,7 +10,11 @@ pub async fn run(key: Option<String>, value: Option<String>) -> Result<()> {
         // No args: show current config
         (None, _) => {
             let config = Config::load()?;
-            println!("{} {}", "◆".cyan(), config_path.display().to_string().dimmed());
+            println!(
+                "{} {}",
+                "◆".cyan(),
+                config_path.display().to_string().dimmed()
+            );
             println!();
             let toml = toml::to_string_pretty(&config)?;
             println!("{}", toml);
@@ -33,7 +37,11 @@ pub async fn run(key: Option<String>, value: Option<String>) -> Result<()> {
                     config.agent.default_model = if value == "none" { None } else { Some(value) };
                 }
                 "agent.default_cwd" => {
-                    config.agent.default_cwd = if value == "none" { None } else { Some(value.into()) };
+                    config.agent.default_cwd = if value == "none" {
+                        None
+                    } else {
+                        Some(value.into())
+                    };
                 }
                 "agent.claude_binary" => {
                     config.agent.claude_binary = if value == "none" { None } else { Some(value) };
@@ -47,7 +55,12 @@ pub async fn run(key: Option<String>, value: Option<String>) -> Result<()> {
             }
 
             config.save()?;
-            println!("{} Set {} = {}", "✓".green(), key.bold(), config_path.display().to_string().dimmed());
+            println!(
+                "{} Set {} = {}",
+                "✓".green(),
+                key.bold(),
+                config_path.display().to_string().dimmed()
+            );
         }
         // Key only: show that value
         (Some(key), None) => {
@@ -55,10 +68,24 @@ pub async fn run(key: Option<String>, value: Option<String>) -> Result<()> {
             let value = match key.as_str() {
                 "daemon.port" => config.daemon.port.to_string(),
                 "daemon.log_level" => config.daemon.log_level.clone(),
-                "daemon.socket_path" => config.daemon.socket_path.map(|p| p.display().to_string()).unwrap_or_else(|| "(default)".to_string()),
-                "agent.default_model" => config.agent.default_model.unwrap_or_else(|| "(none)".to_string()),
-                "agent.default_cwd" => config.agent.default_cwd.map(|p| p.display().to_string()).unwrap_or_else(|| "(none)".to_string()),
-                "agent.claude_binary" => config.agent.claude_binary.unwrap_or_else(|| "(default: claude)".to_string()),
+                "daemon.socket_path" => config
+                    .daemon
+                    .socket_path
+                    .map(|p| p.display().to_string())
+                    .unwrap_or_else(|| "(default)".to_string()),
+                "agent.default_model" => config
+                    .agent
+                    .default_model
+                    .unwrap_or_else(|| "(none)".to_string()),
+                "agent.default_cwd" => config
+                    .agent
+                    .default_cwd
+                    .map(|p| p.display().to_string())
+                    .unwrap_or_else(|| "(none)".to_string()),
+                "agent.claude_binary" => config
+                    .agent
+                    .claude_binary
+                    .unwrap_or_else(|| "(default: claude)".to_string()),
                 _ => {
                     eprintln!("{} Unknown key: {}", "Error:".red(), key);
                     eprintln!();
@@ -78,7 +105,13 @@ fn print_keys() {
     eprintln!("  {}  HTTP port (default: 6660)", "daemon.port".bold());
     eprintln!("  {}  Log level (default: info)", "daemon.log_level".bold());
     eprintln!("  {}  UDS socket path", "daemon.socket_path".bold());
-    eprintln!("  {}  Default model for new agents", "agent.default_model".bold());
-    eprintln!("  {}  Default working directory", "agent.default_cwd".bold());
+    eprintln!(
+        "  {}  Default model for new agents",
+        "agent.default_model".bold()
+    );
+    eprintln!(
+        "  {}  Default working directory",
+        "agent.default_cwd".bold()
+    );
     eprintln!("  {}  Path to claude binary", "agent.claude_binary".bold());
 }

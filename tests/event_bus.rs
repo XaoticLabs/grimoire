@@ -223,14 +223,22 @@ async fn publish_persists_to_database() {
         },
         StreamEvent::ScrollProgress {
             scroll_id: "S".to_string(),
-            total: 1, complete: 0, active: 1, blocked: 0, failed: 0, skipped: 0,
+            total: 1,
+            complete: 0,
+            active: 1,
+            blocked: 0,
+            failed: 0,
+            skipped: 0,
         },
     ];
     for ev in &events {
         bus.publish(ev.clone());
     }
 
-    let n = poll_until(events.len() as i64, Duration::from_secs(2), || count_events(&db)).await;
+    let n = poll_until(events.len() as i64, Duration::from_secs(2), || {
+        count_events(&db)
+    })
+    .await;
     assert_eq!(n, events.len() as i64);
 }
 
@@ -282,7 +290,12 @@ async fn mixed_variants_all_persisted() {
     });
     bus.publish(StreamEvent::ScrollProgress {
         scroll_id: "S".into(),
-        total: 1, complete: 0, active: 1, blocked: 0, failed: 0, skipped: 0,
+        total: 1,
+        complete: 0,
+        active: 1,
+        blocked: 0,
+        failed: 0,
+        skipped: 0,
     });
     bus.publish(StreamEvent::TaskStateChange {
         scroll_id: "S".into(),
@@ -295,7 +308,9 @@ async fn mixed_variants_all_persisted() {
     poll_until(4, Duration::from_secs(2), || count_events(&db)).await;
 
     let kinds: Vec<String> = db.with_test_conn(|c| {
-        let mut stmt = c.prepare("SELECT DISTINCT kind FROM events ORDER BY kind").unwrap();
+        let mut stmt = c
+            .prepare("SELECT DISTINCT kind FROM events ORDER BY kind")
+            .unwrap();
         stmt.query_map([], |r| r.get::<_, String>(0))
             .unwrap()
             .map(|r| r.unwrap())
@@ -360,7 +375,11 @@ async fn restart_recovery_publishes_state_change_for_each_failure() {
     let deadline = Instant::now() + Duration::from_millis(500);
     while Instant::now() < deadline && state_changes.len() < 2 {
         match tokio::time::timeout(Duration::from_millis(50), rx.recv()).await {
-            Ok(Ok(StreamEvent::StateChange { agent_id, old_state, new_state })) => {
+            Ok(Ok(StreamEvent::StateChange {
+                agent_id,
+                old_state,
+                new_state,
+            })) => {
                 state_changes.push((agent_id, old_state, new_state));
             }
             Ok(Ok(_)) => {}
@@ -368,7 +387,11 @@ async fn restart_recovery_publishes_state_change_for_each_failure() {
         }
     }
 
-    assert_eq!(state_changes.len(), 2, "expected one StateChange per failed agent");
+    assert_eq!(
+        state_changes.len(),
+        2,
+        "expected one StateChange per failed agent"
+    );
     for (_id, old, new) in &state_changes {
         assert_eq!(*old, AgentState::Active);
         assert_eq!(*new, AgentState::Failed);

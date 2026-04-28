@@ -5,11 +5,7 @@ use crate::shared::constants;
 
 pub async fn run() -> Result<()> {
     let url = format!("http://127.0.0.1:{}", constants::DAEMON_PORT);
-    println!(
-        "{} Opening grimoire dashboard at {}",
-        "🔮".to_string(),
-        url.bold()
-    );
+    println!("🔮 Opening grimoire dashboard at {}", url.bold());
 
     // Try to open browser
     #[cfg(target_os = "macos")]

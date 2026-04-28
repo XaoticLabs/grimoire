@@ -18,20 +18,13 @@ use grimoire::daemon::supervisor::{
     EscalationMailSender, EscalationOutcome, RestartDispatcher, Supervisor,
 };
 use grimoire::daemon::worker_registry::WorkerRegistry;
-use grimoire::shared::types::{
-    Agent, AgentState, RestartPolicy, SupervisionConfig,
-};
+use grimoire::shared::types::{Agent, AgentState, RestartPolicy, SupervisionConfig};
 
 #[derive(Default)]
 struct NoopMail;
 #[async_trait]
 impl EscalationMailSender for NoopMail {
-    async fn send_escalation(
-        &self,
-        _: &str,
-        _: &str,
-        _: &str,
-    ) -> Result<EscalationOutcome> {
+    async fn send_escalation(&self, _: &str, _: &str, _: &str) -> Result<EscalationOutcome> {
         Ok(EscalationOutcome::default())
     }
 }
@@ -93,7 +86,7 @@ async fn build_supervisor_with_pending(
     agent_id: &str,
     fire_at: chrono::DateTime<Utc>,
 ) -> Arc<Supervisor> {
-    let mail: Arc<dyn EscalationMailSender> = Arc::new(NoopMail::default());
+    let mail: Arc<dyn EscalationMailSender> = Arc::new(NoopMail);
     let sup = Supervisor::new(db.clone(), bus, clock, 30, 3, mail);
     db.set_supervision(
         agent_id,
@@ -123,7 +116,7 @@ fn make_scheduler(
         bus.clone(),
     ));
     let cap = Arc::new(AtomicU32::new(cap));
-    let dispatcher: Arc<dyn Dispatcher> = Arc::new(NoopDispatcher::default());
+    let dispatcher: Arc<dyn Dispatcher> = Arc::new(NoopDispatcher);
     let s = Scheduler::new(db, workers, bus, cap, dispatcher).with_supervision(sup, rdisp);
     Arc::new(s)
 }
@@ -135,8 +128,7 @@ async fn tick_supervision_dispatches_due_restart() {
     seed(&db, "dis00001", AgentState::Failed);
     let now = Utc::now();
     let clock = Arc::new(TestClock::new(now));
-    let sup =
-        build_supervisor_with_pending(db.clone(), bus.clone(), clock, "dis00001", now).await;
+    let sup = build_supervisor_with_pending(db.clone(), bus.clone(), clock, "dis00001", now).await;
     let rec = Arc::new(RecordingDispatcher::default());
     let rdisp: Arc<dyn RestartDispatcher> = rec.clone();
     let sched = make_scheduler(db.clone(), bus, 4, sup, rdisp);
@@ -156,9 +148,7 @@ async fn tick_supervision_respects_capacity() {
     seed(&db, "actv0001", AgentState::Active);
     let now = Utc::now();
     let clock = Arc::new(TestClock::new(now));
-    let sup =
-        build_supervisor_with_pending(db.clone(), bus.clone(), clock, "dis00002", now)
-            .await;
+    let sup = build_supervisor_with_pending(db.clone(), bus.clone(), clock, "dis00002", now).await;
     let rec = Arc::new(RecordingDispatcher::default());
     let rdisp: Arc<dyn RestartDispatcher> = rec.clone();
     let sched = make_scheduler(db.clone(), bus, 1, sup.clone(), rdisp);
@@ -212,13 +202,9 @@ async fn restart_dispatch_passes_session_id() {
     seed(&db, "dis00004", AgentState::Restarting);
     db.update_agent_session_id("dis00004", "sess-xyz").unwrap();
     let exec = Arc::new(RecExecutor::default());
-    let manager = AgentManager::new_with_executor(
-        db.clone(),
-        bus.clone(),
-        Config::default(),
-        exec.clone(),
-    )
-    .await;
+    let manager =
+        AgentManager::new_with_executor(db.clone(), bus.clone(), Config::default(), exec.clone())
+            .await;
     manager.restart_dispatch("dis00004", 1).await.unwrap();
     let captured = exec.captured.lock().await.clone().unwrap();
     assert_eq!(captured.resume_session_id.as_deref(), Some("sess-xyz"));
@@ -266,7 +252,7 @@ async fn restart_dispatch_emits_restarted_event() {
     let db = Arc::new(Database::open_in_memory().unwrap());
     let bus = EventBus::new(db.clone());
     seed(&db, "dis00005", AgentState::Restarting);
-    let exec: Arc<dyn Executor> = Arc::new(StubExec::default());
+    let exec: Arc<dyn Executor> = Arc::new(StubExec);
     let manager =
         AgentManager::new_with_executor(db.clone(), bus.clone(), Config::default(), exec).await;
     let mut rx = bus.subscribe();

@@ -98,7 +98,10 @@ async fn run_add(
             }),
         )
     } else {
-        eprintln!("{} one of --cron / --watch / --on-parent is required", "Error:".red());
+        eprintln!(
+            "{} one of --cron / --watch / --on-parent is required",
+            "Error:".red()
+        );
         std::process::exit(2);
     };
 
@@ -147,8 +150,8 @@ async fn run_list(agent_prefix: Option<String>) -> Result<()> {
         return Ok(());
     }
     println!(
-        "{:<14} {:<18} {:<8} {:<22} {:<8} {}",
-        "ID", "KIND", "AGENT", "CONFIG", "STATE", "FIRES"
+        "{:<14} {:<18} {:<8} {:<22} {:<8} FIRES",
+        "ID", "KIND", "AGENT", "CONFIG", "STATE"
     );
     for s in &result.sources {
         let agent_short: String = s.agent_id.chars().take(8).collect();

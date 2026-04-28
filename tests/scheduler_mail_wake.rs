@@ -18,14 +18,10 @@ use grimoire::daemon::event_bus::EventBus;
 use grimoire::daemon::executor::{ExecuteRequest, Executor, ExecutorHandle};
 use grimoire::daemon::persistence::Database;
 use grimoire::daemon::process_manager::MonitorResult;
-use grimoire::daemon::scheduler::{
-    AgentStateLookup, Dispatcher, MailWaker, Scheduler,
-};
+use grimoire::daemon::scheduler::{AgentStateLookup, Dispatcher, MailWaker, Scheduler};
 use grimoire::daemon::worker_registry::WorkerRegistry;
 use grimoire::shared::protocol::StreamEvent;
-use grimoire::shared::types::{
-    Agent, AgentId, AgentState, Mail, MailState,
-};
+use grimoire::shared::types::{Agent, AgentId, AgentState, Mail, MailState};
 
 /// Records every wake() call.
 #[derive(Default)]
@@ -52,10 +48,7 @@ impl MailWaker for RecordingWaker {
 struct DbLookup(Arc<Database>);
 
 impl AgentStateLookup for DbLookup {
-    fn get_state_and_session(
-        &self,
-        id: &str,
-    ) -> Result<Option<(AgentState, Option<String>)>> {
+    fn get_state_and_session(&self, id: &str) -> Result<Option<(AgentState, Option<String>)>> {
         Ok(self.0.get_agent(id)?.map(|a| (a.state, a.session_id)))
     }
 }
@@ -169,11 +162,9 @@ fn build_scheduler(
         bus.clone(),
     ));
     let cap = Arc::new(AtomicU32::new(cap));
-    let dispatcher: Arc<dyn Dispatcher> = Arc::new(NoopDispatcher::default());
-    let s = Scheduler::new(db.clone(), workers, bus, cap, dispatcher).with_mail_wake(
-        waker,
-        Arc::new(DbLookup(db.clone())),
-    );
+    let dispatcher: Arc<dyn Dispatcher> = Arc::new(NoopDispatcher);
+    let s = Scheduler::new(db.clone(), workers, bus, cap, dispatcher)
+        .with_mail_wake(waker, Arc::new(DbLookup(db.clone())));
     Arc::new(s)
 }
 
@@ -245,7 +236,8 @@ async fn multiple_pending_mails_are_folded_into_single_invoke() {
     let id = seed_complete_with_session(&db, "fold0001", Some("sess-3"));
     for (i, body) in ["alpha", "beta", "gamma"].iter().enumerate() {
         let mail_id = format!("mfld{:04}", i);
-        db.insert_mail(&make_pending_mail(&mail_id, &id, body, true)).unwrap();
+        db.insert_mail(&make_pending_mail(&mail_id, &id, body, true))
+            .unwrap();
     }
 
     let sched = build_scheduler(db.clone(), bus, waker.clone(), 4);
@@ -273,7 +265,8 @@ async fn invoke_failure_leaves_mail_pending() {
     let waker = Arc::new(RecordingWaker::default());
     *waker.fail_next.lock().await = true;
     let id = seed_complete_with_session(&db, "errs0001", Some("sess-x"));
-    db.insert_mail(&make_pending_mail("mailerr1", &id, "x", true)).unwrap();
+    db.insert_mail(&make_pending_mail("mailerr1", &id, "x", true))
+        .unwrap();
 
     let sched = build_scheduler(db.clone(), bus, waker.clone(), 4);
     sched.tick_now().await.unwrap();

@@ -8,8 +8,8 @@
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
-use async_trait::async_trait;
 use anyhow::Result;
+use async_trait::async_trait;
 
 use grimoire::daemon::agent_manager::AgentManager;
 use grimoire::daemon::event_bus::EventBus;
@@ -66,13 +66,10 @@ async fn local_executor_cancel_kills_process() {
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
     (handle.cancel)();
 
-    let result = tokio::time::timeout(
-        std::time::Duration::from_secs(2),
-        handle.completion,
-    )
-    .await
-    .expect("completion must resolve within 2s of cancel")
-    .unwrap();
+    let result = tokio::time::timeout(std::time::Duration::from_secs(2), handle.completion)
+        .await
+        .expect("completion must resolve within 2s of cancel")
+        .unwrap();
     assert_eq!(result.state, AgentState::Failed);
 }
 
@@ -149,7 +146,11 @@ async fn agent_manager_summon_uses_executor() {
         .unwrap();
 
     let calls = log.calls.lock().unwrap();
-    assert_eq!(calls.len(), 1, "dispatch should drive exactly one start call");
+    assert_eq!(
+        calls.len(),
+        1,
+        "dispatch should drive exactly one start call"
+    );
     assert_eq!(calls[0].task, "echo hi");
     assert_eq!(calls[0].agent_id, agent.id);
 }
@@ -191,18 +192,14 @@ async fn agent_manager_invoke_passes_resume_session_id() {
     let executor: Arc<dyn Executor> = Arc::new(ResumeMock { log: log.clone() });
     let db = Arc::new(Database::open_in_memory().unwrap());
     let bus = EventBus::new(db.clone());
-    let manager =
-        AgentManager::new_with_executor(db, bus, Config::default(), executor).await;
+    let manager = AgentManager::new_with_executor(db, bus, Config::default(), executor).await;
 
     // Pre-seed an agent with a known session_id, then invoke against it.
     let agent_id = manager
         .seed_agent_for_test_with_session("session-abc")
         .await
         .unwrap();
-    manager
-        .invoke(&agent_id, "follow up", None)
-        .await
-        .unwrap();
+    manager.invoke(&agent_id, "follow up", None).await.unwrap();
 
     let last = log.last.lock().unwrap().clone().unwrap();
     assert_eq!(last.resume_session_id.as_deref(), Some("session-abc"));

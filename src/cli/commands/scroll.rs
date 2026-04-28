@@ -5,11 +5,7 @@ use crate::cli::client::DaemonClient;
 use crate::daemon::scroll_keeper::ScrollStatus;
 use crate::shared::types::Scroll;
 
-pub async fn run(
-    id: Option<String>,
-    activate: bool,
-    abandon: bool,
-) -> Result<()> {
+pub async fn run(id: Option<String>, activate: bool, abandon: bool) -> Result<()> {
     let mut client = DaemonClient::connect().await?;
 
     match id {
@@ -55,7 +51,10 @@ pub async fn run(
             let scrolls: Vec<Scroll> = serde_json::from_value(result["scrolls"].clone())?;
 
             if scrolls.is_empty() {
-                println!("No scrolls. Use {} to create one.", "grim inscribe <spec.md>".dimmed());
+                println!(
+                    "No scrolls. Use {} to create one.",
+                    "grim inscribe <spec.md>".dimmed()
+                );
                 return Ok(());
             }
 

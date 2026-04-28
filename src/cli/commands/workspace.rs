@@ -3,9 +3,7 @@ use clap::Subcommand;
 use colored::Colorize;
 
 use crate::cli::client::DaemonClient;
-use crate::shared::protocol::{
-    WorkspaceCreateResult, WorkspaceDestroyResult, WorkspaceListResult,
-};
+use crate::shared::protocol::{WorkspaceCreateResult, WorkspaceDestroyResult, WorkspaceListResult};
 
 #[derive(Debug, Subcommand)]
 pub enum WorkspaceCommand {

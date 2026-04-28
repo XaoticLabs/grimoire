@@ -45,10 +45,7 @@ fn migration_adds_restart_history_table() {
             .unwrap();
         assert_eq!(n, 1);
 
-        for idx in [
-            "restart_history_by_agent_window",
-            "restart_history_by_time",
-        ] {
+        for idx in ["restart_history_by_agent_window", "restart_history_by_time"] {
             let n: i64 = c
                 .query_row(
                     "SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name=?1",
@@ -152,13 +149,8 @@ fn count_restarts_in_window_filters_by_time() {
     )
     .unwrap();
     // Two inside window
-    db.insert_restart_history_row(
-        "agt00002",
-        now - 30,
-        RestartHistoryOutcome::Scheduled,
-        None,
-    )
-    .unwrap();
+    db.insert_restart_history_row("agt00002", now - 30, RestartHistoryOutcome::Scheduled, None)
+        .unwrap();
     db.insert_restart_history_row(
         "agt00002",
         now - 10,

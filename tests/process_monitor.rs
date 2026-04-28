@@ -17,7 +17,7 @@ use tokio_stream::wrappers::ReceiverStream;
 use grimoire::daemon::event_bus::EventBus;
 use grimoire::daemon::persistence::Database;
 use grimoire::daemon::process_manager::{
-    consume_lines, persist_event, publish_output, CapturedSessionId, LineEvent, LineSource,
+    CapturedSessionId, LineEvent, LineSource, consume_lines, persist_event, publish_output,
 };
 use grimoire::daemon::provider::Provider;
 use grimoire::shared::protocol::StreamEvent;
@@ -108,18 +108,15 @@ async fn consume_lines_publishes_streamevent_output_per_line() {
         (LineSource::Stdout, "out-3"),
     ];
     for (s, l) in lines.iter() {
-        tx.send(line(s.clone(), l)).await.unwrap();
+        tx.send(line(*s, l)).await.unwrap();
     }
     drop(tx);
 
     let _ = consume_lines(agent_id.clone(), stream, bus.clone(), db.clone(), None).await;
 
     let mut received: Vec<(String, String)> = Vec::new();
-    while let Ok(event) = tokio::time::timeout(
-        std::time::Duration::from_millis(50),
-        rx.recv(),
-    )
-    .await
+    while let Ok(event) =
+        tokio::time::timeout(std::time::Duration::from_millis(50), rx.recv()).await
     {
         match event {
             Ok(StreamEvent::Output { stream, line, .. }) => received.push((stream, line)),
@@ -182,9 +179,7 @@ async fn consume_lines_captures_session_id_from_provider() {
     tx.send(line(LineSource::Stdout, "SID=session-xyz"))
         .await
         .unwrap();
-    tx.send(line(LineSource::Stdout, "after"))
-        .await
-        .unwrap();
+    tx.send(line(LineSource::Stdout, "after")).await.unwrap();
     drop(tx);
 
     let captured = consume_lines(agent_id, stream, bus, db, Some(provider)).await;
@@ -271,8 +266,7 @@ async fn monitor_agent_local_path_matches_pre_refactor_fixture() {
         }
     }
 
-    let provider: Arc<dyn Provider> =
-        Arc::new(NoopProvider);
+    let provider: Arc<dyn Provider> = Arc::new(NoopProvider);
     let result = grimoire::daemon::process_manager::monitor_agent(
         agent_id.clone(),
         child,
@@ -291,4 +285,3 @@ async fn monitor_agent_local_path_matches_pre_refactor_fixture() {
         .collect();
     assert_eq!(stdout_lines, vec!["a", "b", "c"]);
 }
-

@@ -89,11 +89,7 @@ impl AgentState {
     pub fn is_terminal(&self) -> bool {
         matches!(
             self,
-            Self::Complete
-                | Self::Failed
-                | Self::Banished
-                | Self::Dormant
-                | Self::Restarting
+            Self::Complete | Self::Failed | Self::Banished | Self::Dormant | Self::Restarting
         )
     }
 
@@ -682,10 +678,7 @@ mod tests {
     #[test]
     fn agent_state_queued_string_roundtrip() {
         assert_eq!(AgentState::Queued.to_string(), "queued");
-        assert_eq!(
-            "queued".parse::<AgentState>().unwrap(),
-            AgentState::Queued
-        );
+        assert_eq!("queued".parse::<AgentState>().unwrap(), AgentState::Queued);
     }
 
     #[test]

@@ -21,12 +21,7 @@ struct RecordingSender {
 
 #[async_trait]
 impl WakeMailSender for RecordingSender {
-    async fn send_wake_mail(
-        &self,
-        wake_id: &str,
-        agent_id: &str,
-        body: &str,
-    ) -> Result<String> {
+    async fn send_wake_mail(&self, wake_id: &str, agent_id: &str, body: &str) -> Result<String> {
         let mut g = self.calls.lock().await;
         let id = format!("mail{:04}", g.len());
         g.push((wake_id.to_string(), agent_id.to_string(), body.to_string()));

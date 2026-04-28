@@ -63,12 +63,7 @@ impl Provider for PlainTextProvider {
         Ok(SpawnedAgent { child, pid })
     }
 
-    fn spawn_resume(
-        &self,
-        _session_id: &str,
-        _message: &str,
-        _cwd: &Path,
-    ) -> Result<SpawnedAgent> {
+    fn spawn_resume(&self, _session_id: &str, _message: &str, _cwd: &Path) -> Result<SpawnedAgent> {
         Err(anyhow!(
             "Provider '{}' does not support session resume",
             self.provider_name

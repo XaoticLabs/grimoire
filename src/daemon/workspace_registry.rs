@@ -15,9 +15,7 @@ use tokio::sync::Mutex;
 
 use crate::shared::constants;
 use crate::shared::protocol::StreamEvent;
-use crate::shared::types::{
-    Workspace, WorkspaceListEntry, WorkspaceState, validate_workspace_id,
-};
+use crate::shared::types::{Workspace, WorkspaceListEntry, WorkspaceState, validate_workspace_id};
 
 use super::event_bus::EventBus;
 use super::persistence::Database;
@@ -37,12 +35,7 @@ impl std::error::Error for WorkspaceError {}
 
 #[async_trait]
 pub trait GitRunner: Send + Sync {
-    async fn worktree_add(
-        &self,
-        repo: &Path,
-        target: &Path,
-        branch: &str,
-    ) -> Result<(), GitError>;
+    async fn worktree_add(&self, repo: &Path, target: &Path, branch: &str) -> Result<(), GitError>;
     async fn worktree_remove(&self, repo: &Path, target: &Path) -> Result<(), GitError>;
 }
 
@@ -63,12 +56,7 @@ pub struct SystemGitRunner;
 
 #[async_trait]
 impl GitRunner for SystemGitRunner {
-    async fn worktree_add(
-        &self,
-        repo: &Path,
-        target: &Path,
-        branch: &str,
-    ) -> Result<(), GitError> {
+    async fn worktree_add(&self, repo: &Path, target: &Path, branch: &str) -> Result<(), GitError> {
         let output = tokio::process::Command::new("git")
             .arg("-C")
             .arg(repo)
@@ -84,7 +72,10 @@ impl GitRunner for SystemGitRunner {
             })?;
         if !output.status.success() {
             return Err(GitError {
-                stderr: String::from_utf8_lossy(&output.stderr).chars().take(4096).collect(),
+                stderr: String::from_utf8_lossy(&output.stderr)
+                    .chars()
+                    .take(4096)
+                    .collect(),
                 exit_code: output.status.code(),
             });
         }
@@ -107,7 +98,10 @@ impl GitRunner for SystemGitRunner {
             })?;
         if !output.status.success() {
             return Err(GitError {
-                stderr: String::from_utf8_lossy(&output.stderr).chars().take(4096).collect(),
+                stderr: String::from_utf8_lossy(&output.stderr)
+                    .chars()
+                    .take(4096)
+                    .collect(),
                 exit_code: output.status.code(),
             });
         }
@@ -165,7 +159,8 @@ impl WorkspaceRegistry {
         repo_path: &Path,
         branch: &str,
     ) -> Result<Workspace, WorkspaceError> {
-        validate_workspace_id(name).map_err(|e| WorkspaceError(format!("invalid_workspace_name:{e}")))?;
+        validate_workspace_id(name)
+            .map_err(|e| WorkspaceError(format!("invalid_workspace_name:{e}")))?;
 
         // Repo validation.
         let repo_canonical = std::fs::canonicalize(repo_path)
@@ -195,8 +190,15 @@ impl WorkspaceRegistry {
         }
 
         // Shell out.
-        if let Err(ge) = self.git.worktree_add(&repo_canonical, &target, branch).await {
-            return Err(WorkspaceError(format!("git_worktree_add_failed:{}", ge.stderr)));
+        if let Err(ge) = self
+            .git
+            .worktree_add(&repo_canonical, &target, branch)
+            .await
+        {
+            return Err(WorkspaceError(format!(
+                "git_worktree_add_failed:{}",
+                ge.stderr
+            )));
         }
 
         let ws = Workspace {
@@ -211,10 +213,7 @@ impl WorkspaceRegistry {
         if let Err(e) = self.db.insert_workspace(&ws) {
             // Best-effort rollback: leave the worktree in place if removal
             // fails. Reconciliation on next boot will catch it.
-            let _ = self
-                .git
-                .worktree_remove(&repo_canonical, &target)
-                .await;
+            let _ = self.git.worktree_remove(&repo_canonical, &target).await;
             return Err(WorkspaceError(format!("db_insert_failed:{e}")));
         }
 
@@ -304,10 +303,10 @@ impl WorkspaceRegistry {
             return Err(WorkspaceError("workspace_destroying".into()));
         }
 
-        if let Ok(Some(existing)) = self.db.agent_workspace_id(agent_id) {
-            if existing != workspace_id {
-                return Err(WorkspaceError("agent_already_assigned".into()));
-            }
+        if let Ok(Some(existing)) = self.db.agent_workspace_id(agent_id)
+            && existing != workspace_id
+        {
+            return Err(WorkspaceError("agent_already_assigned".into()));
         }
 
         self.db
@@ -345,10 +344,7 @@ impl WorkspaceRegistry {
         let root = self.workspaces_root().await;
         let _ = std::fs::create_dir_all(&root);
 
-        let db_rows = self
-            .db
-            .list_workspace_paths()
-            .unwrap_or_default();
+        let db_rows = self.db.list_workspace_paths().unwrap_or_default();
         let db_paths: HashMap<PathBuf, (String, WorkspaceState)> = db_rows
             .iter()
             .map(|(id, p, s)| (p.clone(), (id.clone(), *s)))
@@ -362,9 +358,8 @@ impl WorkspaceRegistry {
                     continue;
                 }
                 if !db_paths.contains_key(&p) {
-                    self.bus.publish(StreamEvent::WorkspaceOrphanDirDetected {
-                        path: p.clone(),
-                    });
+                    self.bus
+                        .publish(StreamEvent::WorkspaceOrphanDirDetected { path: p.clone() });
                     tracing::warn!(path = %p.display(), "workspace orphan dir detected; leaving in place");
                 }
             }

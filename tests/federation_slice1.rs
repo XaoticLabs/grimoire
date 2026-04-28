@@ -4,7 +4,7 @@
 //! traffic with `federation_not_configured` until Task 10 layers in real
 //! forwarding.
 
-use grimoire::shared::protocol::{RpcRequest, RpcResponse};
+use grimoire::shared::protocol::RpcRequest;
 
 fn req(method: &str, params: serde_json::Value, pv: Option<u32>) -> RpcRequest {
     RpcRequest {

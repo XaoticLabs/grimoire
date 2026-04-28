@@ -99,7 +99,9 @@ pub fn parse_scroll(content: &str) -> Result<ScrollSpec> {
     }
 
     if tasks.is_empty() {
-        return Err(anyhow!("Scroll must contain at least one '## Task:' section"));
+        return Err(anyhow!(
+            "Scroll must contain at least one '## Task:' section"
+        ));
     }
 
     // Validate dependency references
@@ -150,13 +152,21 @@ fn parse_task_section(name: &str, body: &[&str]) -> Result<TaskSpec> {
 
         if in_metadata {
             if let Some(val) = trimmed.strip_prefix("- files:") {
-                file_patterns = val.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect();
+                file_patterns = val
+                    .split(',')
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty())
+                    .collect();
                 continue;
             }
             if let Some(val) = trimmed.strip_prefix("- depends:") {
                 let val = val.trim();
                 if !val.is_empty() && val != "(none)" && val != "none" {
-                    depends_on = val.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect();
+                    depends_on = val
+                        .split(',')
+                        .map(|s| s.trim().to_string())
+                        .filter(|s| !s.is_empty())
+                        .collect();
                 }
                 continue;
             }
@@ -235,7 +245,10 @@ Build the frontend login page.
         assert_eq!(spec.tasks.len(), 3);
 
         assert_eq!(spec.tasks[0].name, "Setup Database");
-        assert_eq!(spec.tasks[0].file_patterns, vec!["src/db.rs", "migrations/"]);
+        assert_eq!(
+            spec.tasks[0].file_patterns,
+            vec!["src/db.rs", "migrations/"]
+        );
         assert!(spec.tasks[0].depends_on.is_empty());
 
         assert_eq!(spec.tasks[1].name, "API Routes");
@@ -321,7 +334,12 @@ Do A.
 "#;
         let result = parse_scroll(content);
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("cannot depend on itself"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("cannot depend on itself")
+        );
     }
 
     #[test]

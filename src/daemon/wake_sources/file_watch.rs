@@ -37,8 +37,8 @@ impl FileWatchSource {
         if !config.root.exists() || !config.root.is_dir() {
             return Err(anyhow!("cwd_gone"));
         }
-        let root_canonical = std::fs::canonicalize(&config.root)
-            .map_err(|_| anyhow!("cwd_gone"))?;
+        let root_canonical =
+            std::fs::canonicalize(&config.root).map_err(|_| anyhow!("cwd_gone"))?;
 
         let include_set = build_globset(&config.globs)?;
         let ignore_set = build_globset(&config.ignore)?;

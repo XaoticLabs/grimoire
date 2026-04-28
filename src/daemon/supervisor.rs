@@ -25,9 +25,7 @@ use crate::daemon::clock::Clock;
 use crate::daemon::event_bus::EventBus;
 use crate::daemon::persistence::Database;
 use crate::shared::protocol::StreamEvent;
-use crate::shared::types::{
-    AgentId, AgentState, RestartHistoryOutcome, RestartPolicy,
-};
+use crate::shared::types::{AgentId, AgentState, RestartHistoryOutcome, RestartPolicy};
 
 /// 16 KiB body cap for escalation mail (matches `WAKE_FOLD_MAX_BYTES`).
 const ESCALATION_BODY_MAX_BYTES: usize = 16_384;
@@ -151,15 +149,12 @@ impl EscalationMailSender for DbEscalationMailSender {
         use crate::shared::types::{Mail, MailState};
 
         let now = crate::daemon::persistence::unix_now();
-        let address = parse_address(target)
-            .map_err(|e| anyhow::anyhow!("invalid escalate_to: {}", e))?;
+        let address =
+            parse_address(target).map_err(|e| anyhow::anyhow!("invalid escalate_to: {}", e))?;
 
         match address {
             Address::Agent(recipient_id) => {
-                let mail_id = format!(
-                    "em{}",
-                    &crate::shared::constants::generate_short_id()[..6]
-                );
+                let mail_id = format!("em{}", &crate::shared::constants::generate_short_id()[..6]);
                 let mail = Mail {
                     id: mail_id.clone(),
                     recipient_id: recipient_id.clone(),
@@ -193,10 +188,8 @@ impl EscalationMailSender for DbEscalationMailSender {
                 let subs = self.db.list_subscribers_for_topic(&topic)?;
                 let mut mails: Vec<Mail> = Vec::with_capacity(subs.len());
                 for sub in &subs {
-                    let mail_id = format!(
-                        "em{}",
-                        &crate::shared::constants::generate_short_id()[..6]
-                    );
+                    let mail_id =
+                        format!("em{}", &crate::shared::constants::generate_short_id()[..6]);
                     mails.push(Mail {
                         id: mail_id,
                         recipient_id: sub.subscriber_id.clone(),
@@ -289,14 +282,7 @@ impl Supervisor {
             db: db.clone(),
             bus: bus.clone(),
         });
-        Self::new(
-            db,
-            bus,
-            clock,
-            restart_rate_per_min,
-            tree_depth_cap,
-            sender,
-        )
+        Self::new(db, bus, clock, restart_rate_per_min, tree_depth_cap, sender)
     }
 
     /// Subscribe to the bus and route `Failed` state changes to
@@ -429,10 +415,7 @@ impl Supervisor {
         rate_limited: bool,
     ) -> Result<()> {
         let cfg = self.db.get_supervision(agent_id)?;
-        let max = cfg
-            .as_ref()
-            .and_then(|c| c.max_restarts)
-            .unwrap_or(0);
+        let max = cfg.as_ref().and_then(|c| c.max_restarts).unwrap_or(0);
 
         let error_summary = self.last_error_summary(agent_id);
         let now = self.clock.now().timestamp();
@@ -524,10 +507,7 @@ impl Supervisor {
             });
         }
 
-        let candidates = self
-            .db
-            .list_failed_with_active_policy()
-            .unwrap_or_default();
+        let candidates = self.db.list_failed_with_active_policy().unwrap_or_default();
         for id in candidates {
             // Skip if there's an Escalated event newer than the latest
             // restart_history row — we already escalated this agent.
@@ -599,8 +579,7 @@ impl Supervisor {
                     .await
                 {
                     Ok(outcome) => {
-                        let depth =
-                            self.db.get_escalation_depth(agent_id).unwrap_or(0);
+                        let depth = self.db.get_escalation_depth(agent_id).unwrap_or(0);
                         for rid in &outcome.recipient_ids {
                             let cur = self.db.get_escalation_depth(rid).unwrap_or(0);
                             let new_depth = cur.max(depth + 1);

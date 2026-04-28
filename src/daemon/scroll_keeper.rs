@@ -4,9 +4,7 @@ use std::sync::Arc;
 use tracing::{debug, error, info, warn};
 
 use crate::shared::protocol::StreamEvent;
-use crate::shared::types::{
-    Task, TaskConflict, TaskState, Scroll, ScrollState,
-};
+use crate::shared::types::{Scroll, ScrollState, Task, TaskConflict, TaskState};
 
 use super::agent_manager::AgentManager;
 use super::event_bus::EventBus;
@@ -59,7 +57,9 @@ impl ScrollKeeper {
                         use crate::shared::types::AgentState;
                         match new_state {
                             AgentState::Complete => self.handle_agent_completion(agent_id).await,
-                            AgentState::Failed | AgentState::Banished => self.handle_agent_failure(agent_id).await,
+                            AgentState::Failed | AgentState::Banished => {
+                                self.handle_agent_failure(agent_id).await
+                            }
                             AgentState::Restarting => {
                                 debug!(agent_id = %agent_id, "scroll-keeper: ignoring transient Restarting state");
                             }
@@ -239,12 +239,27 @@ impl ScrollKeeper {
         }
 
         let total = tasks.len();
-        let complete = tasks.iter().filter(|r| r.state == TaskState::Complete).count();
-        let active = tasks.iter().filter(|r| r.state == TaskState::Active).count();
-        let blocked = tasks.iter().filter(|r| r.state == TaskState::Blocked).count();
+        let complete = tasks
+            .iter()
+            .filter(|r| r.state == TaskState::Complete)
+            .count();
+        let active = tasks
+            .iter()
+            .filter(|r| r.state == TaskState::Active)
+            .count();
+        let blocked = tasks
+            .iter()
+            .filter(|r| r.state == TaskState::Blocked)
+            .count();
         let ready = tasks.iter().filter(|r| r.state == TaskState::Ready).count();
-        let failed = tasks.iter().filter(|r| r.state == TaskState::Failed).count();
-        let skipped = tasks.iter().filter(|r| r.state == TaskState::Skipped).count();
+        let failed = tasks
+            .iter()
+            .filter(|r| r.state == TaskState::Failed)
+            .count();
+        let skipped = tasks
+            .iter()
+            .filter(|r| r.state == TaskState::Skipped)
+            .count();
 
         // Detect conflicts among active + ready tasks
         let conflictable: Vec<Task> = tasks
@@ -301,9 +316,12 @@ impl ScrollKeeper {
             }
         };
 
-        let all_done = tasks
-            .iter()
-            .all(|r| matches!(r.state, TaskState::Complete | TaskState::Skipped | TaskState::Failed));
+        let all_done = tasks.iter().all(|r| {
+            matches!(
+                r.state,
+                TaskState::Complete | TaskState::Skipped | TaskState::Failed
+            )
+        });
 
         if all_done {
             let any_failed = tasks.iter().any(|r| r.state == TaskState::Failed);
@@ -429,9 +447,9 @@ impl ScrollKeeper {
             }
 
             // Check for file conflicts with active tasks
-            let has_conflict = active_tasks.iter().any(|active| {
-                TaskConflict::detect(active, task).is_some()
-            });
+            let has_conflict = active_tasks
+                .iter()
+                .any(|active| TaskConflict::detect(active, task).is_some());
 
             if has_conflict {
                 info!(

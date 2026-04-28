@@ -142,17 +142,13 @@ impl PeerService for PeerSvc {
                         let _ = out_tx
                             .send(Ok(PeerInbound {
                                 msg: Some(peer_inbound::Msg::HeartbeatAck(
-                                    crate::shared::peer_proto::HeartbeatAck {
-                                        nonce: h.nonce,
-                                    },
+                                    crate::shared::peer_proto::HeartbeatAck { nonce: h.nonce },
                                 )),
                             }))
                             .await;
                     }
                     Some(peer_outbound::Msg::MailDeliver(d)) => {
-                        let ack: MailAck = match inbox
-                            .handle_mail_deliver(&peer_for_loop, &d)
-                            .await
+                        let ack: MailAck = match inbox.handle_mail_deliver(&peer_for_loop, &d).await
                         {
                             Ok(a) => a,
                             Err(e) => MailAck {
@@ -183,6 +179,9 @@ impl PeerService for PeerSvc {
     }
 }
 
+// `tonic::Status` is large (≈176B), but the streaming-RPC return type is fixed by
+// the generated tonic trait — we can't box it without changing the public API.
+#[allow(clippy::result_large_err)]
 fn single_helloack_stream(
     daemon_id: String,
     accepted: bool,

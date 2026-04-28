@@ -45,9 +45,7 @@ pub async fn run(spec: String, concurrency: u32, activate: bool) -> Result<()> {
                 conflict.overlapping_patterns.join(", ")
             );
         }
-        println!(
-            "  Conflicting tasks will be serialized (not run in parallel)."
-        );
+        println!("  Conflicting tasks will be serialized (not run in parallel).");
     }
 
     if activate {

@@ -72,8 +72,7 @@ async fn fresh_manager() -> (Arc<Database>, EventBus, Arc<AgentManager>, Arc<Exe
     let log = Arc::new(ExecutorLog::default());
     let executor: Arc<dyn Executor> = Arc::new(MockExecutor { log: log.clone() });
     let manager =
-        AgentManager::new_with_executor(db.clone(), bus.clone(), Config::default(), executor)
-            .await;
+        AgentManager::new_with_executor(db.clone(), bus.clone(), Config::default(), executor).await;
     (db, bus, manager, log)
 }
 
@@ -171,22 +170,12 @@ async fn dispatch_drives_executor_exactly_once() {
     let (db, _, manager, log) = fresh_manager().await;
 
     let agent = manager
-        .enqueue(
-            "echo hi",
-            None,
-            None,
-            None,
-            Path::new("/tmp"),
-            Lane::Adhoc,
-        )
+        .enqueue("echo hi", None, None, None, Path::new("/tmp"), Lane::Adhoc)
         .await
         .unwrap();
 
     // Mirror the scheduler's claim phase: fetch the row and atomically claim.
-    let row = db
-        .peek_next_dispatch()
-        .unwrap()
-        .expect("queue has the row");
+    let row = db.peek_next_dispatch().unwrap().expect("queue has the row");
     assert!(db.claim_for_dispatch(&row.id).unwrap());
 
     // Dispatch via the public trait method.
@@ -210,14 +199,7 @@ async fn dispatch_failure_returns_err_without_touching_queue() {
     let (db, _, manager, log) = fresh_manager().await;
 
     let _agent = manager
-        .enqueue(
-            "echo hi",
-            None,
-            None,
-            None,
-            Path::new("/tmp"),
-            Lane::Adhoc,
-        )
+        .enqueue("echo hi", None, None, None, Path::new("/tmp"), Lane::Adhoc)
         .await
         .unwrap();
 
@@ -246,7 +228,14 @@ async fn banish_queued_removes_from_queue() {
     let (db, _, manager, _) = fresh_manager().await;
 
     let agent = manager
-        .enqueue("queued task", None, None, None, Path::new("/tmp"), Lane::Adhoc)
+        .enqueue(
+            "queued task",
+            None,
+            None,
+            None,
+            Path::new("/tmp"),
+            Lane::Adhoc,
+        )
         .await
         .unwrap();
     assert_eq!(db.count_queued().unwrap(), 1);
@@ -381,14 +370,7 @@ async fn enqueue_is_the_entry_point_not_summon() {
     let (_, _, manager, log) = fresh_manager().await;
 
     manager
-        .enqueue(
-            "smoke",
-            None,
-            None,
-            None,
-            Path::new("/tmp"),
-            Lane::Adhoc,
-        )
+        .enqueue("smoke", None, None, None, Path::new("/tmp"), Lane::Adhoc)
         .await
         .unwrap();
 

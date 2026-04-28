@@ -22,8 +22,8 @@ impl CronSource {
         // year). To accept the 5-field standard cron format the spec calls
         // for, prepend a "0" seconds field if the expression is 5 fields.
         let normalized = normalize_expr(expr);
-        let schedule = ::cron::Schedule::from_str(&normalized)
-            .map_err(|e| anyhow!("invalid_cron: {}", e))?;
+        let schedule =
+            ::cron::Schedule::from_str(&normalized).map_err(|e| anyhow!("invalid_cron: {}", e))?;
         Ok(Self {
             expr: expr.to_string(),
             schedule,

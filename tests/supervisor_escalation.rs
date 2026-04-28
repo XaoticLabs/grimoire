@@ -16,8 +16,7 @@ use grimoire::daemon::supervisor::{
 };
 use grimoire::shared::protocol::StreamEvent;
 use grimoire::shared::types::{
-    Agent, AgentState, RestartHistoryOutcome, RestartPolicy, Subscription,
-    SupervisionConfig,
+    Agent, AgentState, RestartHistoryOutcome, RestartPolicy, Subscription, SupervisionConfig,
 };
 
 #[derive(Default)]
@@ -109,7 +108,11 @@ async fn escalate_to_agent_writes_one_mail_with_supervisor_sender() {
         .unwrap();
     assert_eq!(mails.len(), 1);
     assert_eq!(mails[0].sender_id.as_deref(), Some("supervisor://afail001"));
-    assert!(mails[0].body.starts_with("[supervisor] agent afail001 failed"));
+    assert!(
+        mails[0]
+            .body
+            .starts_with("[supervisor] agent afail001 failed")
+    );
 }
 
 #[tokio::test]
@@ -161,14 +164,14 @@ async fn escalate_to_topic_fanout_writes_per_subscriber() {
     sup.on_state_change("afail002", AgentState::Failed)
         .await
         .unwrap();
-    let mailsA = db
+    let mails_a = db
         .list_mail_by_recipient("subA0001", None, None, 100)
         .unwrap();
-    let mailsB = db
+    let mails_b = db
         .list_mail_by_recipient("subB0001", None, None, 100)
         .unwrap();
-    assert_eq!(mailsA.len(), 1);
-    assert_eq!(mailsB.len(), 1);
+    assert_eq!(mails_a.len(), 1);
+    assert_eq!(mails_b.len(), 1);
     let mut got = false;
     while let Ok(ev) = rx.try_recv() {
         if let StreamEvent::Escalated { fanout_count, .. } = ev {

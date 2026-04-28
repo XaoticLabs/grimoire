@@ -90,8 +90,7 @@ async fn run_once(
     if peer.url.starts_with("https://") {
         return Err(anyhow::anyhow!("peer_tls_not_supported_yet"));
     }
-    let endpoint = Endpoint::from_shared(peer.url.clone())?
-        .connect_timeout(Duration::from_secs(5));
+    let endpoint = Endpoint::from_shared(peer.url.clone())?.connect_timeout(Duration::from_secs(5));
     let channel = endpoint.connect().await?;
     let mut client = TonicPeerClient::new(channel);
 
@@ -112,7 +111,10 @@ async fn run_once(
         .await
         .map_err(|_| anyhow::anyhow!("failed to send Hello"))?;
 
-    let mut inbound = client.channel(Request::new(outbound_stream)).await?.into_inner();
+    let mut inbound = client
+        .channel(Request::new(outbound_stream))
+        .await?
+        .into_inner();
 
     // Wait for HelloAck.
     let ack_msg = match inbound.message().await? {
@@ -128,12 +130,17 @@ async fn run_once(
             peer_name: Some(peer.name.clone()),
             reason: accepted.reject_reason.clone(),
         });
-        return Err(anyhow::anyhow!("hello_rejected: {}", accepted.reject_reason));
+        return Err(anyhow::anyhow!(
+            "hello_rejected: {}",
+            accepted.reject_reason
+        ));
     }
     registry.db.set_peer_state(&peer.id, PeerState::Active)?;
     registry.db.set_peer_last_seen(&peer.id, unix_now())?;
     if peer.daemon_id.is_empty() {
-        registry.db.update_peer_daemon_id(&peer.id, &accepted.daemon_id)?;
+        registry
+            .db
+            .update_peer_daemon_id(&peer.id, &accepted.daemon_id)?;
     }
     registry.bus.publish(StreamEvent::PeerHandshakeOk {
         peer_id: peer.id.clone(),
@@ -149,7 +156,14 @@ async fn run_once(
     let mut in_flight_mail_id: Option<String> = None;
 
     // Initial pump in case rows were queued while disconnected.
-    pump_one(registry, peer, &out_tx, &mut in_flight_outbox_id, &mut in_flight_mail_id).await?;
+    pump_one(
+        registry,
+        peer,
+        &out_tx,
+        &mut in_flight_outbox_id,
+        &mut in_flight_mail_id,
+    )
+    .await?;
 
     loop {
         tokio::select! {
@@ -168,9 +182,7 @@ async fn run_once(
                     Ok(None) => return Err(anyhow::anyhow!("stream closed")),
                     Err(e) => return Err(e.into()),
                 };
-                if let Err(e) = handle_inbound(registry, peer, msg, &out_tx, &mut in_flight_outbox_id, &mut in_flight_mail_id).await {
-                    return Err(e);
-                }
+                handle_inbound(registry, peer, msg, &out_tx, &mut in_flight_outbox_id, &mut in_flight_mail_id).await?;
                 let _ = registry.db.set_peer_last_seen(&peer.id, unix_now());
                 if in_flight_outbox_id.is_none() {
                     pump_one(registry, peer, &out_tx, &mut in_flight_outbox_id, &mut in_flight_mail_id).await?;
@@ -268,10 +280,10 @@ async fn pump_one(
     if in_flight_outbox_id.is_some() {
         return Ok(());
     }
-    if let Ok(Some(p)) = registry.db.get_peer(&peer.id) {
-        if p.state == PeerState::Removing {
-            return Ok(());
-        }
+    if let Ok(Some(p)) = registry.db.get_peer(&peer.id)
+        && p.state == PeerState::Removing
+    {
+        return Ok(());
     }
     let now = unix_now();
     let row = match registry.db.next_outbox_row(&peer.id, now)? {
