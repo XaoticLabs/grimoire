@@ -51,6 +51,7 @@ pub async fn run(
             max_concurrent: config.max_concurrent,
             providers,
             tags: config.tags.clone(),
+            protocol_version: crate::shared::constants::WORKER_PROTOCOL_VERSION,
         })),
     })
     .await

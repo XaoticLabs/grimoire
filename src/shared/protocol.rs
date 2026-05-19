@@ -7,7 +7,7 @@ use super::types::{
 };
 
 /// JSON-RPC request from CLI to daemon
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct RpcRequest {
     pub method: String,
     pub params: serde_json::Value,
@@ -17,6 +17,15 @@ pub struct RpcRequest {
     /// `unsupported_protocol_version` (federation Task 4).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub protocol_version: Option<u32>,
+    /// Bearer token. Required when the daemon cannot identify the caller
+    /// via `SO_PEERCRED` (i.e. UDS connections from a different UID, or
+    /// any future non-UDS transport that reuses `RpcRequest`). UDS
+    /// connections from the daemon's own UID may omit the token — the
+    /// kernel's peer-credential check substitutes for authentication.
+    /// Sent on every request; the server caches `authed=true` per
+    /// connection after the first successful check.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auth_token: Option<String>,
 }
 
 /// JSON-RPC response from daemon to CLI

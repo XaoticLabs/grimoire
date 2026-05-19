@@ -3,6 +3,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixStream;
 
+use crate::shared::auth;
 use crate::shared::constants;
 use crate::shared::protocol::{RpcRequest, RpcResponse};
 
@@ -11,6 +12,9 @@ static REQ_ID: AtomicU64 = AtomicU64::new(1);
 pub struct DaemonClient {
     reader: BufReader<tokio::net::unix::OwnedReadHalf>,
     writer: tokio::net::unix::OwnedWriteHalf,
+    /// Cached at connect time. None means "we couldn't load a token, but
+    /// peercred trust may still let us through" — the daemon decides.
+    auth_token: Option<String>,
 }
 
 impl DaemonClient {
@@ -23,10 +27,18 @@ impl DaemonClient {
             )
         })?;
 
+        // Best-effort token load. UDS connections from the daemon's own UID
+        // get a peercred bypass server-side, so we don't bail here if the
+        // token file is missing — that case is the dev's first run before
+        // the daemon has created it. Cross-UID calls without a token will
+        // get a clean "unauthenticated" back from the daemon.
+        let auth_token = auth::load_for_client().ok().map(|t| t.as_str().to_string());
+
         let (reader, writer) = stream.into_split();
         Ok(Self {
             reader: BufReader::new(reader),
             writer,
+            auth_token,
         })
     }
 
@@ -37,6 +49,7 @@ impl DaemonClient {
             params,
             id,
             protocol_version: None,
+            auth_token: self.auth_token.clone(),
         };
 
         let json = serde_json::to_string(&req)?;

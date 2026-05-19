@@ -55,8 +55,9 @@ pub fn spawn(
 
             match run_once(&registry, &cur, &notify_outbox, &mut shutdown_rx).await {
                 Ok(()) => {
-                    backoff = 1;
-                    return; // shutdown requested
+                    // Clean shutdown — `backoff` is no longer relevant since
+                    // we're exiting the reconnect loop entirely.
+                    return;
                 }
                 Err(e) => {
                     debug!(peer = %peer.name, error = %e, "peer client iteration ended");
@@ -254,10 +255,11 @@ fn handle_outbox_ack(registry: &Arc<PeerRegistry>, peer: &Peer, outbox_id: &str,
             sender_seq: 0,
         });
     } else {
-        // Get current attempts to schedule next retry.
-        let attempts = match registry.db.get_peer(&peer.id) {
-            _ => 1u32, // we don't have direct access to row.attempts here
-        };
+        // TODO: thread the real `attempts` count from `peer_outbox` so the
+        // backoff curve actually escalates. Until then, treat every failed
+        // ack as the first retry — see `peer_outbox::OutboxRow.attempts`.
+        let attempts = 1u32;
+        let _ = registry.db.get_peer(&peer.id); // keep the DB touch for parity
         let backoff = backoff_secs(attempts);
         let _ = registry
             .db

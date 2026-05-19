@@ -12,6 +12,7 @@ fn req(method: &str, params: serde_json::Value, pv: Option<u32>) -> RpcRequest {
         params,
         id: 1,
         protocol_version: pv,
+        auth_token: None,
     }
 }
 

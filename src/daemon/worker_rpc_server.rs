@@ -50,6 +50,13 @@ impl WorkerControl for WorkerControlService {
             _ => return Err(Status::invalid_argument("first message must be Register")),
         };
 
+        if register.protocol_version != crate::shared::constants::WORKER_PROTOCOL_VERSION {
+            return Err(Status::failed_precondition(format!(
+                "unsupported_protocol_version: worker sent {}, daemon supports {}",
+                register.protocol_version,
+                crate::shared::constants::WORKER_PROTOCOL_VERSION,
+            )));
+        }
         if register.bearer_token != self.bearer_secret {
             return Err(Status::unauthenticated("invalid bearer token"));
         }

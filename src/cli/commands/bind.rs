@@ -9,11 +9,18 @@ pub async fn run(id: String, tail: Option<usize>) -> Result<()> {
 
     let params = serde_json::json!({ "id": id, "tail": tail });
 
+    // Same load-or-fall-through pattern as `client.rs`: peercred-trusted
+    // UDS connections work without a token, so a missing file isn't fatal.
+    let auth_token = crate::shared::auth::load_for_client()
+        .ok()
+        .map(|t| t.as_str().to_string());
+
     let req = crate::shared::protocol::RpcRequest {
         method: "agent.bind".to_string(),
         params,
         id: 1,
         protocol_version: None,
+        auth_token,
     };
 
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
@@ -35,12 +42,10 @@ pub async fn run(id: String, tail: Option<usize>) -> Result<()> {
                 StreamEvent::Output { stream, line, .. } => {
                     if stream == "stderr" {
                         eprintln!("{}", line.dimmed());
-                    } else {
-                        // Try to parse as stream-json, fall back to raw
-                        match stream_formatter::format_stream_json(&line) {
-                            Some(formatted) => println!("{}", formatted),
-                            None => {} // suppressed events (rate_limit, etc.)
-                        }
+                    } else if let Some(formatted) = stream_formatter::format_stream_json(&line) {
+                        // Suppress any line that the formatter declines
+                        // (rate_limit notices, internal events, etc.)
+                        println!("{}", formatted);
                     }
                 }
                 StreamEvent::StateChange { ref new_state, .. } => {

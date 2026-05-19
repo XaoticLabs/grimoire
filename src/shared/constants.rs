@@ -12,6 +12,11 @@ pub const PEER_PROTOCOL_VERSION: u32 = 1;
 /// Highest RPC protocol version this build supports.
 pub const RPC_PROTOCOL_VERSION: u32 = 1;
 
+/// Wire-format version of the worker control protocol. Bumped whenever
+/// `proto/worker.proto` ships wire-incompatible changes. Sent by the
+/// worker on `Register` and rejected by the daemon if it doesn't match.
+pub const WORKER_PROTOCOL_VERSION: u32 = 1;
+
 pub const MAX_WORKSPACE_NAME_LEN: usize = 64;
 pub const MAX_MEMORY_KEY_LEN: usize = 256;
 pub const WORKSPACE_WATCH_DEBOUNCE_MS: u64 = 200;

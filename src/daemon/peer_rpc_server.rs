@@ -27,18 +27,21 @@ pub struct PeerSvc {
     db: Arc<Database>,
     bus: EventBus,
     daemon_id: String,
-    registry: Arc<PeerRegistry>,
     inbox: Arc<InboxHandler>,
 }
 
 impl PeerSvc {
+    /// Build a `PeerSvc` by cloning the handles the service actually uses
+    /// out of the registry. The registry itself is not retained — each of
+    /// `db`, `bus`, `daemon_id`, and `inbox` already owns an independent
+    /// `Arc` to its underlying data, so dropping the registry reference
+    /// after construction doesn't affect lifetimes.
     pub fn new(registry: Arc<PeerRegistry>) -> PeerServer<Self> {
         let svc = PeerSvc {
             db: registry.db.clone(),
             bus: registry.bus.clone(),
             daemon_id: registry.daemon_id.clone(),
             inbox: registry.inbox.clone(),
-            registry,
         };
         PeerServer::new(svc)
     }

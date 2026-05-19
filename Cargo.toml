@@ -39,7 +39,7 @@ chrono = { version = "0.4", features = ["serde"] }
 anyhow = "1"
 directories = "6"
 colored = "3"
-nix = { version = "0.29", features = ["signal", "process"] }
+nix = { version = "0.29", features = ["signal", "process", "user"] }
 async-stream = "0.3"
 async-trait = "0.1"
 toml = "1.1.2"
@@ -47,6 +47,7 @@ tonic = { version = "0.12", features = ["tls", "tls-roots"] }
 prost = "0.13"
 semver = "1"
 blake3 = "1"
+subtle = "2"
 tempfile = "3"
 futures = "0.3"
 
@@ -61,3 +62,17 @@ tonic-build = "0.12"
 
 [dev-dependencies]
 tempfile = "3"
+tower = { version = "0.5", features = ["util"] }
+
+[lints.rust]
+# Treat every other rustc warning as a build error so regressions are
+# caught locally and in CI. `dead_code` is allowed for now because the
+# codebase still has ~80 cross-file test-helper items that the compiler
+# can't see uses of without a structural sweep (separate task).
+#
+# Note on the precedence dance: `-D warnings` in rustc acts as a hard
+# ceiling that won't be relaxed by a later `-W dead_code`, only by
+# `-A dead_code`. So this *has* to be `allow`, not `warn`, until the
+# cleanup ships.
+warnings = { level = "deny", priority = -1 }
+dead_code = "allow"

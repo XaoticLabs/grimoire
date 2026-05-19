@@ -93,6 +93,22 @@ pub struct DaemonConfig {
     /// arrive but `mail.send` still routes locally.
     #[serde(default)]
     pub peer_listen_addr: Option<String>,
+    /// Authentication for the local UDS RPC and HTTP dashboard. Workers
+    /// and peers carry their own per-link tokens (see `WorkerConfig.secret`
+    /// and `peer add --token`); this section only controls the CLI/HTTP
+    /// trust domain.
+    #[serde(default)]
+    pub auth: AuthConfig,
+}
+
+/// CLI/HTTP token configuration. See `src/shared/auth.rs` for resolution
+/// order (env → this field → auto-generated `~/.grimoire/auth.token`).
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct AuthConfig {
+    /// Explicit token override. Empty/absent means "fall through to the
+    /// auto-generated file."
+    #[serde(default)]
+    pub token: Option<String>,
 }
 
 impl Default for DaemonConfig {
@@ -110,6 +126,7 @@ impl Default for DaemonConfig {
             peer_handshake_timeout_secs: default_peer_handshake_timeout_secs(),
             peer_heartbeat_interval_secs: default_peer_heartbeat_interval_secs(),
             peer_listen_addr: None,
+            auth: AuthConfig::default(),
         }
     }
 }

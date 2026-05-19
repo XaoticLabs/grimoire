@@ -32,6 +32,7 @@ use anyhow::Result;
 use std::sync::Arc;
 use tracing::info;
 
+use crate::shared::auth;
 use crate::shared::config::Config;
 use crate::shared::constants;
 
@@ -177,6 +178,17 @@ pub async fn start() -> Result<()> {
         });
     }
 
+    // Resolve (and on first boot mint) the CLI/HTTP bearer token. Workers
+    // and peers carry their own per-link tokens; this one only governs the
+    // local UDS RPC and the dashboard.
+    let auth_token = Arc::new(auth::load_or_init_daemon(
+        config.daemon.auth.token.as_deref(),
+    )?);
+    info!(
+        path = %auth::token_path().display(),
+        "auth token resolved (file is canonical source for the CLI)"
+    );
+
     // Start servers (UDS + HTTP)
     server::run(
         manager,
@@ -187,6 +199,7 @@ pub async fn start() -> Result<()> {
         supervisor,
         peer_registry,
         daemon_id,
+        auth_token,
     )
     .await?;
 

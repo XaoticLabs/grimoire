@@ -25,6 +25,7 @@ fn rpc_request_serialization() {
         }),
         id: 42,
         protocol_version: None,
+        auth_token: None,
     };
 
     let json = serde_json::to_string(&req).unwrap();

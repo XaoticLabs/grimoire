@@ -81,8 +81,13 @@ impl WakeMailSender for DbWakeMailSender {
 
 /// Handle to an armed source. Dropping the handle tears down its watchers /
 /// subscriptions.
+//
+// `Cron` is boxed because `CronSource` is ~270 bytes (parsed schedule plus
+// state) while the other variants are tens of bytes; storing it inline
+// would force every armed handle in the registry's HashMap to allocate the
+// `Cron` footprint, regardless of which variant they actually are.
 pub enum ArmedHandle {
-    Cron(CronSource),
+    Cron(Box<CronSource>),
     FileWatch {
         _watcher: notify::RecommendedWatcher,
         _drain_task: tokio::task::JoinHandle<()>,
@@ -443,7 +448,7 @@ impl WakeRegistry {
                 let cfg: CronConfig = serde_json::from_str(&src.config_json)
                     .map_err(|e| anyhow!("invalid_cron_config_json: {}", e))?;
                 let cron = CronSource::new(&cfg.expr)?;
-                Ok(ArmedHandle::Cron(cron))
+                Ok(ArmedHandle::Cron(Box::new(cron)))
             }
             WakeSourceKind::FileWatch => {
                 let cfg: FileWatchConfig = serde_json::from_str(&src.config_json)

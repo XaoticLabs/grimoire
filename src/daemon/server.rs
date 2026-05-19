@@ -7,8 +7,9 @@ use std::convert::Infallible;
 use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixListener;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
+use crate::shared::auth::AuthToken;
 use crate::shared::constants;
 use crate::shared::protocol::*;
 
@@ -25,6 +26,22 @@ pub struct AppState {
     pub supervisor: Arc<super::supervisor::Supervisor>,
     pub peer_registry: Arc<super::peer_registry::PeerRegistry>,
     pub daemon_id: String,
+    pub auth_token: Arc<AuthToken>,
+}
+
+/// UID the daemon process is running as. Cached at boot; used by the UDS
+/// peer-credentials check to decide whether a connecting client is the
+/// owning user (trusted, no token required) or a different UID (must
+/// present a valid bearer token on the first RPC).
+#[cfg(unix)]
+fn daemon_uid() -> u32 {
+    // Safety: getuid is always safe; the libc wrapper returns the value.
+    nix::unistd::Uid::current().as_raw()
+}
+
+#[cfg(not(unix))]
+fn daemon_uid() -> u32 {
+    0
 }
 
 /// Start both UDS and HTTP servers
@@ -38,6 +55,7 @@ pub async fn run(
     supervisor: Arc<super::supervisor::Supervisor>,
     peer_registry: Arc<super::peer_registry::PeerRegistry>,
     daemon_id: String,
+    auth_token: Arc<AuthToken>,
 ) -> Result<()> {
     let state = AppState {
         manager: manager.clone(),
@@ -48,6 +66,7 @@ pub async fn run(
         supervisor,
         peer_registry,
         daemon_id,
+        auth_token,
     };
 
     // Start UDS listener
@@ -82,16 +101,44 @@ async fn run_uds_server(state: AppState) -> Result<()> {
     }
 
     let listener = UnixListener::bind(&socket_path)?;
-    info!(path = %socket_path.display(), "UDS server listening");
+    // Lock the socket file down to the owning user. Combined with the
+    // per-connection peercred check below this gives belt-and-braces
+    // protection: other UIDs can't open the socket *and* couldn't pass
+    // the in-band check if they did.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if let Err(e) =
+            std::fs::set_permissions(&socket_path, std::fs::Permissions::from_mode(0o600))
+        {
+            warn!(error = %e, path = %socket_path.display(), "failed to set socket permissions");
+        }
+    }
+    let owner_uid = daemon_uid();
+    info!(path = %socket_path.display(), uid = owner_uid, "UDS server listening");
 
     loop {
         let (stream, _) = listener.accept().await?;
         let state = state.clone();
 
+        // Determine whether this connection is from the owning user. If so
+        // the kernel-supplied peer credentials substitute for a bearer
+        // token; otherwise the first RPC must carry a valid `auth_token`.
+        let peercred_trusted = match stream.peer_cred() {
+            Ok(cred) => cred.uid() == owner_uid,
+            Err(e) => {
+                warn!(error = %e, "could not read SO_PEERCRED; falling back to token auth");
+                false
+            }
+        };
+
         tokio::spawn(async move {
             let (reader, mut writer) = stream.into_split();
             let reader = BufReader::new(reader);
             let mut lines = reader.lines();
+            // Per-connection auth state. Cached so the token check only
+            // runs once per connection, not per RPC.
+            let mut authed = peercred_trusted;
 
             while let Ok(Some(line)) = lines.next_line().await {
                 let req: RpcRequest = match serde_json::from_str(&line) {
@@ -102,6 +149,24 @@ async fn run_uds_server(state: AppState) -> Result<()> {
                         continue;
                     }
                 };
+
+                // Auth gate. Trusted peercred connections skip this; others
+                // must present a matching token on the first RPC. Once the
+                // token has matched, the connection is sticky-authed for
+                // the remainder of its lifetime (no re-check per RPC).
+                match check_uds_auth(authed, req.auth_token.as_deref(), &state.auth_token) {
+                    UdsAuthDecision::Pass => {
+                        authed = true;
+                    }
+                    UdsAuthDecision::Reject => {
+                        let err = RpcResponse::error(req.id, -32000, "unauthenticated".to_string());
+                        let _ = write_response(&mut writer, &err).await;
+                        // Close the connection on failed auth — repeated
+                        // attempts on the same socket would just be a
+                        // (very slow) brute-force vector.
+                        return;
+                    }
+                }
 
                 // Special case: bind streams events
                 if req.method == "agent.bind" {
@@ -183,6 +248,29 @@ async fn run_uds_server(state: AppState) -> Result<()> {
     }
 }
 
+/// Outcome of evaluating a single RPC's auth state. Extracted into a pure
+/// function for unit-testability; the caller is responsible for caching
+/// `Pass` results across subsequent RPCs on the same connection.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum UdsAuthDecision {
+    Pass,
+    Reject,
+}
+
+pub(crate) fn check_uds_auth(
+    already_authed: bool,
+    presented: Option<&str>,
+    daemon_token: &AuthToken,
+) -> UdsAuthDecision {
+    if already_authed {
+        return UdsAuthDecision::Pass;
+    }
+    match presented {
+        Some(tok) if daemon_token.verify(tok) => UdsAuthDecision::Pass,
+        _ => UdsAuthDecision::Reject,
+    }
+}
+
 async fn write_response(
     writer: &mut tokio::net::unix::OwnedWriteHalf,
     response: &RpcResponse,
@@ -195,9 +283,30 @@ async fn write_response(
 }
 
 // --- HTTP Server ---
+//
+// Auth model:
+//
+// * `/api/*` and the dashboard HTML at `/` require a valid bearer token.
+//   The middleware accepts either:
+//     - `Authorization: Bearer <token>` header (for programmatic clients
+//       and the SPA's `fetch` calls that read the token from localStorage),
+//     - a `grim_auth=<token>` cookie set by the login flow.
+// * `/auth/login` is the only unauthenticated route. It takes a token via
+//   `?t=<token>` query (used by `grim dashboard --open`) or form POST,
+//   sets an HttpOnly cookie, and redirects to `/`.
+// * `/auth/logout` clears the cookie.
+//
+// No loopback exception: a daemon listening on 127.0.0.1 still requires
+// auth, which closes the "any process on this machine can drive my
+// agents" gap.
+
+const AUTH_COOKIE_NAME: &str = "grim_auth";
 
 async fn run_http_server(state: AppState) -> Result<()> {
-    let app = Router::new()
+    // Protected routes — everything that touches state, plus the dashboard
+    // HTML itself (the SPA leaks no useful surface unauthenticated, but
+    // shielding `/` means a stray browser tab can't even render the chrome).
+    let protected = Router::new()
         .route("/api/agents", get(http_list_agents))
         .route("/api/agents", post(http_summon_agent))
         .route("/api/agents/{id}", get(http_get_agent))
@@ -212,6 +321,20 @@ async fn run_http_server(state: AppState) -> Result<()> {
         .route("/api/scrolls/{id}/activate", post(http_activate_scroll))
         .route("/api/scrolls/{id}/abandon", post(http_abandon_scroll))
         .route("/", get(http_dashboard))
+        .route_layer(axum::middleware::from_fn_with_state(
+            state.auth_token.clone(),
+            http_auth_middleware,
+        ));
+
+    // Unauthenticated routes — the login endpoints accept the token
+    // explicitly and set the cookie on success.
+    let public = Router::new()
+        .route("/auth/login", get(http_login_get).post(http_login_post))
+        .route("/auth/logout", post(http_logout));
+
+    let app = Router::new()
+        .merge(protected)
+        .merge(public)
         .with_state(state);
 
     let port = constants::DAEMON_PORT;
@@ -436,4 +559,422 @@ async fn http_abandon_scroll(
 
 async fn http_dashboard() -> axum::response::Html<String> {
     axum::response::Html(include_str!("../dashboard/templates/index.html").to_string())
+}
+
+// --- HTTP auth middleware + login flow ---
+
+/// Extract the auth token from the request. Order of precedence matches the
+/// CLI: `Authorization: Bearer …` header, then `grim_auth` cookie.
+fn extract_request_token(headers: &axum::http::HeaderMap) -> Option<String> {
+    if let Some(h) = headers.get(axum::http::header::AUTHORIZATION)
+        && let Ok(s) = h.to_str()
+        && let Some(rest) = s.strip_prefix("Bearer ")
+    {
+        return Some(rest.trim().to_string());
+    }
+    if let Some(cookie) = headers.get(axum::http::header::COOKIE)
+        && let Ok(s) = cookie.to_str()
+    {
+        for part in s.split(';') {
+            let kv = part.trim();
+            if let Some(v) = kv.strip_prefix(&format!("{}=", AUTH_COOKIE_NAME)) {
+                return Some(v.to_string());
+            }
+        }
+    }
+    None
+}
+
+async fn http_auth_middleware(
+    State(token): State<Arc<AuthToken>>,
+    req: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    let presented = extract_request_token(req.headers());
+    match presented {
+        Some(tok) if token.verify(&tok) => next.run(req).await,
+        _ => unauthorized_response(req.uri().path()),
+    }
+}
+
+/// Test-only helper: build a tiny router that wraps a single protected
+/// route with the same auth middleware shape `/api/*` uses in production.
+/// Exposed via `#[cfg(any(test, feature = "test-helpers"))]` so the HTTP
+/// auth integration tests can hit the middleware without dragging in the
+/// rest of `AppState`.
+#[cfg(test)]
+pub(crate) fn test_auth_router(token: Arc<AuthToken>) -> Router {
+    let protected = Router::new()
+        .route(
+            "/api/ping",
+            get(|| async { axum::Json(serde_json::json!({"pong": true})) }),
+        )
+        .route_layer(axum::middleware::from_fn_with_state(
+            token,
+            http_auth_middleware,
+        ));
+    let public = Router::new().route("/auth/ping-open", get(|| async { "open" }));
+    Router::new().merge(protected).merge(public)
+}
+
+/// 401 with a small JSON body for `/api/*` and an HTML pointer to
+/// `/auth/login` for everything else. Either way the body is constant —
+/// the auth check is constant-time on its hot path.
+fn unauthorized_response(path: &str) -> axum::response::Response {
+    use axum::http::StatusCode;
+    if path.starts_with("/api/") {
+        (
+            StatusCode::UNAUTHORIZED,
+            [(axum::http::header::CONTENT_TYPE, "application/json")],
+            r#"{"error":"unauthenticated"}"#,
+        )
+            .into_response()
+    } else {
+        (
+            StatusCode::UNAUTHORIZED,
+            [(axum::http::header::CONTENT_TYPE, "text/html; charset=utf-8")],
+            LOGIN_PAGE_HTML,
+        )
+            .into_response()
+    }
+}
+
+// Trait import scoped to the auth section so the rest of the file isn't
+// affected by the `IntoResponse` glob.
+use axum::response::IntoResponse;
+
+/// `GET /auth/login` — also accepts `?t=<token>` so `grim dashboard --open`
+/// can produce a single-shot URL the user clicks once. If `?t=` validates,
+/// we set the cookie and redirect to `/`; otherwise we render the login
+/// form and let the user paste the token by hand.
+async fn http_login_get(
+    State(state): State<AppState>,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> axum::response::Response {
+    if let Some(tok) = q.get("t")
+        && state.auth_token.verify(tok)
+    {
+        return login_success_response(tok);
+    }
+    (
+        axum::http::StatusCode::OK,
+        [(axum::http::header::CONTENT_TYPE, "text/html; charset=utf-8")],
+        LOGIN_PAGE_HTML,
+    )
+        .into_response()
+}
+
+/// `POST /auth/login` — form-encoded `token=…` from the login page.
+async fn http_login_post(
+    State(state): State<AppState>,
+    axum::Form(form): axum::Form<LoginForm>,
+) -> axum::response::Response {
+    if state.auth_token.verify(&form.token) {
+        login_success_response(&form.token)
+    } else {
+        (
+            axum::http::StatusCode::UNAUTHORIZED,
+            [(axum::http::header::CONTENT_TYPE, "text/html; charset=utf-8")],
+            LOGIN_PAGE_HTML,
+        )
+            .into_response()
+    }
+}
+
+async fn http_logout() -> axum::response::Response {
+    (
+        axum::http::StatusCode::OK,
+        [
+            (
+                axum::http::header::SET_COOKIE,
+                format!(
+                    "{}=; Max-Age=0; Path=/; HttpOnly; SameSite=Strict",
+                    AUTH_COOKIE_NAME
+                ),
+            ),
+            (axum::http::header::CONTENT_TYPE, "text/plain".to_string()),
+        ],
+        "logged out",
+    )
+        .into_response()
+}
+
+#[derive(serde::Deserialize)]
+struct LoginForm {
+    token: String,
+}
+
+fn login_success_response(token: &str) -> axum::response::Response {
+    // HttpOnly + SameSite=Strict: no JS access, no cross-site CSRF.
+    // No `Secure` flag because the daemon listens on plain HTTP loopback;
+    // when TLS lands (Part 6 Track A §3 follow-on), add it conditionally.
+    let cookie = format!(
+        "{}={}; Path=/; HttpOnly; SameSite=Strict; Max-Age=86400",
+        AUTH_COOKIE_NAME, token
+    );
+    (
+        axum::http::StatusCode::SEE_OTHER,
+        [
+            (axum::http::header::SET_COOKIE, cookie),
+            (axum::http::header::LOCATION, "/".to_string()),
+        ],
+        "",
+    )
+        .into_response()
+}
+
+const LOGIN_PAGE_HTML: &str = r#"<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>grimoire — sign in</title>
+<style>
+  body { font-family: -apple-system, system-ui, sans-serif; background: #0e0e10;
+         color: #d8d8d8; display: flex; min-height: 100vh; align-items: center;
+         justify-content: center; margin: 0; }
+  form { background: #1a1a1d; padding: 2rem; border-radius: 0.5rem;
+         border: 1px solid #2a2a2e; min-width: 320px; }
+  h1 { font-size: 1rem; font-weight: 500; letter-spacing: 0.05em;
+       text-transform: uppercase; margin: 0 0 1rem; color: #888; }
+  input { width: 100%; padding: 0.6rem; box-sizing: border-box;
+          background: #0e0e10; border: 1px solid #2a2a2e; color: #d8d8d8;
+          font-family: ui-monospace, monospace; font-size: 0.9rem;
+          border-radius: 0.25rem; }
+  button { margin-top: 0.75rem; width: 100%; padding: 0.6rem;
+           background: #6b46c1; color: white; border: 0; border-radius: 0.25rem;
+           cursor: pointer; font-weight: 500; }
+  button:hover { background: #7c54d6; }
+  p { color: #666; font-size: 0.8rem; margin: 0.75rem 0 0; }
+  code { background: #0e0e10; padding: 0.1rem 0.35rem; border-radius: 0.2rem;
+         font-size: 0.8rem; }
+</style>
+</head>
+<body>
+<form method="post" action="/auth/login">
+  <h1>◆ grimoire</h1>
+  <input type="password" name="token" placeholder="auth token" autofocus autocomplete="off">
+  <button type="submit">sign in</button>
+  <p>token lives in <code>~/.grimoire/auth.token</code></p>
+</form>
+</body>
+</html>"#;
+
+#[cfg(test)]
+mod auth_tests {
+    use super::*;
+
+    fn tok(s: &str) -> AuthToken {
+        AuthToken::new(s)
+    }
+
+    // --- UDS auth decision matrix ---
+
+    #[test]
+    fn peercred_trusted_bypasses_token() {
+        // already_authed=true models a peercred-trusted connection on its
+        // first RPC. The decision must pass regardless of what the client
+        // sent (including nothing).
+        assert_eq!(
+            check_uds_auth(true, None, &tok("secret")),
+            UdsAuthDecision::Pass
+        );
+        assert_eq!(
+            check_uds_auth(true, Some("wrong"), &tok("secret")),
+            UdsAuthDecision::Pass
+        );
+    }
+
+    #[test]
+    fn untrusted_with_matching_token_passes() {
+        assert_eq!(
+            check_uds_auth(false, Some("secret"), &tok("secret")),
+            UdsAuthDecision::Pass
+        );
+    }
+
+    #[test]
+    fn untrusted_with_wrong_token_rejects() {
+        assert_eq!(
+            check_uds_auth(false, Some("nope"), &tok("secret")),
+            UdsAuthDecision::Reject
+        );
+    }
+
+    #[test]
+    fn untrusted_with_missing_token_rejects() {
+        assert_eq!(
+            check_uds_auth(false, None, &tok("secret")),
+            UdsAuthDecision::Reject
+        );
+    }
+
+    #[test]
+    fn untrusted_with_empty_token_rejects() {
+        assert_eq!(
+            check_uds_auth(false, Some(""), &tok("secret")),
+            UdsAuthDecision::Reject
+        );
+    }
+
+    // --- HTTP header / cookie extraction ---
+
+    fn headers_bearer(t: &str) -> axum::http::HeaderMap {
+        let mut h = axum::http::HeaderMap::new();
+        h.insert(
+            axum::http::header::AUTHORIZATION,
+            format!("Bearer {}", t).parse().unwrap(),
+        );
+        h
+    }
+
+    fn headers_cookie(raw: &str) -> axum::http::HeaderMap {
+        let mut h = axum::http::HeaderMap::new();
+        h.insert(axum::http::header::COOKIE, raw.parse().unwrap());
+        h
+    }
+
+    #[test]
+    fn extract_bearer_header() {
+        let h = headers_bearer("xyz");
+        assert_eq!(extract_request_token(&h).as_deref(), Some("xyz"));
+    }
+
+    #[test]
+    fn extract_bearer_ignores_other_schemes() {
+        let mut h = axum::http::HeaderMap::new();
+        h.insert(
+            axum::http::header::AUTHORIZATION,
+            "Basic dXNlcjpwYXNz".parse().unwrap(),
+        );
+        assert_eq!(extract_request_token(&h), None);
+    }
+
+    #[test]
+    fn extract_cookie_alone() {
+        let h = headers_cookie(&format!("{}=tok1", AUTH_COOKIE_NAME));
+        assert_eq!(extract_request_token(&h).as_deref(), Some("tok1"));
+    }
+
+    #[test]
+    fn extract_cookie_among_others() {
+        let h = headers_cookie(&format!(
+            "other=foo; {}=tok2; trailing=bar",
+            AUTH_COOKIE_NAME
+        ));
+        assert_eq!(extract_request_token(&h).as_deref(), Some("tok2"));
+    }
+
+    #[test]
+    fn extract_bearer_beats_cookie() {
+        let mut h = headers_bearer("from-header");
+        h.insert(
+            axum::http::header::COOKIE,
+            format!("{}=from-cookie", AUTH_COOKIE_NAME).parse().unwrap(),
+        );
+        assert_eq!(extract_request_token(&h).as_deref(), Some("from-header"));
+    }
+
+    #[test]
+    fn extract_no_credentials() {
+        let h = axum::http::HeaderMap::new();
+        assert_eq!(extract_request_token(&h), None);
+    }
+
+    // --- HTTP middleware end-to-end (against test_auth_router) ---
+
+    use axum::body::Body;
+    use axum::http::{Request, StatusCode};
+    use tower::ServiceExt;
+
+    fn router_with(token: &str) -> axum::Router {
+        test_auth_router(Arc::new(AuthToken::new(token)))
+    }
+
+    async fn status_of(router: axum::Router, req: Request<Body>) -> StatusCode {
+        router.oneshot(req).await.unwrap().status()
+    }
+
+    #[tokio::test]
+    async fn protected_route_rejects_missing_credentials() {
+        let req = Request::builder()
+            .uri("/api/ping")
+            .body(Body::empty())
+            .unwrap();
+        assert_eq!(
+            status_of(router_with("secret"), req).await,
+            StatusCode::UNAUTHORIZED
+        );
+    }
+
+    #[tokio::test]
+    async fn protected_route_rejects_wrong_bearer() {
+        let req = Request::builder()
+            .uri("/api/ping")
+            .header("authorization", "Bearer nope")
+            .body(Body::empty())
+            .unwrap();
+        assert_eq!(
+            status_of(router_with("secret"), req).await,
+            StatusCode::UNAUTHORIZED
+        );
+    }
+
+    #[tokio::test]
+    async fn protected_route_accepts_correct_bearer() {
+        let req = Request::builder()
+            .uri("/api/ping")
+            .header("authorization", "Bearer secret")
+            .body(Body::empty())
+            .unwrap();
+        assert_eq!(status_of(router_with("secret"), req).await, StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn protected_route_accepts_cookie() {
+        let req = Request::builder()
+            .uri("/api/ping")
+            .header("cookie", format!("{}=secret", AUTH_COOKIE_NAME))
+            .body(Body::empty())
+            .unwrap();
+        assert_eq!(status_of(router_with("secret"), req).await, StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn protected_route_rejects_cookie_with_wrong_value() {
+        let req = Request::builder()
+            .uri("/api/ping")
+            .header("cookie", format!("{}=wrong", AUTH_COOKIE_NAME))
+            .body(Body::empty())
+            .unwrap();
+        assert_eq!(
+            status_of(router_with("secret"), req).await,
+            StatusCode::UNAUTHORIZED
+        );
+    }
+
+    #[tokio::test]
+    async fn public_route_does_not_require_auth() {
+        let req = Request::builder()
+            .uri("/auth/ping-open")
+            .body(Body::empty())
+            .unwrap();
+        assert_eq!(status_of(router_with("secret"), req).await, StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn api_path_unauthorized_responds_with_json_body() {
+        let req = Request::builder()
+            .uri("/api/ping")
+            .body(Body::empty())
+            .unwrap();
+        let resp = router_with("secret").oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+        let ct = resp
+            .headers()
+            .get("content-type")
+            .unwrap()
+            .to_str()
+            .unwrap();
+        assert!(ct.starts_with("application/json"), "got {}", ct);
+    }
 }

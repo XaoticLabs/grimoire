@@ -251,7 +251,7 @@ With items 1–8 of Part 5 shipped, the next axis of work is **trust & operabili
 
 The unfinished items from Part 1's "Hardening milestone." None of these are research; they are the table-stakes that everything below assumes.
 
-1. **Auth + protocol versioning on UDS/HTTP/peer RPC** — `protocol.rs` still has no `version` field, the UDS is unauthenticated, and the federation `Hello` exchange has no token. Pick one token model (bearer on header / connection preamble) and apply it uniformly across the three transports. *This also unblocks the v2 webhook wake source (Part 3 §5) and "system" stream for human-originated mail (Part 3 §4).*
+1. ~~**Auth + protocol versioning on UDS/HTTP/peer RPC**~~ ✅ *Shipped.* The CLI/HTTP trust domain now uses `SO_PEERCRED` for owning-UID UDS connections and a bearer token (auto-generated at `~/.grimoire/auth.token`, mode `0600`; overridable via `GRIMOIRE_AUTH_TOKEN` or `[daemon.auth] token = …`) for everything else. HTTP `/api/*` requires `Authorization: Bearer` or a `grim_auth` cookie set by `/auth/login`; `grim scry` mints a one-shot login URL. Workers and peers carry their own per-link bearer tokens (unchanged). Protocol-version enforcement now lives in all four handshakes (UDS RPC, peer `Hello`, worker `Register`) — wire-incompatible bumps reject with `unsupported_protocol_version`. *Unblocks the v2 webhook wake source (Part 3 §5) and "system" stream for human-originated mail (Part 3 §4); follow-ons: token rotation, multi-token roles, TLS for HTTP and peer/worker channels (Part 6 v2).*
 2. **Observability baseline** — Prometheus `/metrics` (queue depth, dispatch latency, restart counts, peer outbox lag, mail backlog) and OTel span export tied to scroll/agent IDs. Cheap given `tracing` is already wired.
 3. **Sandboxing** — cwd jail + `rlimit`/cgroups per agent process, plus a per-agent env allowlist. Today a summoned agent inherits the daemon's full env and FS.
 
@@ -265,13 +265,12 @@ The Part 3 items that don't yet have a v1:
 
 ### Recommended next pickup
 
-**Track A §1 (auth + protocol versioning) first.** Reasons:
+With **Track A §1 done**, two candidates are roughly tied for next:
 
-- It's the smallest item that unlocks the most downstream work — webhook wake sources, dashboard auth, the "system" mail stream, and federation mTLS all currently say "gated on auth-token hardening."
-- Without it, every demo from Part 4 (standing review team, laptop grid, federation) has a "...and don't run this on a shared machine" asterisk.
-- It's a one- to two-day spec; everything else in this section is a multi-day spec.
+- **Track A §2 (observability baseline).** Cheap given `tracing` is already wired, and once metrics + OTel are flowing every other piece of work below gets easier to validate. Most "is this thing actually doing what I think" questions during the next features (budget, replay, sandboxing) want metrics first.
+- **Track B §4 (policy & budget).** The scheduler already owns admission, so this is mostly schema + a check function. Largest "enterprise sell" lever and the natural next step now that the trust layer no longer leaks.
 
-After that, **Track B §4 (policy & budget)** is the highest-leverage feature pickup, because the scheduler already owns the admission decision — adding budget/policy is mostly schema + a check function, not new architecture.
+Pick observability first if the next thing you want is *confidence* in what's running; pick policy/budget first if the next thing you want is a *new visible feature*.
 
 ### v2 backlog (deferred, not forgotten)
 

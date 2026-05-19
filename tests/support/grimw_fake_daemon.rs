@@ -137,15 +137,15 @@ version = "{version}"
             {
                 let received = self.received.lock().await;
                 for (i, m) in received.iter().enumerate().skip(last_seen_idx) {
-                    let matches = match (&m.kind, kind) {
-                        (Some(worker_message::Kind::Register(_)), "register") => true,
-                        (Some(worker_message::Kind::Heartbeat(_)), "heartbeat") => true,
-                        (Some(worker_message::Kind::TaskAccepted(_)), "task_accepted") => true,
-                        (Some(worker_message::Kind::TaskRejected(_)), "task_rejected") => true,
-                        (Some(worker_message::Kind::TaskEvent(_)), "task_event") => true,
-                        (Some(worker_message::Kind::TaskFinished(_)), "task_finished") => true,
-                        _ => false,
-                    };
+                    let matches = matches!(
+                        (&m.kind, kind),
+                        (Some(worker_message::Kind::Register(_)), "register")
+                            | (Some(worker_message::Kind::Heartbeat(_)), "heartbeat")
+                            | (Some(worker_message::Kind::TaskAccepted(_)), "task_accepted")
+                            | (Some(worker_message::Kind::TaskRejected(_)), "task_rejected")
+                            | (Some(worker_message::Kind::TaskEvent(_)), "task_event")
+                            | (Some(worker_message::Kind::TaskFinished(_)), "task_finished")
+                    );
                     if matches {
                         return m.clone();
                     }

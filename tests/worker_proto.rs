@@ -27,6 +27,7 @@ fn worker_proto_register_message_roundtrip() {
             version: "1.2.3".to_string(),
         }],
         tags: vec!["beefy".to_string()],
+        protocol_version: grimoire::shared::constants::WORKER_PROTOCOL_VERSION,
     };
 
     let mut buf = Vec::new();

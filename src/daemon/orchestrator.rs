@@ -28,10 +28,8 @@ impl Orchestrator {
                         ref agent_id,
                         ref new_state,
                         ..
-                    }) => {
-                        if *new_state == crate::shared::types::AgentState::Complete {
-                            self.handle_completion(agent_id).await;
-                        }
+                    }) if *new_state == crate::shared::types::AgentState::Complete => {
+                        self.handle_completion(agent_id).await;
                     }
                     Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
                         tracing::warn!(skipped = n, "Orchestrator lagged, some events missed");

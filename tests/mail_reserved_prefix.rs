@@ -80,6 +80,7 @@ async fn mail_send_rejects_supervisor_prefix() {
         }),
         id: 1,
         protocol_version: None,
+        auth_token: None,
     };
     let resp = grimoire::daemon::rpc::handle_rpc_test(
         &manager,
@@ -112,6 +113,7 @@ async fn mail_send_rejects_wake_prefix() {
         }),
         id: 1,
         protocol_version: None,
+        auth_token: None,
     };
     let resp = grimoire::daemon::rpc::handle_rpc_test(
         &manager,
@@ -141,6 +143,7 @@ async fn mail_send_accepts_agent_prefix() {
         }),
         id: 1,
         protocol_version: None,
+        auth_token: None,
     };
     let resp = grimoire::daemon::rpc::handle_rpc_test(
         &manager,

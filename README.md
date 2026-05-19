@@ -328,7 +328,17 @@ grim tome agent.default_model sonnet
 grim tome agent.claude_binary /usr/local/bin/claude
 ```
 
-Available keys: `daemon.port`, `daemon.log_level`, `agent.default_model`, `agent.default_cwd`, `agent.claude_binary`, `agent.default_provider`, plus `[worker]` and `[providers.*]` blocks.
+Available keys: `daemon.port`, `daemon.log_level`, `agent.default_model`, `agent.default_cwd`, `agent.claude_binary`, `agent.default_provider`, plus `[worker]`, `[daemon.auth]`, and `[providers.*]` blocks.
+
+## Auth
+
+Grimoire has three independent trust domains; each ships with auth on by default.
+
+- **CLI ↔ daemon (UDS)** — connections from the daemon's own UID are trusted via `SO_PEERCRED` (no token needed). Cross-UID connections must present the daemon's bearer token on the first RPC. The token is auto-generated on first boot at `~/.grimoire/auth.token` (mode `0600`) and read by both `grim` and the dashboard. Resolution order: `GRIMOIRE_AUTH_TOKEN` env → `[daemon.auth] token = "…"` in `config.toml` → the file.
+- **Dashboard (HTTP)** — `/api/*` requires `Authorization: Bearer <token>` or a `grim_auth` cookie set by `/auth/login`. `grim scry` mints a one-shot login URL (`/auth/login?t=<token>`) and opens the browser; the browser stores the cookie and you're in. Loopback bind (`127.0.0.1`) is enforced — there is no "loopback bypass" of auth.
+- **Federation peers (gRPC)** and **worker pool (gRPC)** carry their own per-link tokens (`peer add --token …` and `[worker] secret = …` respectively). These are orthogonal to the CLI/HTTP token.
+
+All three transports also negotiate a protocol version on the first message and reject mismatches with `unsupported_protocol_version` — this is what lets future wire-incompatible changes ship cleanly instead of silently misbehaving.
 
 ## Architecture
 
@@ -371,4 +381,4 @@ All state lives in `~/.grimoire/`:
 
 ## Status
 
-The user-facing feature surface (summon, scrolls, pacts, mail, wake triggers, workspaces, memory, supervision, workers, federation) is complete. What's still open is the **trust layer** under it — auth on the local sockets, observability (Prometheus + OTel), sandboxing (cwd jail + cgroups), policy/budget primitives, and replay/eval. See [`ROADMAP.md`](./ROADMAP.md) Part 6 for the next-pickup ordering.
+The user-facing feature surface (summon, scrolls, pacts, mail, wake triggers, workspaces, memory, supervision, workers, federation) is complete. The first piece of the **trust layer** has shipped — auth + protocol versioning on UDS, HTTP, peers, and workers (see [Auth](#auth) above). Still open: observability (Prometheus + OTel), sandboxing (cwd jail + cgroups), policy/budget primitives, and replay/eval. See [`ROADMAP.md`](./ROADMAP.md) Part 6 for the next-pickup ordering.

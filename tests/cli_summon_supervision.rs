@@ -40,6 +40,7 @@ async fn summon(params: serde_json::Value) -> grimoire::shared::protocol::RpcRes
         params,
         id: 1,
         protocol_version: None,
+        auth_token: None,
     };
     grimoire::daemon::rpc::handle_rpc_test(&m, &db, &sk, &wr, &wsr, &bus, req).await
 }
@@ -58,6 +59,7 @@ async fn summon_on_failure_persists_full_config() {
         }),
         id: 1,
         protocol_version: None,
+        auth_token: None,
     };
     let resp = grimoire::daemon::rpc::handle_rpc_test(&m, &db, &sk, &wr, &wsr, &bus, req).await;
     assert!(resp.error.is_none(), "{:?}", resp);
@@ -77,6 +79,7 @@ async fn summon_never_persists_defaults() {
         params: json!({"task": "t"}),
         id: 1,
         protocol_version: None,
+        auth_token: None,
     };
     let resp = grimoire::daemon::rpc::handle_rpc_test(&m, &db, &sk, &wr, &wsr, &bus, req).await;
     let r: SummonResult = serde_json::from_value(resp.result.unwrap()).unwrap();

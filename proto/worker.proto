@@ -32,6 +32,10 @@ message Register {
   uint32 max_concurrent = 4;
   repeated ProviderCap providers = 5;
   repeated string tags = 6;
+  // Wire-format version of the worker control protocol. Bumped on
+  // wire-incompatible changes to this file. Defaults to 0 for older
+  // workers, which the daemon rejects.
+  uint32 protocol_version = 7;
 }
 
 message ProviderCap {

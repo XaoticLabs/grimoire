@@ -36,6 +36,7 @@ async fn register_with_bad_token_returns_unauthenticated() {
             max_concurrent: 1,
             providers: vec![],
             tags: vec![],
+            protocol_version: grimoire::shared::constants::WORKER_PROTOCOL_VERSION,
         })),
     })
     .await
@@ -66,6 +67,7 @@ async fn register_with_old_version_returns_failed_precondition() {
                 version: "1.0.0".into(),
             }],
             tags: vec![],
+            protocol_version: grimoire::shared::constants::WORKER_PROTOCOL_VERSION,
         })),
     })
     .await
@@ -74,6 +76,74 @@ async fn register_with_old_version_returns_failed_precondition() {
     let resp = client.channel(outbound).await;
     let err = resp.expect_err("server must reject");
     assert_eq!(err.code(), Code::FailedPrecondition);
+}
+
+#[tokio::test]
+async fn register_with_wrong_protocol_version_returns_failed_precondition() {
+    let registry = Arc::new(WorkerRegistry::new(Duration::from_secs(30)));
+    let handle = spawn_test_server(registry.clone(), "secret").await;
+    let mut client = connect(&handle).await;
+
+    let (tx, rx) = tokio::sync::mpsc::channel::<WorkerMessage>(8);
+    let outbound = tokio_stream::wrappers::ReceiverStream::new(rx);
+    // Send protocol_version=0 (what an old worker would default to with
+    // proto3). The daemon's check sits in front of bearer/version, so the
+    // expected error is FailedPrecondition with `unsupported_protocol_version`.
+    tx.send(WorkerMessage {
+        kind: Some(worker_message::Kind::Register(Register {
+            worker_id: "w-pv".into(),
+            bearer_token: "secret".into(),
+            worker_version: "1.0.0".into(),
+            max_concurrent: 1,
+            providers: vec![],
+            tags: vec![],
+            protocol_version: 0,
+        })),
+    })
+    .await
+    .unwrap();
+
+    let resp = client.channel(outbound).await;
+    let err = resp.expect_err("server must reject wrong protocol_version");
+    assert_eq!(err.code(), Code::FailedPrecondition);
+    assert!(
+        err.message().contains("unsupported_protocol_version"),
+        "expected protocol-version error, got: {}",
+        err.message()
+    );
+    assert_eq!(registry.count(), 0);
+}
+
+#[tokio::test]
+async fn register_protocol_version_check_runs_before_bearer() {
+    // With both wrong version and wrong bearer, the version error wins
+    // because it sits earlier in the gate chain. That ordering matters:
+    // a worker built against an older proto shouldn't see a misleading
+    // "invalid bearer token" message.
+    let registry = Arc::new(WorkerRegistry::new(Duration::from_secs(30)));
+    let handle = spawn_test_server(registry.clone(), "right-secret").await;
+    let mut client = connect(&handle).await;
+
+    let (tx, rx) = tokio::sync::mpsc::channel::<WorkerMessage>(8);
+    let outbound = tokio_stream::wrappers::ReceiverStream::new(rx);
+    tx.send(WorkerMessage {
+        kind: Some(worker_message::Kind::Register(Register {
+            worker_id: "w-pv2".into(),
+            bearer_token: "wrong-secret".into(),
+            worker_version: "1.0.0".into(),
+            max_concurrent: 1,
+            providers: vec![],
+            tags: vec![],
+            protocol_version: 99,
+        })),
+    })
+    .await
+    .unwrap();
+
+    let resp = client.channel(outbound).await;
+    let err = resp.expect_err("server must reject");
+    assert_eq!(err.code(), Code::FailedPrecondition);
+    assert!(err.message().contains("unsupported_protocol_version"));
 }
 
 #[tokio::test]
@@ -92,6 +162,7 @@ async fn worker_disconnect_evicts_immediately() {
             max_concurrent: 1,
             providers: vec![],
             tags: vec![],
+            protocol_version: grimoire::shared::constants::WORKER_PROTOCOL_VERSION,
         })),
     })
     .await
