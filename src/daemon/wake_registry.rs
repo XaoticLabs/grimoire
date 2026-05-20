@@ -53,7 +53,7 @@ impl WakeMailSender for DbWakeMailSender {
         let mail = Mail {
             id: mail_id.clone(),
             recipient_id: agent_id.to_string(),
-            sender_id: Some(format!("wake://{}", wake_id)),
+            sender_id: Some(format!("wake://{wake_id}")),
             topic: None,
             body: body.to_string(),
             in_reply_to: None,
@@ -69,7 +69,7 @@ impl WakeMailSender for DbWakeMailSender {
         self.bus.publish(StreamEvent::MailReceived {
             mail_id: mail_id.clone(),
             recipient_id: agent_id.to_string(),
-            sender_id: Some(format!("wake://{}", wake_id)),
+            sender_id: Some(format!("wake://{wake_id}")),
             topic: None,
             body_preview: body.chars().take(200).collect(),
             wake_eligible: true,
@@ -200,9 +200,8 @@ impl WakeRegistry {
                     continue;
                 }
             };
-            let cron = match CronSource::new(&cfg.expr) {
-                Ok(c) => c,
-                Err(_) => continue,
+            let Ok(cron) = CronSource::new(&cfg.expr) else {
+                continue;
             };
             let last = src
                 .last_fired_at
@@ -273,9 +272,8 @@ impl WakeRegistry {
 
     /// Remove (retire) a single source. User-initiated.
     pub async fn remove(self: &Arc<Self>, wake_id: &str) -> Result<bool> {
-        let src = match self.db.get_wake_source(wake_id)? {
-            Some(s) => s,
-            None => return Ok(false),
+        let Some(src) = self.db.get_wake_source(wake_id)? else {
+            return Ok(false);
         };
         self.db.delete_wake_source(wake_id)?;
         self.handles.lock().await.remove(wake_id);
@@ -371,7 +369,7 @@ impl WakeRegistry {
             wake_id: wake_id.to_string(),
             agent_id: agent_id.to_string(),
             mail_id: mail_id.clone(),
-            via: via.map(|s| s.to_string()),
+            via: via.map(std::string::ToString::to_string),
         });
         Ok(mail_id)
     }
@@ -446,13 +444,13 @@ impl WakeRegistry {
         match src.kind {
             WakeSourceKind::Cron => {
                 let cfg: CronConfig = serde_json::from_str(&src.config_json)
-                    .map_err(|e| anyhow!("invalid_cron_config_json: {}", e))?;
+                    .map_err(|e| anyhow!("invalid_cron_config_json: {e}"))?;
                 let cron = CronSource::new(&cfg.expr)?;
                 Ok(ArmedHandle::Cron(Box::new(cron)))
             }
             WakeSourceKind::FileWatch => {
                 let cfg: FileWatchConfig = serde_json::from_str(&src.config_json)
-                    .map_err(|e| anyhow!("invalid_file_watch_config_json: {}", e))?;
+                    .map_err(|e| anyhow!("invalid_file_watch_config_json: {e}"))?;
                 let source = Arc::new(FileWatchSource::new(cfg)?);
                 let (notify_tx, mut notify_rx) = tokio::sync::mpsc::channel::<
                     crate::daemon::wake_sources::file_watch::MatchedChange,
@@ -503,7 +501,7 @@ impl WakeRegistry {
             }
             WakeSourceKind::ParentCompletion => {
                 let cfg: ParentCompletionConfig = serde_json::from_str(&src.config_json)
-                    .map_err(|e| anyhow!("invalid_parent_completion_config_json: {}", e))?;
+                    .map_err(|e| anyhow!("invalid_parent_completion_config_json: {e}"))?;
                 let source = ParentCompletionSource::new(cfg)?;
                 let mut rx = self.bus.subscribe();
                 let fire_tx = self.fire_tx.clone();
@@ -538,18 +536,18 @@ fn validate_config(kind: WakeSourceKind, config_json: &str) -> Result<()> {
     match kind {
         WakeSourceKind::Cron => {
             let cfg: CronConfig = serde_json::from_str(config_json)
-                .map_err(|e| anyhow!("invalid_cron_config_json: {}", e))?;
+                .map_err(|e| anyhow!("invalid_cron_config_json: {e}"))?;
             CronSource::new(&cfg.expr)?;
         }
         WakeSourceKind::FileWatch => {
             let cfg: FileWatchConfig = serde_json::from_str(config_json)
-                .map_err(|e| anyhow!("invalid_file_watch_config_json: {}", e))?;
+                .map_err(|e| anyhow!("invalid_file_watch_config_json: {e}"))?;
             // Validate root + globs eagerly.
             FileWatchSource::new(cfg)?;
         }
         WakeSourceKind::ParentCompletion => {
             let _cfg: ParentCompletionConfig = serde_json::from_str(config_json)
-                .map_err(|e| anyhow!("invalid_parent_completion_config_json: {}", e))?;
+                .map_err(|e| anyhow!("invalid_parent_completion_config_json: {e}"))?;
         }
     }
     Ok(())

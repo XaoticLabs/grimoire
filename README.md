@@ -340,6 +340,65 @@ Grimoire has three independent trust domains; each ships with auth on by default
 
 All three transports also negotiate a protocol version on the first message and reject mismatches with `unsupported_protocol_version` — this is what lets future wire-incompatible changes ship cleanly instead of silently misbehaving.
 
+### Token recovery
+
+The token at `~/.grimoire/auth.token` is the canonical source. If it's lost or you want to rotate:
+
+```bash
+# Stop the daemon, delete the token, restart — a fresh token is minted on boot.
+pkill -f "grim daemon"
+rm ~/.grimoire/auth.token
+grim daemon
+```
+
+If `[daemon.auth] token = "…"` is pinned in `config.toml`, that value wins on next boot and the file is rewritten to match it. The `GRIMOIRE_AUTH_TOKEN` env var (highest priority) is a one-shot override for the current process — it does not persist back to the file.
+
+There are no `grim auth rotate / show / reset` subcommands yet; the file is the UX.
+
+### CLI vs worker vs peer tokens (side-by-side)
+
+The three trust domains use **independent** credentials. Configuring one does not affect the others:
+
+| Domain | Where it lives | Used by |
+| --- | --- | --- |
+| CLI ↔ daemon (UDS) + Dashboard (HTTP) | `~/.grimoire/auth.token`, or `[daemon.auth] token` in `config.toml`, or `GRIMOIRE_AUTH_TOKEN` env | `grim *` cross-UID, browser dashboard |
+| Daemon ↔ worker (gRPC) | `[worker] secret = "…"` (matched on both daemon and worker `config.toml`) | `grimw` registering with the daemon |
+| Peer ↔ peer (gRPC) | Per-peer, set with `grim peer add … --token <T>` (stored in the `peers` table) | Federation gossip / outbox |
+
+Rotating any of these is independent: change the daemon token without touching workers, swap a peer token without affecting the dashboard, etc.
+
+### Cross-UID deployment
+
+The peercred bypass only fires for connections from the daemon's own UID. To run a shared `grimd` as a service account with multiple human users:
+
+1. Run the daemon as a dedicated user (e.g. `grimd`): `sudo -u grimd grim daemon`.
+2. Read its token: `sudo -u grimd cat ~grimd/.grimoire/auth.token`.
+3. Distribute the token to each user's `~/.grimoire/auth.token` (or set `GRIMOIRE_AUTH_TOKEN` in their shell, or pin `[daemon.auth] token` in a shared `config.toml`).
+4. Each `grim` invocation now connects across UIDs and presents the token on the first RPC.
+
+The daemon's UDS socket lives at `~grimd/.grimoire/grimd.sock` and is `0600`, so users also need group/ACL access to the socket path (typically by adding them to a `grimd` group and tightening the file mode in the service unit).
+
+### HTTP login internals
+
+`/auth/login` accepts the token two ways:
+
+- `GET /auth/login?t=<token>` — intentional for the magic-link UX (`grim scry` opens `http://127.0.0.1:<port>/auth/login?t=<token>` in the browser; the browser exchanges it for the `grim_auth` cookie and redirects to `/`).
+- `POST /auth/login` (`token=<token>`, form-encoded) — used by the fallback login page when the URL doesn't carry the token.
+
+The cookie is `HttpOnly; SameSite=Strict; Max-Age=86400` and currently **does not** set `Secure` because the listener is plain HTTP on loopback. When peer/HTTP TLS lands (Roadmap Part 6), flip `Secure` on conditionally — see the TODO comment in `src/daemon/server.rs::login_success_response`.
+
+### Test-only env var
+
+`GRIMOIRE_AUTH_TOKEN_PATH` overrides the token file location. It exists so the integration test suite can isolate auth state per-test under `tempfile`-managed directories. Not intended for ops use — pin `[daemon.auth] token` in `config.toml` instead if you want a stable token at a non-default path.
+
+### Hard-cutover notes (v0.1)
+
+These landed alongside the auth + protocol-version work and may surprise contributors upgrading mid-stream:
+
+- **Old workers are rejected.** Workers built before `protocol_version` was added to `RegisterWorker` are rejected at registration with `FailedPrecondition: unsupported_protocol_version`. Rebuild `grimw` from this tree.
+- **Old `grim` CLIs still work from the owning UID.** A CLI built before `auth_token` was added to the JSON-RPC envelope passes through the peercred bypass. Cross-UID calls from old CLIs are rejected — rebuild.
+- **UDS socket is `0600`.** Earlier builds left it world-readable in some setups. If you script around the socket, expect EACCES from other UIDs (which is the point — fall back to the HTTP listener or TCP forwarding).
+
 ## Architecture
 
 Single Rust binary (`grim`) that runs as both CLI and daemon. A second binary (`grimw`) is the remote worker.

@@ -33,7 +33,6 @@ impl Orchestrator {
                     }
                     Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
                         tracing::warn!(skipped = n, "Orchestrator lagged, some events missed");
-                        continue;
                     }
                     Err(_) => break,
                     _ => {}

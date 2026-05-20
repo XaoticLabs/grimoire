@@ -17,7 +17,7 @@ impl ClaudeProvider {
 }
 
 impl Provider for ClaudeProvider {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "claude"
     }
 
@@ -74,7 +74,9 @@ impl Provider for ClaudeProvider {
     fn extract_session_id(&self, line: &str) -> Option<String> {
         let v: serde_json::Value = serde_json::from_str(line).ok()?;
         if v.get("type")?.as_str()? == "system" {
-            v.get("session_id")?.as_str().map(|s| s.to_string())
+            v.get("session_id")?
+                .as_str()
+                .map(std::string::ToString::to_string)
         } else {
             None
         }

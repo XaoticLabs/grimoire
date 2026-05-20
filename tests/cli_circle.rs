@@ -13,7 +13,7 @@ fn summary(id: &str, worker_id: Option<&str>) -> AgentSummary {
         state: AgentState::Complete,
         task: Some("noop".into()),
         age_secs: 0,
-        worker_id: worker_id.map(|s| s.to_string()),
+        worker_id: worker_id.map(std::string::ToString::to_string),
         restart_policy: RestartPolicy::Never,
         restart_count: 0,
         max_restarts: None,

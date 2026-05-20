@@ -196,8 +196,7 @@ fn parse_task_section(name: &str, body: &[&str]) -> Result<TaskSpec> {
     let prompt = task_lines.join("\n").trim().to_string();
     if prompt.is_empty() {
         return Err(anyhow!(
-            "Task '{}' has no task text. Add task description after the metadata lines.",
-            name
+            "Task '{name}' has no task text. Add task description after the metadata lines."
         ));
     }
 
@@ -218,7 +217,7 @@ mod tests {
 
     #[test]
     fn test_parse_basic_scroll() {
-        let content = r#"# Scroll: Test Project
+        let content = r"# Scroll: Test Project
 
 ## Task: Setup Database
 - files: src/db.rs, migrations/
@@ -238,7 +237,7 @@ Implement REST API endpoints for user management.
 - depends: API Routes
 
 Build the frontend login page.
-"#;
+";
 
         let spec = parse_scroll(content).unwrap();
         assert_eq!(spec.name, "Test Project");
@@ -261,13 +260,13 @@ Build the frontend login page.
 
     #[test]
     fn test_invalid_dependency() {
-        let content = r#"# Scroll: Bad Deps
+        let content = r"# Scroll: Bad Deps
 
 ## Task: Task A
 - depends: Task C
 
 Do something.
-"#;
+";
 
         let result = parse_scroll(content);
         assert!(result.is_err());
@@ -283,7 +282,7 @@ Do something.
 
     #[test]
     fn test_all_metadata() {
-        let content = r#"# Scroll: Full Meta
+        let content = r"# Scroll: Full Meta
 
 ## Task: Task A
 - files: src/a.rs, src/b.rs
@@ -293,7 +292,7 @@ Do something.
 - cwd: /home/user
 
 Do task A with all metadata.
-"#;
+";
         let spec = parse_scroll(content).unwrap();
         let task = &spec.tasks[0];
         assert_eq!(task.provider.as_deref(), Some("codex"));
@@ -304,7 +303,7 @@ Do task A with all metadata.
 
     #[test]
     fn test_multi_dependency() {
-        let content = r#"# Scroll: Multi Dep
+        let content = r"# Scroll: Multi Dep
 
 ## Task: A
 
@@ -318,20 +317,20 @@ Do B.
 - depends: A, B
 
 Do C after both A and B.
-"#;
+";
         let spec = parse_scroll(content).unwrap();
         assert_eq!(spec.tasks[2].depends_on, vec!["A", "B"]);
     }
 
     #[test]
     fn test_self_dependency() {
-        let content = r#"# Scroll: Self Dep
+        let content = r"# Scroll: Self Dep
 
 ## Task: A
 - depends: A
 
 Do A.
-"#;
+";
         let result = parse_scroll(content);
         assert!(result.is_err());
         assert!(
@@ -350,7 +349,7 @@ Do A.
 
     #[test]
     fn test_duplicate_task_names() {
-        let content = r#"# Scroll: Dup Names
+        let content = r"# Scroll: Dup Names
 
 ## Task: Task A
 
@@ -359,7 +358,7 @@ Do A.
 ## Task: Task A
 
 Do A again.
-"#;
+";
         // Duplicate names are allowed by the parser (distinct task IDs assigned later)
         let spec = parse_scroll(content).unwrap();
         assert_eq!(spec.tasks.len(), 2);
@@ -375,11 +374,11 @@ Do A again.
 
     #[test]
     fn test_task_no_task_text() {
-        let content = r#"# Scroll: No Task
+        let content = r"# Scroll: No Task
 
 ## Task: Empty
 - files: src/foo.rs
-"#;
+";
         let result = parse_scroll(content);
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("no task text"));

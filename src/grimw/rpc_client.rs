@@ -121,9 +121,8 @@ pub async fn run(
                             Some(daemon_message::Kind::CancelTask(cancel)) => {
                                 dispatcher.cancel(&cancel.agent_id).await;
                             }
-                            Some(daemon_message::Kind::Ping(_))
-                            | Some(daemon_message::Kind::Ack(_)) => {}
-                            None => {}
+                            Some(daemon_message::Kind::Ping(_) | daemon_message::Kind::Ack(_))
+                            | None => {}
                         }
                     }
                     Ok(None) => {

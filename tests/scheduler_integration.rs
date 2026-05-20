@@ -94,7 +94,7 @@ impl Executor for ControlledExecutor {
         })
     }
 
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "controlled"
     }
 }
@@ -121,7 +121,7 @@ impl Harness {
         )
         .await;
         let workers = Arc::new(WorkerRegistry::new_with_bus(
-            Duration::from_secs(60),
+            Duration::from_mins(1),
             bus.clone(),
         ));
         let cap = Arc::new(AtomicU32::new(cap_value));

@@ -52,7 +52,7 @@ fn make_row(id: &str, lane: &str, block: Option<&str>, t_offset: i64) -> QueueRo
         cwd: "/tmp".into(),
         model: None,
         task_text: "do thing".into(),
-        block_reason: block.map(|s| s.to_string()),
+        block_reason: block.map(std::string::ToString::to_string),
     }
 }
 

@@ -2,6 +2,8 @@
 name = "grimoire"
 version = "0.1.0"
 edition = "2024"
+rust-version = "1.95"
+license = "MIT OR Apache-2.0"
 
 [[bin]]
 name = "grim"
@@ -55,7 +57,6 @@ futures = "0.3"
 cron = "0.12"
 notify = "6"
 globset = "0.4"
-walkdir = "2"
 
 [build-dependencies]
 tonic-build = "0.12"
@@ -76,3 +77,63 @@ tower = { version = "0.5", features = ["util"] }
 # cleanup ships.
 warnings = { level = "deny", priority = -1 }
 dead_code = "allow"
+
+[lints.clippy]
+# Pedantic is on at warn-level. Categories below are allow-listed because
+# they're either too noisy at this codebase size (doc lints), too aggressive
+# for SQLite plumbing (i64 ↔ u32/u64 cast lints), or a different
+# preference (passing config-like structs by value reads cleaner than
+# by reference). Each entry is a deliberate trade-off, not a TODO.
+pedantic = { level = "warn", priority = -1 }
+
+# Doc lints — would force `# Errors`/`# Panics` sections on hundreds of
+# internal Result/panic-capable helpers. Re-enable per-module when the
+# public API surface stabilizes.
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+doc_markdown       = "allow"
+
+# `#[must_use]` is valuable on public API but noisy on every getter; we
+# annotate explicitly where it matters.
+must_use_candidate    = "allow"
+return_self_not_must_use = "allow"
+
+# SQLite columns are i64; the daemon often casts to u32/u64/usize/f64 with
+# domain knowledge that the value is in range. Re-enable per-call if we
+# add untrusted external i64 inputs.
+cast_possible_truncation = "allow"
+cast_possible_wrap       = "allow"
+cast_sign_loss           = "allow"
+cast_precision_loss      = "allow"
+cast_lossless            = "allow"
+
+# Config structs read more clearly when passed by value at the call site;
+# we own them and they're small.
+needless_pass_by_value = "allow"
+
+# Long match-style modules read fine in this codebase; refactoring would
+# fragment cohesive logic.
+too_many_lines = "allow"
+
+# Wildcard imports are confined to `super::*` in test modules — flagging
+# them adds noise without changing behavior.
+wildcard_imports = "allow"
+
+# Style preferences that didn't seem worth churning working code over:
+# the existing forms read clearly and the suggestions are subjective.
+unused_async           = "allow"  # async-trait impls and seam functions for symmetric APIs
+# Several `Database` read helpers use `.ok()` on rusqlite calls and so always
+# succeed at the `Result` layer, but the `Result<…>` signature is kept for
+# uniformity with the rest of the API. A few non-DB call sites also keep a
+# `Result` return for trait/seam symmetry. Re-enable per-fn when removing.
+unnecessary_wraps      = "allow"
+# Fires inside tonic-build-generated proto code where we can't apply the fix.
+default_trait_access   = "allow"
+
+# Edge-case stylistic complaints — explicit allow is clearer than per-site #[allow].
+trivially_copy_pass_by_ref = "allow"  # 1-byte enum receivers
+struct_field_names         = "allow"  # `Worker { worker_id, … }` is the public schema
+float_cmp                  = "allow"  # only fires in tests where exact compare is intentional
+match_wildcard_for_single_variants = "allow"
+used_underscore_items      = "allow"  # _-prefixed test scaffolding crossing module boundaries
+

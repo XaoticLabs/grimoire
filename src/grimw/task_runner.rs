@@ -96,10 +96,10 @@ impl TaskDispatcher {
 
         // Spawn the provider command.
         let mut cmd = Command::new(&provider.binary);
-        for arg in provider.args_template.iter() {
+        for arg in &provider.args_template {
             cmd.arg(arg.replace("{task}", &assign.task));
         }
-        for (k, v) in provider.env.iter() {
+        for (k, v) in &provider.env {
             cmd.env(k, v);
         }
         cmd.current_dir(&assign.cwd)
@@ -115,7 +115,7 @@ impl TaskDispatcher {
                     .send(WorkerMessage {
                         kind: Some(worker_message::Kind::TaskRejected(TaskRejected {
                             agent_id: assign.agent_id.clone(),
-                            reason: format!("spawn_failed: {}", e),
+                            reason: format!("spawn_failed: {e}"),
                         })),
                     })
                     .await;

@@ -34,7 +34,7 @@ async fn setup() -> (Arc<Database>, ScrollKeeper) {
 async fn inscribe_basic_scroll() {
     let (db, keeper) = setup().await;
 
-    let spec_content = r#"# Scroll: Integration Test
+    let spec_content = r"# Scroll: Integration Test
 
 ## Task: Database Setup
 - files: migrations/, src/db.rs
@@ -53,7 +53,7 @@ Build REST endpoints.
 - provider: aider
 
 Build the frontend.
-"#;
+";
 
     let spec = scroll_parser::parse_scroll(spec_content).unwrap();
     assert_eq!(spec.tasks.len(), 3);
@@ -98,7 +98,7 @@ Build the frontend.
 async fn inscribe_detects_file_conflicts() {
     let (_, keeper) = setup().await;
 
-    let spec_content = r#"# Scroll: Conflict Test
+    let spec_content = r"# Scroll: Conflict Test
 
 ## Task: Task A
 - files: src/shared.rs, src/a.rs
@@ -109,7 +109,7 @@ Work on A.
 - files: src/shared.rs, src/b.rs
 
 Work on B.
-"#;
+";
 
     let spec = scroll_parser::parse_scroll(spec_content).unwrap();
     let result = keeper.inscribe(spec, None, None).unwrap();
@@ -129,7 +129,7 @@ Work on B.
 async fn independent_tasks_all_ready() {
     let (db, keeper) = setup().await;
 
-    let spec_content = r#"# Scroll: Parallel
+    let spec_content = r"# Scroll: Parallel
 
 ## Task: Alpha
 
@@ -142,7 +142,7 @@ Do beta.
 ## Task: Gamma
 
 Do gamma.
-"#;
+";
 
     let spec = scroll_parser::parse_scroll(spec_content).unwrap();
     let result = keeper.inscribe(spec, None, None).unwrap();
@@ -167,7 +167,7 @@ Do gamma.
 async fn diamond_dependency_graph() {
     let (db, keeper) = setup().await;
 
-    let spec_content = r#"# Scroll: Diamond
+    let spec_content = r"# Scroll: Diamond
 
 ## Task: A
 
@@ -187,7 +187,7 @@ C after A.
 - depends: B, C
 
 D after both B and C.
-"#;
+";
 
     let spec = scroll_parser::parse_scroll(spec_content).unwrap();
     let result = keeper.inscribe(spec, None, None).unwrap();
@@ -242,7 +242,7 @@ D after both B and C.
 async fn scroll_status_counts() {
     let (db, keeper) = setup().await;
 
-    let spec_content = r#"# Scroll: Status Test
+    let spec_content = r"# Scroll: Status Test
 
 ## Task: A
 
@@ -257,7 +257,7 @@ Do B.
 - depends: A
 
 Do C.
-"#;
+";
 
     let spec = scroll_parser::parse_scroll(spec_content).unwrap();
     let result = keeper.inscribe(spec, None, None).unwrap();

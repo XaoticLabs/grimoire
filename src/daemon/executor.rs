@@ -73,7 +73,7 @@ impl LocalExecutor {
             db,
             test_command: Some((
                 cmd.to_string(),
-                args.iter().map(|s| s.to_string()).collect(),
+                args.iter().map(std::string::ToString::to_string).collect(),
             )),
         }
     }
@@ -126,7 +126,7 @@ impl Executor for LocalExecutor {
         })
     }
 
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "local"
     }
 }
@@ -236,7 +236,7 @@ impl Executor for RemoteExecutor {
             provider_name: req.provider_name.clone(),
             cwd: req.cwd.to_string_lossy().to_string(),
             model: req.model.clone(),
-            env: Default::default(),
+            env: std::collections::HashMap::default(),
             optional_resume_session_id: req.resume_session_id.clone().map(
                 crate::shared::worker_proto::assign_task::OptionalResumeSessionId::ResumeSessionId,
             ),
@@ -246,7 +246,7 @@ impl Executor for RemoteExecutor {
                 kind: Some(daemon_message::Kind::AssignTask(assign)),
             })
             .await
-            .map_err(|e| anyhow!("send AssignTask: {}", e))?;
+            .map_err(|e| anyhow!("send AssignTask: {e}"))?;
 
         let bus = self
             .bus
@@ -283,7 +283,7 @@ impl Executor for RemoteExecutor {
         })
     }
 
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "remote"
     }
 }

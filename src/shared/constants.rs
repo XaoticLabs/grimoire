@@ -65,7 +65,5 @@ pub fn generate_short_id() -> String {
 }
 
 fn dirs_home() -> PathBuf {
-    directories::BaseDirs::new()
-        .map(|d| d.home_dir().to_path_buf())
-        .unwrap_or_else(|| PathBuf::from("~"))
+    directories::BaseDirs::new().map_or_else(|| PathBuf::from("~"), |d| d.home_dir().to_path_buf())
 }

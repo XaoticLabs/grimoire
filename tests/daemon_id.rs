@@ -32,7 +32,7 @@ fn load_or_mint_rejects_invalid_file() {
     let path = dir.path().join("daemon.id");
     fs::write(&path, "NOTHEX").unwrap();
     let err = load_or_mint(&path).unwrap_err();
-    assert!(format!("{}", err).contains("invalid_daemon_id_file"));
+    assert!(format!("{err}").contains("invalid_daemon_id_file"));
 }
 
 #[test]

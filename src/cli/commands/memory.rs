@@ -53,11 +53,11 @@ pub async fn run(cmd: MemoryCommand) -> Result<()> {
 
 fn parse_value(input: &str) -> Result<serde_json::Value> {
     if let Some(path) = input.strip_prefix('@') {
-        let data = std::fs::read(path).map_err(|e| anyhow!("cannot read {}: {}", path, e))?;
-        let s = String::from_utf8(data).map_err(|e| anyhow!("file not utf8: {}", e))?;
-        serde_json::from_str(&s).map_err(|e| anyhow!("invalid JSON in {}: {}", path, e))
+        let data = std::fs::read(path).map_err(|e| anyhow!("cannot read {path}: {e}"))?;
+        let s = String::from_utf8(data).map_err(|e| anyhow!("file not utf8: {e}"))?;
+        serde_json::from_str(&s).map_err(|e| anyhow!("invalid JSON in {path}: {e}"))
     } else {
-        serde_json::from_str(input).map_err(|e| anyhow!("invalid JSON: {}", e))
+        serde_json::from_str(input).map_err(|e| anyhow!("invalid JSON: {e}"))
     }
 }
 
@@ -162,6 +162,6 @@ async fn run_delete(workspace: &str, key: &str, expected_version: Option<u64>) -
         eprintln!("{} {}", "Error:".red(), err.message);
         std::process::exit(1);
     }
-    println!("deleted: {}", key);
+    println!("deleted: {key}");
     Ok(())
 }

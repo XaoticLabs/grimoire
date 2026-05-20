@@ -111,14 +111,14 @@ async fn events_arrive_in_order() {
         bus.publish(StreamEvent::Output {
             agent_id: "ordered".to_string(),
             stream: "stdout".to_string(),
-            line: format!("line-{}", i),
+            line: format!("line-{i}"),
         });
     }
 
     for i in 0..10 {
         let event = rx.recv().await.unwrap();
         if let StreamEvent::Output { line, .. } = event {
-            assert_eq!(line, format!("line-{}", i));
+            assert_eq!(line, format!("line-{i}"));
         } else {
             panic!("Expected Output event");
         }
@@ -263,14 +263,13 @@ async fn publish_is_non_blocking() {
         bus.publish(StreamEvent::Output {
             agent_id: "burst".into(),
             stream: "stdout".into(),
-            line: format!("{}", i),
+            line: format!("{i}"),
         });
     }
     let elapsed = start.elapsed();
     assert!(
         elapsed < Duration::from_millis(100),
-        "publish loop took {:?}, expected < 100ms",
-        elapsed
+        "publish loop took {elapsed:?}, expected < 100ms"
     );
 }
 
@@ -374,16 +373,13 @@ async fn restart_recovery_publishes_state_change_for_each_failure() {
     let mut state_changes: Vec<(String, AgentState, AgentState)> = Vec::new();
     let deadline = Instant::now() + Duration::from_millis(500);
     while Instant::now() < deadline && state_changes.len() < 2 {
-        match tokio::time::timeout(Duration::from_millis(50), rx.recv()).await {
-            Ok(Ok(StreamEvent::StateChange {
-                agent_id,
-                old_state,
-                new_state,
-            })) => {
-                state_changes.push((agent_id, old_state, new_state));
-            }
-            Ok(Ok(_)) => {}
-            Ok(Err(_)) | Err(_) => {}
+        if let Ok(Ok(StreamEvent::StateChange {
+            agent_id,
+            old_state,
+            new_state,
+        })) = tokio::time::timeout(Duration::from_millis(50), rx.recv()).await
+        {
+            state_changes.push((agent_id, old_state, new_state));
         }
     }
 

@@ -31,10 +31,10 @@ tls_key_path = "/tmp/key.pem"
 
 #[test]
 fn daemon_config_parses_without_worker_block() {
-    let toml = r#"
+    let toml = r"
 [daemon]
 port = 7777
-"#;
+";
     let cfg: Config = toml::from_str(toml).expect("legacy config parses");
     assert!(
         cfg.worker.is_none(),
@@ -76,10 +76,10 @@ secret = "shh"
 
 #[test]
 fn daemon_config_max_concurrent_default_is_eight() {
-    let toml = r#"
+    let toml = r"
 [daemon]
 port = 7777
-"#;
+";
     let cfg: Config = toml::from_str(toml).expect("config parses without max_concurrent_agents");
     assert_eq!(
         cfg.daemon.max_concurrent_agents, 8,
@@ -96,20 +96,20 @@ fn daemon_config_max_concurrent_default_when_daemon_block_missing() {
 
 #[test]
 fn daemon_config_max_concurrent_explicit() {
-    let toml = r#"
+    let toml = r"
 [daemon]
 max_concurrent_agents = 16
-"#;
+";
     let cfg: Config = toml::from_str(toml).expect("explicit value parses");
     assert_eq!(cfg.daemon.max_concurrent_agents, 16);
 }
 
 #[test]
 fn daemon_config_max_concurrent_zero_is_valid() {
-    let toml = r#"
+    let toml = r"
 [daemon]
 max_concurrent_agents = 0
-"#;
+";
     let cfg: Config = toml::from_str(toml).expect("zero is a valid operator override");
     assert_eq!(cfg.daemon.max_concurrent_agents, 0);
 }
@@ -117,10 +117,10 @@ max_concurrent_agents = 0
 #[test]
 fn daemon_config_max_concurrent_atomic_reflects_reload() {
     let initial: Config = toml::from_str(
-        r#"
+        r"
 [daemon]
 max_concurrent_agents = 4
-"#,
+",
     )
     .unwrap();
     let atomic = initial.max_concurrent_atomic();
@@ -128,10 +128,10 @@ max_concurrent_agents = 4
     assert_eq!(shared.load(Ordering::Relaxed), 4);
 
     let reloaded: Config = toml::from_str(
-        r#"
+        r"
 [daemon]
 max_concurrent_agents = 12
-"#,
+",
     )
     .unwrap();
     reloaded.apply_max_concurrent(&atomic);

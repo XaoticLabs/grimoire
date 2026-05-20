@@ -250,10 +250,10 @@ impl WorkspaceRegistry {
             .into_iter()
             .filter_map(|(agent_id, state_str)| {
                 let st: crate::shared::types::AgentState = state_str.parse().ok()?;
-                if !st.is_terminal() {
-                    Some(agent_id)
-                } else {
+                if st.is_terminal() {
                     None
+                } else {
+                    Some(agent_id)
                 }
             })
             .collect();
@@ -418,17 +418,16 @@ pub fn publish_memory_topic_mail(
             prefix.push('/');
         }
         prefix.push_str(seg);
-        topics.push(format!("workspace/{}/memory/{}", workspace_id, prefix));
+        topics.push(format!("workspace/{workspace_id}/memory/{prefix}"));
     }
-    topics.push(format!("workspace/{}/memory/*", workspace_id));
+    topics.push(format!("workspace/{workspace_id}/memory/*"));
 
     let now = chrono::Utc::now().timestamp();
-    let sender = format!("workspace://{}", workspace_id);
+    let sender = format!("workspace://{workspace_id}");
 
     for topic in topics {
-        let subscribers = match db.list_subscribers_for_topic(&topic) {
-            Ok(s) => s,
-            Err(_) => continue,
+        let Ok(subscribers) = db.list_subscribers_for_topic(&topic) else {
+            continue;
         };
         if subscribers.is_empty() {
             continue;

@@ -23,7 +23,7 @@ impl CronSource {
         // for, prepend a "0" seconds field if the expression is 5 fields.
         let normalized = normalize_expr(expr);
         let schedule =
-            ::cron::Schedule::from_str(&normalized).map_err(|e| anyhow!("invalid_cron: {}", e))?;
+            ::cron::Schedule::from_str(&normalized).map_err(|e| anyhow!("invalid_cron: {e}"))?;
         Ok(Self {
             expr: expr.to_string(),
             schedule,
@@ -54,7 +54,7 @@ impl CronSource {
 fn normalize_expr(expr: &str) -> String {
     let count = expr.split_whitespace().count();
     if count == 5 {
-        format!("0 {}", expr)
+        format!("0 {expr}")
     } else {
         expr.to_string()
     }

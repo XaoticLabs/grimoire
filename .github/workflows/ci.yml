@@ -1,0 +1,90 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -D warnings
+
+concurrency:
+  # Cancel in-flight runs for the same ref when a new commit lands.
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # The fast checks — compile, lint, format. Fan out from one toolchain install
+  # via a matrix so a single fmt failure doesn't block clippy from reporting.
+  check:
+    name: ${{ matrix.task }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        task: [fmt-check, clippy, test]
+    steps:
+      - uses: actions/checkout@v4
+
+      # rust-toolchain.toml pins channel + components; setting it explicitly
+      # here makes the action cache key stable and ensures clippy/rustfmt are
+      # always present in case the toolchain file drifts.
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.95.0"
+          components: rustfmt, clippy
+
+      - name: Cache cargo registry + target
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: ${{ matrix.task }}
+
+      - name: Run ${{ matrix.task }}
+        run: make ${{ matrix.task }}
+
+  # Supply-chain + housekeeping. Slower (downloads advisory-db) and depends on
+  # external state (RustSec), so isolated from `check` and allowed to be flakier.
+  supply-chain:
+    name: ${{ matrix.task }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        task: [deny, machete, typos]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.95.0"
+
+      - name: Cache cargo registry
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: supply-${{ matrix.task }}
+
+      - name: Install cargo-deny
+        if: matrix.task == 'deny'
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-deny
+
+      - name: Install cargo-machete
+        if: matrix.task == 'machete'
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-machete
+
+      - name: Install typos
+        if: matrix.task == 'typos'
+        uses: taiki-e/install-action@v2
+        with:
+          tool: typos-cli
+
+      - name: Run ${{ matrix.task }}
+        run: make ${{ matrix.task }}

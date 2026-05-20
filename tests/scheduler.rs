@@ -31,7 +31,7 @@ fn make_queued_agent(id: &str, provider: Option<&str>) -> Agent {
         state: AgentState::Queued,
         task: Some("test".to_string()),
         model: None,
-        provider: provider.map(|s| s.to_string()),
+        provider: provider.map(std::string::ToString::to_string),
         cwd: PathBuf::from("/tmp"),
         pid: None,
         session_id: None,
@@ -58,7 +58,7 @@ fn make_queue_row(id: &str, lane: &str, provider: Option<&str>, t_offset_secs: i
         lane: lane.to_string(),
         priority: 0,
         enqueued_at: Utc::now() + chrono::Duration::seconds(t_offset_secs),
-        provider_name: provider.map(|s| s.to_string()),
+        provider_name: provider.map(std::string::ToString::to_string),
         cwd: "/tmp".to_string(),
         model: None,
         task_text: "test task".to_string(),
@@ -104,7 +104,7 @@ impl Dispatcher for FakeDispatcher {
 }
 
 fn build_registry(bus: EventBus) -> Arc<WorkerRegistry> {
-    Arc::new(WorkerRegistry::new_with_bus(Duration::from_secs(60), bus))
+    Arc::new(WorkerRegistry::new_with_bus(Duration::from_mins(1), bus))
 }
 
 fn register_worker(registry: &WorkerRegistry, worker_id: &str, provider: &str) {

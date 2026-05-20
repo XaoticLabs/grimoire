@@ -1,0 +1,19 @@
+# Configuration for `typos` spell-checker. Run with `typos` at repo root.
+[files]
+extend-exclude = [
+    "Cargo.lock",
+    "target/",
+    "proto/",
+    "*.snap",
+]
+
+[default]
+# Project-specific terms that look like typos but aren't.
+extend-ignore-identifiers-re = [
+    "grimw",   # worker binary name
+    "grim",    # main binary name
+]
+
+[default.extend-words]
+# add false-positive words here as they appear, e.g.:
+# crate = "crate"

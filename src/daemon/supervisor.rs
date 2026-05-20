@@ -150,7 +150,7 @@ impl EscalationMailSender for DbEscalationMailSender {
 
         let now = crate::daemon::persistence::unix_now();
         let address =
-            parse_address(target).map_err(|e| anyhow::anyhow!("invalid escalate_to: {}", e))?;
+            parse_address(target).map_err(|e| anyhow::anyhow!("invalid escalate_to: {e}"))?;
 
         match address {
             Address::Agent(recipient_id) => {
@@ -304,10 +304,9 @@ impl Supervisor {
                             warn!(agent_id = %agent_id, error = %e, "supervisor on_state_change failed");
                         }
                     }
-                    Ok(_) => continue,
+                    Ok(_) => {}
                     Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
                         warn!(missed = n, "supervisor missed broadcast events");
-                        continue;
                     }
                     Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
                 }
@@ -355,9 +354,8 @@ impl Supervisor {
 
     /// Evaluate restart policy for `agent_id` and return the decision.
     pub async fn evaluate(self: &Arc<Self>, agent_id: &str) -> Result<RestartDecision> {
-        let cfg = match self.db.get_supervision(agent_id)? {
-            Some(c) => c,
-            None => return Ok(RestartDecision::NotSupervised),
+        let Some(cfg) = self.db.get_supervision(agent_id)? else {
+            return Ok(RestartDecision::NotSupervised);
         };
         if cfg.policy == RestartPolicy::Never {
             return Ok(RestartDecision::NotSupervised);
@@ -565,14 +563,12 @@ impl Supervisor {
                 let summary = error_summary
                     .clone()
                     .unwrap_or_else(|| "unknown".to_string());
-                let mut body = format!(
-                    "[supervisor] agent {} failed (budget exhausted): {}",
-                    agent_id, summary
-                );
+                let mut body =
+                    format!("[supervisor] agent {agent_id} failed (budget exhausted): {summary}");
                 if body.len() > ESCALATION_BODY_MAX_BYTES {
                     body.truncate(ESCALATION_BODY_MAX_BYTES);
                 }
-                let sender_id = format!("supervisor://{}", agent_id);
+                let sender_id = format!("supervisor://{agent_id}");
                 match self
                     .mail_sender
                     .send_escalation(&sender_id, &target, &body)

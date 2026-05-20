@@ -62,7 +62,7 @@ async fn summon_on_failure_persists_full_config() {
         auth_token: None,
     };
     let resp = grimoire::daemon::rpc::handle_rpc_test(&m, &db, &sk, &wr, &wsr, &bus, req).await;
-    assert!(resp.error.is_none(), "{:?}", resp);
+    assert!(resp.error.is_none(), "{resp:?}");
     let r: SummonResult = serde_json::from_value(resp.result.unwrap()).unwrap();
     let cfg = db.get_supervision(&r.id).unwrap().unwrap();
     assert_eq!(cfg.policy, RestartPolicy::OnFailure);

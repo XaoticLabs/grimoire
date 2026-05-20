@@ -653,6 +653,10 @@ impl StreamEvent {
     /// events this returns the stream the event should appear on (sender for
     /// `MailSent`/`MailFailed`, recipient for `MailReceived`/`MailDelivered`).
     pub fn agent_id(&self) -> Option<&str> {
+        // Each variant binds a differently-named field (agent_id vs
+        // recipient_id vs sender_id) — collapsing the arms would obscure
+        // which field is being read for each event type.
+        #[allow(clippy::match_same_arms)]
         match self {
             Self::Output { agent_id, .. } => Some(agent_id),
             Self::StateChange { agent_id, .. } => Some(agent_id),

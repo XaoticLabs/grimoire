@@ -19,7 +19,7 @@ fn seed(db: &Database, id: &str, state: AgentState, session_id: Option<&str>) {
         provider: Some("claude".into()),
         cwd: PathBuf::from("/tmp"),
         pid: None,
-        session_id: session_id.map(|s| s.to_string()),
+        session_id: session_id.map(std::string::ToString::to_string),
         exit_code: Some(0),
         created_at: Utc::now(),
         updated_at: Utc::now(),

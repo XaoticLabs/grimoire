@@ -180,7 +180,7 @@ impl AgentManager {
                         state: AgentState::Failed,
                         exit_code: None,
                         session_id: None,
-                        error_reason: Some(format!("completion_panicked: {}", e)),
+                        error_reason: Some(format!("completion_panicked: {e}")),
                     }
                 }
             };
@@ -450,7 +450,7 @@ impl AgentManager {
         let agent = self
             .db
             .get_agent(agent_id)?
-            .ok_or_else(|| anyhow!("agent not found: {}", agent_id))?;
+            .ok_or_else(|| anyhow!("agent not found: {agent_id}"))?;
         if agent.state != AgentState::Restarting {
             return Err(anyhow!(
                 "restart_dispatch: agent {} not in Restarting (state: {})",
@@ -526,7 +526,7 @@ impl AgentManager {
             let agents = self.agents.lock().await;
             let managed = agents
                 .get(id)
-                .ok_or_else(|| anyhow!("Agent not found: {}", id))?;
+                .ok_or_else(|| anyhow!("Agent not found: {id}"))?;
 
             if managed.agent.state != AgentState::Dormant {
                 return Err(anyhow!(
@@ -540,7 +540,7 @@ impl AgentManager {
                 .agent
                 .session_id
                 .clone()
-                .ok_or_else(|| anyhow!("Agent {} has no session to resume", id))?;
+                .ok_or_else(|| anyhow!("Agent {id} has no session to resume"))?;
 
             (
                 session_id,
@@ -556,12 +556,11 @@ impl AgentManager {
         let provider = self
             .registry
             .get(&provider_name)
-            .ok_or_else(|| anyhow!("Unknown provider: {}", provider_name))?;
+            .ok_or_else(|| anyhow!("Unknown provider: {provider_name}"))?;
 
         if !provider.capabilities().supports_resume {
             return Err(anyhow!(
-                "Provider '{}' does not support session resume",
-                provider_name
+                "Provider '{provider_name}' does not support session resume"
             ));
         }
 

@@ -211,7 +211,7 @@ async fn main() {
                 .init();
 
             if let Err(e) = daemon::start().await {
-                eprintln!("Daemon error: {}", e);
+                eprintln!("Daemon error: {e}");
                 std::process::exit(1);
             }
         }
@@ -220,7 +220,7 @@ async fn main() {
             if !cli::client::is_daemon_running().await {
                 eprintln!("Daemon not running. Starting...");
                 if let Err(e) = cli::client::auto_start_daemon() {
-                    eprintln!("Failed to auto-start daemon: {}", e);
+                    eprintln!("Failed to auto-start daemon: {e}");
                     eprintln!("Start it manually with: grim daemon");
                     std::process::exit(1);
                 }
@@ -306,7 +306,7 @@ async fn main() {
             };
 
             if let Err(e) = result {
-                eprintln!("Error: {}", e);
+                eprintln!("Error: {e}");
                 std::process::exit(1);
             }
         }
@@ -318,7 +318,7 @@ async fn resolve_id(id: &str) -> String {
     match cli::client::resolve_agent_id(id).await {
         Ok(full_id) => full_id,
         Err(e) => {
-            eprintln!("Error: {}", e);
+            eprintln!("Error: {e}");
             std::process::exit(1);
         }
     }

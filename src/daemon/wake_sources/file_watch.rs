@@ -12,10 +12,8 @@ use notify::{Event as NotifyEvent, EventKind, RecursiveMode, Watcher};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::Duration;
 
 pub const DEBOUNCE_MS: u64 = 200;
-pub const MAX_WATCH_PATHS: usize = 1000;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct FileWatchConfig {
@@ -53,9 +51,8 @@ impl FileWatchSource {
     pub fn matches(&self, path: &Path) -> bool {
         // Strip root prefix if present so globs are interpreted relative to
         // the watched root.
-        let relative = match path.strip_prefix(&self.root_canonical) {
-            Ok(p) => p,
-            Err(_) => return false,
+        let Ok(relative) = path.strip_prefix(&self.root_canonical) else {
+            return false;
         };
         if self.ignore_set.is_match(relative) {
             return false;
@@ -99,7 +96,7 @@ impl FileWatchSource {
 fn build_globset(patterns: &[String]) -> Result<GlobSet> {
     let mut b = GlobSetBuilder::new();
     for p in patterns {
-        let g = Glob::new(p).map_err(|e| anyhow!("invalid_glob: {}", e))?;
+        let g = Glob::new(p).map_err(|e| anyhow!("invalid_glob: {e}"))?;
         b.add(g);
     }
     Ok(b.build()?)
@@ -107,10 +104,6 @@ fn build_globset(patterns: &[String]) -> Result<GlobSet> {
 
 pub struct MatchedChange {
     pub path: PathBuf,
-}
-
-pub fn debounce_window() -> Duration {
-    Duration::from_millis(DEBOUNCE_MS)
 }
 
 #[cfg(test)]

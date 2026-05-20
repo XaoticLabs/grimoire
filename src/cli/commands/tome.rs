@@ -17,7 +17,7 @@ pub async fn run(key: Option<String>, value: Option<String>) -> Result<()> {
             );
             println!();
             let toml = toml::to_string_pretty(&config)?;
-            println!("{}", toml);
+            println!("{toml}");
         }
         // Key + value: set a config value
         (Some(key), Some(value)) => {
@@ -71,8 +71,7 @@ pub async fn run(key: Option<String>, value: Option<String>) -> Result<()> {
                 "daemon.socket_path" => config
                     .daemon
                     .socket_path
-                    .map(|p| p.display().to_string())
-                    .unwrap_or_else(|| "(default)".to_string()),
+                    .map_or_else(|| "(default)".to_string(), |p| p.display().to_string()),
                 "agent.default_model" => config
                     .agent
                     .default_model
@@ -80,8 +79,7 @@ pub async fn run(key: Option<String>, value: Option<String>) -> Result<()> {
                 "agent.default_cwd" => config
                     .agent
                     .default_cwd
-                    .map(|p| p.display().to_string())
-                    .unwrap_or_else(|| "(none)".to_string()),
+                    .map_or_else(|| "(none)".to_string(), |p| p.display().to_string()),
                 "agent.claude_binary" => config
                     .agent
                     .claude_binary
@@ -93,7 +91,7 @@ pub async fn run(key: Option<String>, value: Option<String>) -> Result<()> {
                     std::process::exit(1);
                 }
             };
-            println!("{}", value);
+            println!("{value}");
         }
     }
 

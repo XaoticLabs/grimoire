@@ -23,13 +23,13 @@ pub enum Address {
 impl std::fmt::Display for Address {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Address::Agent(id) => write!(f, "agent://{}", id),
-            Address::Topic(name) => write!(f, "topic://{}", name),
+            Address::Agent(id) => write!(f, "agent://{id}"),
+            Address::Topic(name) => write!(f, "topic://{name}"),
             Address::FederatedAgent {
                 daemon_id,
                 agent_id,
             } => {
-                write!(f, "agent://grimd-{}/{}", daemon_id, agent_id)
+                write!(f, "agent://grimd-{daemon_id}/{agent_id}")
             }
         }
     }

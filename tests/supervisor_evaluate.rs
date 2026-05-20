@@ -104,7 +104,7 @@ async fn evaluate_with_budget_returns_restart_at_2s() {
             assert_eq!(fire_at, now + chrono::Duration::seconds(2));
             assert!(!rate_limited);
         }
-        _ => panic!("expected Restart, got {:?}", d),
+        _ => panic!("expected Restart, got {d:?}"),
     }
 }
 
@@ -137,7 +137,7 @@ async fn evaluate_at_budget_returns_budget_exhausted() {
     let d = sup.evaluate("abcd0003").await.unwrap();
     match d {
         RestartDecision::BudgetExhausted { reason } => assert_eq!(reason, "budget_spent"),
-        _ => panic!("expected BudgetExhausted, got {:?}", d),
+        _ => panic!("expected BudgetExhausted, got {d:?}"),
     }
 }
 
@@ -196,7 +196,7 @@ async fn evaluate_tree_depth_exceeded_takes_precedence() {
     let d = sup.evaluate("abcd0005").await.unwrap();
     match d {
         RestartDecision::BudgetExhausted { reason } => {
-            assert_eq!(reason, "tree_depth_exceeded")
+            assert_eq!(reason, "tree_depth_exceeded");
         }
         _ => panic!("expected BudgetExhausted tree_depth_exceeded"),
     }

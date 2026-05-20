@@ -172,9 +172,10 @@ async fn worker_disconnect_evicts_immediately() {
     // Wait for the registry to reflect the registration.
     let started = std::time::Instant::now();
     while registry.count() == 0 {
-        if started.elapsed() > Duration::from_secs(2) {
-            panic!("worker never registered");
-        }
+        assert!(
+            started.elapsed() <= Duration::from_secs(2),
+            "worker never registered"
+        );
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
     assert_eq!(registry.count(), 1);
@@ -184,9 +185,10 @@ async fn worker_disconnect_evicts_immediately() {
 
     let started = std::time::Instant::now();
     while registry.count() != 0 {
-        if started.elapsed() > Duration::from_secs(1) {
-            panic!("worker not evicted within 1s");
-        }
+        assert!(
+            started.elapsed() <= Duration::from_secs(1),
+            "worker not evicted within 1s"
+        );
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
     assert_eq!(registry.count(), 0);

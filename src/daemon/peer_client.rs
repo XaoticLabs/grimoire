@@ -45,9 +45,8 @@ pub fn spawn(
         let mut backoff: u64 = 1;
         loop {
             // Re-load peer state from DB each iteration.
-            let cur = match registry.db.get_peer(&peer.id) {
-                Ok(Some(p)) => p,
-                _ => return,
+            let Ok(Some(cur)) = registry.db.get_peer(&peer.id) else {
+                return;
             };
             if cur.state == PeerState::Removing {
                 return;
@@ -70,7 +69,7 @@ pub fn spawn(
             }
 
             tokio::select! {
-                _ = tokio::time::sleep(Duration::from_secs(backoff)) => {}
+                () = tokio::time::sleep(Duration::from_secs(backoff)) => {}
                 _ = &mut shutdown_rx => return,
             }
             backoff = (backoff * 2).min(60);
@@ -118,9 +117,8 @@ async fn run_once(
         .into_inner();
 
     // Wait for HelloAck.
-    let ack_msg = match inbound.message().await? {
-        Some(msg) => msg,
-        None => return Err(anyhow::anyhow!("stream closed before HelloAck")),
+    let Some(ack_msg) = inbound.message().await? else {
+        return Err(anyhow::anyhow!("stream closed before HelloAck"));
     };
     let accepted = match ack_msg.msg.as_ref() {
         Some(peer_inbound::Msg::HelloAck(a)) => a.clone(),
@@ -189,7 +187,7 @@ async fn run_once(
                     pump_one(registry, peer, &out_tx, &mut in_flight_outbox_id, &mut in_flight_mail_id).await?;
                 }
             }
-            _ = notify_outbox.notified() => {
+            () = notify_outbox.notified() => {
                 if in_flight_outbox_id.is_none() {
                     pump_one(registry, peer, &out_tx, &mut in_flight_outbox_id, &mut in_flight_mail_id).await?;
                 }
@@ -206,6 +204,9 @@ async fn handle_inbound(
     in_flight_outbox_id: &mut Option<String>,
     in_flight_mail_id: &mut Option<String>,
 ) -> anyhow::Result<()> {
+    // Each arm is enumerated explicitly so dispatch for a new variant is a
+    // compile error rather than silently routed to a wildcard.
+    #[allow(clippy::match_same_arms)]
     match msg.msg {
         Some(peer_inbound::Msg::HelloAck(_)) => Ok(()),
         Some(peer_inbound::Msg::Heartbeat(h)) => {
@@ -238,8 +239,9 @@ async fn handle_inbound(
             }
             Ok(())
         }
-        Some(peer_inbound::Msg::TopicSubscribe(_))
-        | Some(peer_inbound::Msg::TopicUnsubscribe(_)) => Ok(()),
+        Some(peer_inbound::Msg::TopicSubscribe(_) | peer_inbound::Msg::TopicUnsubscribe(_)) => {
+            Ok(())
+        }
         Some(peer_inbound::Msg::Goodbye(_)) => Err(anyhow::anyhow!("peer goodbye")),
         None => Ok(()),
     }
@@ -288,9 +290,8 @@ async fn pump_one(
         return Ok(());
     }
     let now = unix_now();
-    let row = match registry.db.next_outbox_row(&peer.id, now)? {
-        Some(r) => r,
-        None => return Ok(()),
+    let Some(row) = registry.db.next_outbox_row(&peer.id, now)? else {
+        return Ok(());
     };
     registry.db.mark_outbox_in_flight(&row.id)?;
     let deliver = MailDeliver {
@@ -311,7 +312,7 @@ async fn pump_one(
         let _ = registry
             .db
             .mark_outbox_failed_retry(&row.id, now + backoff as i64);
-        return Err(anyhow::anyhow!("send: {}", e));
+        return Err(anyhow::anyhow!("send: {e}"));
     }
     *in_flight_outbox_id = Some(row.id);
     *in_flight_mail_id = Some(row.mail_id);

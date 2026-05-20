@@ -1,3 +1,5 @@
+use std::fmt::Write as _;
+
 use anyhow::Result;
 use colored::Colorize;
 
@@ -6,29 +8,31 @@ use crate::shared::protocol::{DaemonStatusResult, StatusResponse};
 
 pub fn format_text(resp: &StatusResponse) -> String {
     let mut out = String::new();
-    out.push_str(&format!(
-        "Daemon running  ·  {} agent{}  ·  {} active, {} queued (cap {})  ·  {} workers\n",
+    let _ = writeln!(
+        out,
+        "Daemon running  ·  {} agent{}  ·  {} active, {} queued (cap {})  ·  {} workers",
         resp.agents.len(),
         if resp.agents.len() == 1 { "" } else { "s" },
         resp.active_count,
         resp.queued_count,
         resp.max_concurrent_agents,
         resp.workers.len(),
-    ));
+    );
     if resp.workers.is_empty() {
         out.push_str("Workers (0) — running local-only.\n");
     } else {
-        out.push_str(&format!("Workers ({})\n", resp.workers.len()));
+        let _ = writeln!(out, "Workers ({})", resp.workers.len());
         for w in &resp.workers {
             let id_short: String = w.worker_id.chars().take(6).collect();
-            out.push_str(&format!(
-                "  {}  in_flight={}/{}  ↻ {}s  [{}]\n",
+            let _ = writeln!(
+                out,
+                "  {}  in_flight={}/{}  ↻ {}s  [{}]",
                 id_short,
                 w.in_flight,
                 w.max_concurrent,
                 w.last_heartbeat_age_secs,
                 w.providers.join(", "),
-            ));
+            );
         }
     }
     out
@@ -68,7 +72,7 @@ pub async fn run(json: bool) -> Result<()> {
             result.max_concurrent_agents,
         );
         if let Some(id) = &result.daemon_id {
-            println!("Daemon ID: grimd-{}", id);
+            println!("Daemon ID: grimd-{id}");
         }
     }
 

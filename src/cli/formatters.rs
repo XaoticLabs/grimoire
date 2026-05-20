@@ -1,41 +1,15 @@
+use std::fmt::Write as _;
+
 use chrono::Utc;
-use colored::Colorize;
 
 use crate::shared::protocol::QueueEntry;
-use crate::shared::types::{Agent, AgentState, AgentSummary, Mail, RestartPolicy};
-
-/// Render an agent's `RESTART` column for `grim circle`.
-/// Shows `<used>/<max>` for `OnFailure`, `-` for `Never`.
-pub fn format_restart_column(agent: &Agent) -> String {
-    match agent.restart_policy {
-        RestartPolicy::Never => "-".to_string(),
-        RestartPolicy::OnFailure => {
-            // We don't have max_restarts on AgentSummary, so this column
-            // shows just the lifetime count. Callers wanting the cap can
-            // call `format_restart_with_cap` with a SupervisionConfig.
-            format!("{}", agent.restart_count)
-        }
-    }
-}
+use crate::shared::types::{Agent, AgentSummary, Mail, RestartPolicy};
 
 /// Render `<used>/<max>` for an agent given its supervision config.
 pub fn format_restart_with_cap(used: u32, max: Option<u32>) -> String {
     match max {
-        Some(m) => format!("{}/{}", used, m),
-        None => format!("{}", used),
-    }
-}
-
-pub fn format_state(state: &AgentState) -> String {
-    match state {
-        AgentState::Queued => "queued".cyan().to_string(),
-        AgentState::Summoning => "summoning".yellow().to_string(),
-        AgentState::Active => "active".green().bold().to_string(),
-        AgentState::Complete => "complete".blue().to_string(),
-        AgentState::Failed => "failed".red().to_string(),
-        AgentState::Banished => "banished".magenta().to_string(),
-        AgentState::Dormant => "dormant".bright_blue().to_string(),
-        AgentState::Restarting => "restarting".yellow().to_string(),
+        Some(m) => format!("{used}/{m}"),
+        None => format!("{used}"),
     }
 }
 
@@ -48,25 +22,26 @@ pub fn circle_text(agents: &[AgentSummary]) -> String {
         let worker = match &a.worker_id {
             Some(w) => {
                 let truncated: String = w.chars().take(6).collect();
-                format!("{:<8}", truncated)
+                format!("{truncated:<8}")
             }
             None => "local   ".to_string(),
         };
         let task = a.task.as_deref().unwrap_or("");
-        out.push_str(&format!(
-            "{:<10}{:<10}{} {}\n",
+        let _ = writeln!(
+            out,
+            "{:<10}{:<10}{} {}",
             a.id,
             a.state.as_str(),
             worker,
             task,
-        ));
+        );
     }
     out
 }
 
 pub fn format_age(secs: i64) -> String {
     if secs < 60 {
-        format!("{}s", secs)
+        format!("{secs}s")
     } else if secs < 3600 {
         format!("{}m", secs / 60)
     } else if secs < 86400 {
@@ -88,10 +63,11 @@ pub fn format_circle_text(agents: &[AgentSummary]) -> String {
         return out;
     }
 
-    out.push_str(&format!(
-        "{:<10} {:<12} {:<10} {:<8} {:<6} {}\n",
-        "ID", "NAME", "STATE", "RESTART", "AGE", "TASK",
-    ));
+    let _ = writeln!(
+        out,
+        "{:<10} {:<12} {:<10} {:<8} {:<6} TASK",
+        "ID", "NAME", "STATE", "RESTART", "AGE",
+    );
     out.push_str(&"-".repeat(70));
     out.push('\n');
 
@@ -116,15 +92,16 @@ pub fn format_circle_text(agents: &[AgentSummary]) -> String {
                 format_restart_with_cap(agent.restart_count, agent.max_restarts)
             }
         };
-        out.push_str(&format!(
-            "{:<10} {:<12} {:<10} {:<8} {:<6} {}\n",
+        let _ = writeln!(
+            out,
+            "{:<10} {:<12} {:<10} {:<8} {:<6} {}",
             agent.id,
             name,
             agent.state.as_str(),
             restart_col,
             format_age(agent.age_secs),
             task,
-        ));
+        );
     }
     out
 }
@@ -145,22 +122,24 @@ pub fn format_queue(entries: &[QueueEntry]) -> String {
     }
 
     let mut out = String::new();
-    out.push_str(&format!(
-        "{:<10} {:<8} {:<6} {:<14} {}\n",
-        "ID", "LANE", "AGE", "PROVIDER", "BLOCK",
-    ));
+    let _ = writeln!(
+        out,
+        "{:<10} {:<8} {:<6} {:<14} BLOCK",
+        "ID", "LANE", "AGE", "PROVIDER",
+    );
     for e in entries {
         let id_short: String = e.id.chars().take(8).collect();
         let provider = e.provider.as_deref().unwrap_or("-");
         let block = block_reason_text(e.block_reason.as_deref());
-        out.push_str(&format!(
-            "{:<10} {:<8} {:<6} {:<14} {}\n",
+        let _ = writeln!(
+            out,
+            "{:<10} {:<8} {:<6} {:<14} {}",
             id_short,
             e.lane,
             format_age(e.age_seconds as i64),
             provider,
             block,
-        ));
+        );
     }
     out
 }
@@ -178,18 +157,18 @@ pub fn format_status_supervision_block(
     let mut out = String::new();
     let max_window = cfg
         .and_then(|c| c.max_restarts.zip(c.window_secs))
-        .map(|(m, w)| format!("{}/{}s", m, w))
-        .unwrap_or_else(|| "?".into());
-    out.push_str(&format!(
-        "restart-policy: {} ({})\n",
+        .map_or_else(|| "?".into(), |(m, w)| format!("{m}/{w}s"));
+    let _ = writeln!(
+        out,
+        "restart-policy: {} ({})",
         agent.restart_policy.as_str(),
         max_window
-    ));
-    out.push_str(&format!("restart-count: {}\n", agent.restart_count));
+    );
+    let _ = writeln!(out, "restart-count: {}", agent.restart_count);
     if let Some(addr) = cfg.and_then(|c| c.escalate_to.as_deref()) {
-        out.push_str(&format!("escalate-to: {}\n", addr));
+        let _ = writeln!(out, "escalate-to: {addr}");
     }
-    out.push_str(&format!("escalation-depth: {}\n", escalation_depth));
+    let _ = writeln!(out, "escalation-depth: {escalation_depth}");
     out
 }
 
@@ -202,7 +181,7 @@ pub fn format_mail_list(mails: &[Mail]) -> String {
         let from = match &m.sender_id {
             Some(id) => {
                 let prefix: String = id.chars().take(8).collect();
-                format!("agent://{}", prefix)
+                format!("agent://{prefix}")
             }
             None => "-".to_string(),
         };
@@ -210,8 +189,9 @@ pub fn format_mail_list(mails: &[Mail]) -> String {
         let age = format_age((now - m.created_at).max(0));
         let preview: String = m.body.chars().take(60).collect();
         let preview = preview.replace('\n', " ");
-        out.push_str(&format!(
-            "{}  {}  {}  {}  {}  {}  {}\n",
+        let _ = writeln!(
+            out,
+            "{}  {}  {}  {}  {}  {}  {}",
             m.seq,
             m.id,
             from,
@@ -219,7 +199,7 @@ pub fn format_mail_list(mails: &[Mail]) -> String {
             m.state.as_str(),
             age,
             preview,
-        ));
+        );
     }
     out
 }
@@ -249,28 +229,7 @@ mod tests {
 
     #[test]
     fn format_age_days() {
-        assert_eq!(format_age(86400), "1d");
-        assert_eq!(format_age(172800), "2d");
-    }
-
-    #[test]
-    fn format_state_all_variants() {
-        // Just ensure they produce non-empty strings (actual colors are terminal-dependent)
-        for state in [
-            AgentState::Queued,
-            AgentState::Summoning,
-            AgentState::Active,
-            AgentState::Complete,
-            AgentState::Failed,
-            AgentState::Banished,
-            AgentState::Dormant,
-        ] {
-            assert!(!format_state(&state).is_empty());
-        }
-    }
-
-    #[test]
-    fn format_state_handles_queued() {
-        assert!(format_state(&AgentState::Queued).contains("queued"));
+        assert_eq!(format_age(86_400), "1d");
+        assert_eq!(format_age(172_800), "2d");
     }
 }

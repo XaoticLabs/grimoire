@@ -61,6 +61,38 @@ fn line(source: LineSource, line: &str) -> LineEvent {
     }
 }
 
+struct NoopProvider;
+impl Provider for NoopProvider {
+    fn name(&self) -> &'static str {
+        "noop"
+    }
+    fn capabilities(&self) -> grimoire::daemon::provider::ProviderCapabilities {
+        unimplemented!()
+    }
+    fn spawn(
+        &self,
+        _: &str,
+        _: &std::path::Path,
+        _: Option<&str>,
+    ) -> Result<grimoire::daemon::process_manager::SpawnedAgent> {
+        unimplemented!()
+    }
+    fn spawn_resume(
+        &self,
+        _: &str,
+        _: &str,
+        _: &std::path::Path,
+    ) -> Result<grimoire::daemon::process_manager::SpawnedAgent> {
+        unimplemented!()
+    }
+    fn extract_session_id(&self, _: &str) -> Option<String> {
+        None
+    }
+    fn extract_result(&self, _: &[String]) -> Option<String> {
+        None
+    }
+}
+
 #[tokio::test]
 async fn consume_lines_persists_each_line_as_event() {
     let db = fresh_db();
@@ -107,7 +139,7 @@ async fn consume_lines_publishes_streamevent_output_per_line() {
         (LineSource::Stderr, "err-2"),
         (LineSource::Stdout, "out-3"),
     ];
-    for (s, l) in lines.iter() {
+    for (s, l) in &lines {
         tx.send(line(*s, l)).await.unwrap();
     }
     drop(tx);
@@ -134,7 +166,7 @@ async fn consume_lines_publishes_streamevent_output_per_line() {
 async fn consume_lines_captures_session_id_from_provider() {
     struct FakeProvider;
     impl Provider for FakeProvider {
-        fn name(&self) -> &str {
+        fn name(&self) -> &'static str {
             "fake"
         }
         fn capabilities(&self) -> grimoire::daemon::provider::ProviderCapabilities {
@@ -157,7 +189,8 @@ async fn consume_lines_captures_session_id_from_provider() {
             unimplemented!()
         }
         fn extract_session_id(&self, line: &str) -> Option<String> {
-            line.strip_prefix("SID=").map(|s| s.to_string())
+            line.strip_prefix("SID=")
+                .map(std::string::ToString::to_string)
         }
         fn extract_result(&self, _: &[String]) -> Option<String> {
             None
@@ -233,38 +266,6 @@ async fn monitor_agent_local_path_matches_pre_refactor_fixture() {
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped());
     let child = cmd.spawn().unwrap();
-
-    struct NoopProvider;
-    impl Provider for NoopProvider {
-        fn name(&self) -> &str {
-            "noop"
-        }
-        fn capabilities(&self) -> grimoire::daemon::provider::ProviderCapabilities {
-            unimplemented!()
-        }
-        fn spawn(
-            &self,
-            _: &str,
-            _: &std::path::Path,
-            _: Option<&str>,
-        ) -> Result<grimoire::daemon::process_manager::SpawnedAgent> {
-            unimplemented!()
-        }
-        fn spawn_resume(
-            &self,
-            _: &str,
-            _: &str,
-            _: &std::path::Path,
-        ) -> Result<grimoire::daemon::process_manager::SpawnedAgent> {
-            unimplemented!()
-        }
-        fn extract_session_id(&self, _: &str) -> Option<String> {
-            None
-        }
-        fn extract_result(&self, _: &[String]) -> Option<String> {
-            None
-        }
-    }
 
     let provider: Arc<dyn Provider> = Arc::new(NoopProvider);
     let result = grimoire::daemon::process_manager::monitor_agent(

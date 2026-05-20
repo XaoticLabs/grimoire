@@ -70,7 +70,7 @@ impl FakeDaemon {
     pub async fn start_with_provider(provider: &str, version: &str) -> Self {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let local_addr = listener.local_addr().unwrap();
-        let addr_str = format!("http://{}", local_addr);
+        let addr_str = format!("http://{local_addr}");
 
         let received = Arc::new(Mutex::new(Vec::new()));
         let (to_worker, to_worker_rx) = mpsc::channel::<DaemonMessage>(64);
@@ -98,7 +98,7 @@ impl FakeDaemon {
         let config_path = tempdir.path().join("grimw.toml");
         let toml = format!(
             r#"
-daemon_url = "{addr}"
+daemon_url = "{addr_str}"
 secret = "test-secret"
 worker_id = "w-test"
 max_concurrent = 4
@@ -109,9 +109,6 @@ binary = "sh"
 args_template = ["-c", "{{task}}"]
 version = "{version}"
 "#,
-            addr = addr_str,
-            provider = provider,
-            version = version,
         );
         std::fs::write(&config_path, toml).unwrap();
 
@@ -152,9 +149,10 @@ version = "{version}"
                     last_seen_idx = i + 1;
                 }
             }
-            if started.elapsed() > Duration::from_secs(10) {
-                panic!("timed out waiting for {kind}");
-            }
+            assert!(
+                started.elapsed() <= Duration::from_secs(10),
+                "timed out waiting for {kind}"
+            );
             tokio::time::sleep(Duration::from_millis(20)).await;
         }
     }

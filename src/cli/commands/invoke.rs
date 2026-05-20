@@ -9,7 +9,7 @@ use crate::cli::client::DaemonClient;
 pub async fn run(id: String, message: String) -> Result<()> {
     let mut client = DaemonClient::connect().await?;
 
-    let to = format!("agent://{}", id);
+    let to = format!("agent://{id}");
     let params = serde_json::json!({
         "to": to,
         "body": message,

@@ -68,12 +68,11 @@ pub async fn run(
     if restart != "never" {
         let mr = max_n
             .zip(window_t)
-            .map(|(n, t)| format!("{}/{}s", n, t))
-            .unwrap_or_else(|| "?".into());
+            .map_or_else(|| "?".into(), |(n, t)| format!("{n}/{t}s"));
         tail = format!("(state: {}, restart: {} {})", result.state, restart, mr);
         if let Some(addr) = escalate_to {
             tail.pop(); // remove ')'
-            tail = format!("{}, escalate-to: {})", tail, addr);
+            tail = format!("{tail}, escalate-to: {addr})");
         }
     }
     println!(

@@ -11,8 +11,9 @@ use std::sync::{Arc, Mutex};
 use anyhow::Result;
 use async_trait::async_trait;
 
-use grimoire::daemon::agent_manager::AgentManager;
+use grimoire::daemon::agent_manager::{AgentManager, Lane};
 use grimoire::daemon::event_bus::EventBus;
+use grimoire::daemon::scheduler::Dispatcher;
 use grimoire::daemon::executor::{ExecuteRequest, Executor, ExecutorHandle, LocalExecutor};
 use grimoire::daemon::persistence::Database;
 use grimoire::daemon::provider_registry::ProviderRegistry;
@@ -108,7 +109,7 @@ async fn agent_manager_summon_uses_executor() {
             })
         }
 
-        fn name(&self) -> &str {
+        fn name(&self) -> &'static str {
             "mock"
         }
     }
@@ -124,8 +125,6 @@ async fn agent_manager_summon_uses_executor() {
     // (executor call). The scheduler normally drives dispatch; here we mirror
     // its claim+dispatch sequence by hand to keep the test focused on the
     // executor wire-up.
-    use grimoire::daemon::agent_manager::Lane;
-    use grimoire::daemon::scheduler::Dispatcher;
     let agent = manager
         .enqueue(
             "echo hi",
@@ -183,7 +182,7 @@ async fn agent_manager_invoke_passes_resume_session_id() {
                 completion,
             })
         }
-        fn name(&self) -> &str {
+        fn name(&self) -> &'static str {
             "resume_mock"
         }
     }

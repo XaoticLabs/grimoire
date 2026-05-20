@@ -68,7 +68,7 @@ async fn publish_scenario(bus: &EventBus, db: &Database) {
         bus.publish(StreamEvent::Output {
             agent_id: "A".to_string(),
             stream: "stdout".to_string(),
-            line: format!("a-out-{}", i),
+            line: format!("a-out-{i}"),
         });
     }
     // 2 ScrollProgress for "S"
@@ -108,7 +108,7 @@ async fn publish_scenario(bus: &EventBus, db: &Database) {
         bus.publish(StreamEvent::Output {
             agent_id: "A".to_string(),
             stream: "stdout".to_string(),
-            line: format!("a-out-{}", i),
+            line: format!("a-out-{i}"),
         });
     }
     let n = poll_count(db, 8, Duration::from_secs(2)).await;
@@ -180,7 +180,7 @@ async fn per_agent_seq_is_contiguous_after_reopen() {
             bus.publish(StreamEvent::Output {
                 agent_id: "Z".to_string(),
                 stream: "stdout".to_string(),
-                line: format!("{}", i),
+                line: format!("{i}"),
             });
         }
         poll_count(&db, 4, Duration::from_secs(2)).await;
@@ -236,6 +236,9 @@ async fn publish_order_preserved_across_reopen() {
         .collect();
     assert_eq!(
         observed,
-        lines.iter().map(|s| s.to_string()).collect::<Vec<_>>()
+        lines
+            .iter()
+            .map(std::string::ToString::to_string)
+            .collect::<Vec<_>>()
     );
 }

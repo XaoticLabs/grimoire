@@ -53,7 +53,7 @@ fn migration_adds_restart_history_table() {
                     |r| r.get(0),
                 )
                 .unwrap();
-            assert_eq!(n, 1, "missing index {}", idx);
+            assert_eq!(n, 1, "missing index {idx}");
         }
     });
 }
@@ -70,8 +70,8 @@ fn migration_adds_supervision_columns() {
             "restart_count",
             "escalation_depth",
         ] {
-            let sql = format!("SELECT {} FROM agents LIMIT 0", col);
-            assert!(c.prepare(&sql).is_ok(), "missing column {}", col);
+            let sql = format!("SELECT {col} FROM agents LIMIT 0");
+            assert!(c.prepare(&sql).is_ok(), "missing column {col}");
         }
     });
 }

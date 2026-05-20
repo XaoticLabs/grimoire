@@ -1,0 +1,10 @@
+edition = "2024"
+max_width = 100
+hard_tabs = false
+tab_spaces = 4
+newline_style = "Unix"
+use_field_init_shorthand = true
+use_try_shorthand = true
+# Stable-only options below; nightly-only options (group_imports, imports_granularity,
+# wrap_comments, format_code_in_doc_comments) are intentionally omitted so
+# `cargo fmt` works on stable. Re-enable when project moves to a nightly fmt step.

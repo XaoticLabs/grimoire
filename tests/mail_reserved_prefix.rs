@@ -155,5 +155,5 @@ async fn mail_send_accepts_agent_prefix() {
         req,
     )
     .await;
-    assert!(resp.error.is_none(), "expected success: {:?}", resp);
+    assert!(resp.error.is_none(), "expected success: {resp:?}");
 }

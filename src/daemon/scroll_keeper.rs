@@ -58,7 +58,7 @@ impl ScrollKeeper {
                         match new_state {
                             AgentState::Complete => self.handle_agent_completion(agent_id).await,
                             AgentState::Failed | AgentState::Banished => {
-                                self.handle_agent_failure(agent_id).await
+                                self.handle_agent_failure(agent_id).await;
                             }
                             AgentState::Restarting => {
                                 debug!(agent_id = %agent_id, "scroll-keeper: ignoring transient Restarting state");
@@ -71,7 +71,6 @@ impl ScrollKeeper {
                     }
                     Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
                         warn!(skipped = n, "ScrollKeeper lagged, some events missed");
-                        continue;
                     }
                     Err(_) => break,
                     _ => {}
@@ -148,7 +147,7 @@ impl ScrollKeeper {
         self.validate_dag(&scroll_id)?;
 
         // Detect file conflicts
-        let conflicts = self.detect_all_conflicts(&tasks);
+        let conflicts = Self::detect_all_conflicts(&tasks);
 
         info!(scroll_id = %scroll_id, name = %spec.name, tasks = tasks.len(), "Scroll inscribed");
 
@@ -164,7 +163,7 @@ impl ScrollKeeper {
         let scroll = self
             .db
             .get_scroll(scroll_id)?
-            .ok_or_else(|| anyhow::anyhow!("Scroll not found: {}", scroll_id))?;
+            .ok_or_else(|| anyhow::anyhow!("Scroll not found: {scroll_id}"))?;
 
         if scroll.state != ScrollState::Inscribed {
             return Err(anyhow::anyhow!(
@@ -215,7 +214,7 @@ impl ScrollKeeper {
         let scroll = self
             .db
             .get_scroll(scroll_id)?
-            .ok_or_else(|| anyhow::anyhow!("Scroll not found: {}", scroll_id))?;
+            .ok_or_else(|| anyhow::anyhow!("Scroll not found: {scroll_id}"))?;
 
         let tasks = self.db.get_tasks_for_scroll(scroll_id)?;
 
@@ -267,7 +266,7 @@ impl ScrollKeeper {
             .filter(|r| r.state == TaskState::Active || r.state == TaskState::Ready)
             .cloned()
             .collect();
-        let conflicts = self.detect_all_conflicts(&conflictable);
+        let conflicts = Self::detect_all_conflicts(&conflictable);
 
         Ok(ScrollStatus {
             scroll,
@@ -376,9 +375,8 @@ impl ScrollKeeper {
         self.skip_downstream(&task.id);
 
         // Check if scroll is done
-        let tasks = match self.db.get_tasks_for_scroll(&task.scroll_id) {
-            Ok(r) => r,
-            Err(_) => return,
+        let Ok(tasks) = self.db.get_tasks_for_scroll(&task.scroll_id) else {
+            return;
         };
 
         let all_terminal = tasks.iter().all(|r| {
@@ -400,9 +398,8 @@ impl ScrollKeeper {
     }
 
     fn skip_downstream(&self, task_id: &str) {
-        let dependents = match self.db.get_task_dependents(task_id) {
-            Ok(d) => d,
-            Err(_) => return,
+        let Ok(dependents) = self.db.get_task_dependents(task_id) else {
+            return;
         };
 
         for dep_id in dependents {
@@ -515,38 +512,10 @@ impl ScrollKeeper {
         let mut visited = HashSet::new();
         let mut in_stack = HashSet::new();
 
-        fn dfs(
-            node: &str,
-            adj: &HashMap<String, Vec<String>>,
-            visited: &mut HashSet<String>,
-            in_stack: &mut HashSet<String>,
-        ) -> bool {
-            if in_stack.contains(node) {
-                return true; // cycle
-            }
-            if visited.contains(node) {
-                return false;
-            }
-            visited.insert(node.to_string());
-            in_stack.insert(node.to_string());
-
-            if let Some(neighbors) = adj.get(node) {
-                for neighbor in neighbors {
-                    if dfs(neighbor, adj, visited, in_stack) {
-                        return true;
-                    }
-                }
-            }
-
-            in_stack.remove(node);
-            false
-        }
-
         for id in &all_ids {
-            if dfs(id, &adj, &mut visited, &mut in_stack) {
+            if dag_has_cycle(id, &adj, &mut visited, &mut in_stack) {
                 return Err(anyhow::anyhow!(
-                    "Dependency cycle detected in scroll {}",
-                    scroll_id
+                    "Dependency cycle detected in scroll {scroll_id}"
                 ));
             }
         }
@@ -554,7 +523,7 @@ impl ScrollKeeper {
         Ok(())
     }
 
-    fn detect_all_conflicts(&self, tasks: &[Task]) -> Vec<TaskConflict> {
+    fn detect_all_conflicts(tasks: &[Task]) -> Vec<TaskConflict> {
         let mut conflicts = Vec::new();
         for i in 0..tasks.len() {
             for j in (i + 1)..tasks.len() {
@@ -565,6 +534,35 @@ impl ScrollKeeper {
         }
         conflicts
     }
+}
+
+/// Cycle-detecting DFS helper for `validate_dag`. Returns `true` if a
+/// back-edge is found from `node`.
+fn dag_has_cycle(
+    node: &str,
+    adj: &HashMap<String, Vec<String>>,
+    visited: &mut HashSet<String>,
+    in_stack: &mut HashSet<String>,
+) -> bool {
+    if in_stack.contains(node) {
+        return true;
+    }
+    if visited.contains(node) {
+        return false;
+    }
+    visited.insert(node.to_string());
+    in_stack.insert(node.to_string());
+
+    if let Some(neighbors) = adj.get(node) {
+        for neighbor in neighbors {
+            if dag_has_cycle(neighbor, adj, visited, in_stack) {
+                return true;
+            }
+        }
+    }
+
+    in_stack.remove(node);
+    false
 }
 
 pub struct InscribeResult {

@@ -20,7 +20,7 @@ fn fresh_db() -> Arc<Database> {
 fn fake_peer(name: &str, token: &str) -> Peer {
     let token_hash = blake3::hash(token.as_bytes()).as_bytes().to_vec();
     Peer {
-        id: format!("p-{}", name),
+        id: format!("p-{name}"),
         daemon_id: String::new(),
         name: name.to_string(),
         url: "http://127.0.0.1:1".to_string(),

@@ -183,7 +183,7 @@ impl Database {
             Some(row) => {
                 let value_blob: Vec<u8> = row.get(2)?;
                 let value: serde_json::Value =
-                    serde_json::from_slice(&value_blob).map_err(|e| anyhow!("bad_json: {}", e))?;
+                    serde_json::from_slice(&value_blob).map_err(|e| anyhow!("bad_json: {e}"))?;
                 let version: i64 = row.get(3)?;
                 let updated_at: i64 = row.get(4)?;
                 Ok(Some(MemoryEntry {
@@ -254,7 +254,7 @@ impl Database {
                 |row| Ok((row.get::<_, i64>(0)?,)),
             )
             .ok();
-        let cur_version = cur.map(|(v,)| v.max(0) as u64).unwrap_or(0);
+        let cur_version = cur.map_or(0, |(v,)| v.max(0) as u64);
 
         if let Some(expected) = expected_version
             && cur_version != expected
@@ -309,7 +309,7 @@ impl Database {
                 |row| Ok((row.get::<_, i64>(0)?,)),
             )
             .ok();
-        let cur_version = cur.map(|(v,)| v.max(0) as u64).unwrap_or(0);
+        let cur_version = cur.map_or(0, |(v,)| v.max(0) as u64);
         if cur_version == 0 {
             return Ok(MemoryWriteOutcome::Written { version: 0 });
         }
@@ -359,7 +359,7 @@ impl Database {
             }
             Some(p) => {
                 // Segment-aligned prefix: matches `p` exactly OR `p/...`.
-                let like = format!("{}/%", p);
+                let like = format!("{p}/%");
                 let mut stmt = conn.prepare(
                     "SELECT key, version, updated_at, LENGTH(value)
                      FROM workspace_memory

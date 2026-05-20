@@ -1,5 +1,6 @@
 use anyhow::Result;
 use colored::Colorize;
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
 
 use crate::cli::stream_formatter;
 use crate::shared::protocol::StreamEvent;
@@ -23,7 +24,6 @@ pub async fn run(id: String, tail: Option<usize>) -> Result<()> {
         auth_token,
     };
 
-    use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
     let path = crate::shared::constants::socket_path();
     let stream = tokio::net::UnixStream::connect(&path).await?;
     let (reader, mut writer) = stream.into_split();
@@ -45,7 +45,7 @@ pub async fn run(id: String, tail: Option<usize>) -> Result<()> {
                     } else if let Some(formatted) = stream_formatter::format_stream_json(&line) {
                         // Suppress any line that the formatter declines
                         // (rate_limit notices, internal events, etc.)
-                        println!("{}", formatted);
+                        println!("{formatted}");
                     }
                 }
                 StreamEvent::StateChange { ref new_state, .. } => {
@@ -63,7 +63,7 @@ pub async fn run(id: String, tail: Option<usize>) -> Result<()> {
                         if let Some(formatted) =
                             stream_formatter::format_stream_json(&event.payload)
                         {
-                            println!("{}", formatted)
+                            println!("{formatted}");
                         }
                     } else if event.event_type == "stderr" {
                         eprintln!("{}", event.payload.dimmed());

@@ -144,7 +144,7 @@ async fn run_uds_server(state: AppState) -> Result<()> {
                 let req: RpcRequest = match serde_json::from_str(&line) {
                     Ok(r) => r,
                     Err(e) => {
-                        let err = RpcResponse::error(0, -32700, format!("Parse error: {}", e));
+                        let err = RpcResponse::error(0, -32700, format!("Parse error: {e}"));
                         let _ = write_response(&mut writer, &err).await;
                         continue;
                     }
@@ -173,11 +173,8 @@ async fn run_uds_server(state: AppState) -> Result<()> {
                     let params: BindParams = match serde_json::from_value(req.params.clone()) {
                         Ok(p) => p,
                         Err(e) => {
-                            let err = RpcResponse::error(
-                                req.id,
-                                -32602,
-                                format!("Invalid params: {}", e),
-                            );
+                            let err =
+                                RpcResponse::error(req.id, -32602, format!("Invalid params: {e}"));
                             let _ = write_response(&mut writer, &err).await;
                             continue;
                         }
@@ -221,7 +218,7 @@ async fn run_uds_server(state: AppState) -> Result<()> {
                                     return;
                                 }
                             }
-                            Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                            Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
                             Err(_) => return,
                         }
                     }
@@ -338,7 +335,7 @@ async fn run_http_server(state: AppState) -> Result<()> {
         .with_state(state);
 
     let port = constants::DAEMON_PORT;
-    let addr = format!("127.0.0.1:{}", port);
+    let addr = format!("127.0.0.1:{port}");
     let listener = tokio::net::TcpListener::bind(&addr).await?;
     info!(addr = %addr, "HTTP server listening");
 
@@ -442,7 +439,7 @@ async fn http_agent_events_sse(
                         yield Ok(Event::default().data(json));
                     }
                 }
-                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
                 Err(_) => break,
             }
         }
@@ -462,7 +459,7 @@ async fn http_all_events_sse(
                     let json = serde_json::to_string(&event).unwrap();
                     yield Ok(Event::default().data(json));
                 }
-                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
                 Err(_) => break,
             }
         }
@@ -498,7 +495,7 @@ async fn http_inscribe_scroll(
     };
     let max_concurrency = body
         .get("max_concurrency")
-        .and_then(|v| v.as_u64())
+        .and_then(serde_json::Value::as_u64)
         .map(|v| v as u32);
 
     let content = match std::fs::read_to_string(&spec_path) {
@@ -577,7 +574,7 @@ fn extract_request_token(headers: &axum::http::HeaderMap) -> Option<String> {
     {
         for part in s.split(';') {
             let kv = part.trim();
-            if let Some(v) = kv.strip_prefix(&format!("{}=", AUTH_COOKIE_NAME)) {
+            if let Some(v) = kv.strip_prefix(&format!("{AUTH_COOKIE_NAME}=")) {
                 return Some(v.to_string());
             }
         }
@@ -687,10 +684,7 @@ async fn http_logout() -> axum::response::Response {
         [
             (
                 axum::http::header::SET_COOKIE,
-                format!(
-                    "{}=; Max-Age=0; Path=/; HttpOnly; SameSite=Strict",
-                    AUTH_COOKIE_NAME
-                ),
+                format!("{AUTH_COOKIE_NAME}=; Max-Age=0; Path=/; HttpOnly; SameSite=Strict"),
             ),
             (axum::http::header::CONTENT_TYPE, "text/plain".to_string()),
         ],
@@ -708,10 +702,8 @@ fn login_success_response(token: &str) -> axum::response::Response {
     // HttpOnly + SameSite=Strict: no JS access, no cross-site CSRF.
     // No `Secure` flag because the daemon listens on plain HTTP loopback;
     // when TLS lands (Part 6 Track A §3 follow-on), add it conditionally.
-    let cookie = format!(
-        "{}={}; Path=/; HttpOnly; SameSite=Strict; Max-Age=86400",
-        AUTH_COOKIE_NAME, token
-    );
+    let cookie =
+        format!("{AUTH_COOKIE_NAME}={token}; Path=/; HttpOnly; SameSite=Strict; Max-Age=86400");
     (
         axum::http::StatusCode::SEE_OTHER,
         [
@@ -822,7 +814,7 @@ mod auth_tests {
         let mut h = axum::http::HeaderMap::new();
         h.insert(
             axum::http::header::AUTHORIZATION,
-            format!("Bearer {}", t).parse().unwrap(),
+            format!("Bearer {t}").parse().unwrap(),
         );
         h
     }
@@ -851,16 +843,13 @@ mod auth_tests {
 
     #[test]
     fn extract_cookie_alone() {
-        let h = headers_cookie(&format!("{}=tok1", AUTH_COOKIE_NAME));
+        let h = headers_cookie(&format!("{AUTH_COOKIE_NAME}=tok1"));
         assert_eq!(extract_request_token(&h).as_deref(), Some("tok1"));
     }
 
     #[test]
     fn extract_cookie_among_others() {
-        let h = headers_cookie(&format!(
-            "other=foo; {}=tok2; trailing=bar",
-            AUTH_COOKIE_NAME
-        ));
+        let h = headers_cookie(&format!("other=foo; {AUTH_COOKIE_NAME}=tok2; trailing=bar"));
         assert_eq!(extract_request_token(&h).as_deref(), Some("tok2"));
     }
 
@@ -869,7 +858,7 @@ mod auth_tests {
         let mut h = headers_bearer("from-header");
         h.insert(
             axum::http::header::COOKIE,
-            format!("{}=from-cookie", AUTH_COOKIE_NAME).parse().unwrap(),
+            format!("{AUTH_COOKIE_NAME}=from-cookie").parse().unwrap(),
         );
         assert_eq!(extract_request_token(&h).as_deref(), Some("from-header"));
     }
@@ -933,7 +922,7 @@ mod auth_tests {
     async fn protected_route_accepts_cookie() {
         let req = Request::builder()
             .uri("/api/ping")
-            .header("cookie", format!("{}=secret", AUTH_COOKIE_NAME))
+            .header("cookie", format!("{AUTH_COOKIE_NAME}=secret"))
             .body(Body::empty())
             .unwrap();
         assert_eq!(status_of(router_with("secret"), req).await, StatusCode::OK);
@@ -943,7 +932,7 @@ mod auth_tests {
     async fn protected_route_rejects_cookie_with_wrong_value() {
         let req = Request::builder()
             .uri("/api/ping")
-            .header("cookie", format!("{}=wrong", AUTH_COOKIE_NAME))
+            .header("cookie", format!("{AUTH_COOKIE_NAME}=wrong"))
             .body(Body::empty())
             .unwrap();
         assert_eq!(
@@ -975,6 +964,6 @@ mod auth_tests {
             .unwrap()
             .to_str()
             .unwrap();
-        assert!(ct.starts_with("application/json"), "got {}", ct);
+        assert!(ct.starts_with("application/json"), "got {ct}");
     }
 }

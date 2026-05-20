@@ -178,7 +178,7 @@ async fn run_remove(wake_id: String) -> Result<()> {
         eprintln!("{} {}", "Error:".red(), error.message);
         std::process::exit(1);
     }
-    println!("removed: {}", wake_id);
+    println!("removed: {wake_id}");
     Ok(())
 }
 

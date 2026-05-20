@@ -549,11 +549,19 @@ pub struct TaskConflict {
 
 impl TaskConflict {
     pub fn detect(a: &Task, b: &Task) -> Option<Self> {
-        let a_patterns: HashSet<&str> = a.file_patterns.iter().map(|s| s.as_str()).collect();
-        let b_patterns: HashSet<&str> = b.file_patterns.iter().map(|s| s.as_str()).collect();
+        let a_patterns: HashSet<&str> = a
+            .file_patterns
+            .iter()
+            .map(std::string::String::as_str)
+            .collect();
+        let b_patterns: HashSet<&str> = b
+            .file_patterns
+            .iter()
+            .map(std::string::String::as_str)
+            .collect();
         let overlap: Vec<String> = a_patterns
             .intersection(&b_patterns)
-            .map(|s| s.to_string())
+            .map(std::string::ToString::to_string)
             .collect();
         if overlap.is_empty() {
             None
@@ -720,7 +728,7 @@ mod tests {
         Task {
             id: id.to_string(),
             scroll_id: "scroll1".to_string(),
-            name: format!("Task {}", id),
+            name: format!("Task {id}"),
             prompt: "test task".to_string(),
             state: TaskState::Ready,
             agent_id: None,

@@ -209,9 +209,8 @@ impl PeerRegistry {
     }
 
     pub async fn remove_peer(&self, name: &str) -> Result<bool> {
-        let peer = match self.db.get_peer_by_name(name)? {
-            Some(p) => p,
-            None => return Ok(false),
+        let Some(peer) = self.db.get_peer_by_name(name)? else {
+            return Ok(false);
         };
         // Mark Removing so any in-flight drainer halts cleanly.
         self.db.set_peer_state(&peer.id, PeerState::Removing)?;
@@ -227,9 +226,8 @@ impl PeerRegistry {
     }
 
     pub async fn ping_peer(&self, name: &str) -> Result<(u64, String)> {
-        let peer = match self.db.get_peer_by_name(name)? {
-            Some(p) => p,
-            None => return Err(anyhow!("peer_not_found")),
+        let Some(peer) = self.db.get_peer_by_name(name)? else {
+            return Err(anyhow!("peer_not_found"));
         };
         // Minimal ping: report current state + zero RTT for now (full
         // request/response over the channel is layered on Heartbeat / HeartbeatAck

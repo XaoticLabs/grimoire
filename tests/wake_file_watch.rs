@@ -119,7 +119,7 @@ async fn rapid_changes_coalesce_to_one_fire() {
 
     let target = dir.path().join("src/x.rs");
     for i in 0..10 {
-        std::fs::write(&target, format!("// {}\n", i)).unwrap();
+        std::fs::write(&target, format!("// {i}\n")).unwrap();
     }
     tokio::time::sleep(Duration::from_millis(500)).await;
 

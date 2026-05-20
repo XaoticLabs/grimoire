@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use chrono::Utc;
 use tempfile::TempDir;
 
 use grimoire::daemon::event_bus::EventBus;
@@ -269,7 +270,6 @@ async fn boot_reconcile_orphan_row_deletes_and_cascades() {
     let _ = (&bus, &td);
 
     // Insert a row whose path doesn't exist on disk.
-    use chrono::Utc;
     let ws = Workspace {
         id: "ghost".into(),
         path: PathBuf::from("/nonexistent/ghost"),

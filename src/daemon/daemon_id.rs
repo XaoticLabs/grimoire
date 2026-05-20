@@ -56,26 +56,25 @@ pub fn load_or_mint(path: &Path) -> Result<DaemonId> {
 
     // `persist_noclobber` would error if another racer wrote first; we want
     // to read theirs in that case.
-    match tmp.persist_noclobber(path) {
-        Ok(_) => Ok(id),
-        Err(_) => {
-            // Lost the race; load the winner's value.
-            let contents = fs::read_to_string(path)?;
-            let trimmed = contents.trim().to_string();
-            if !validate_daemon_id(&trimmed) {
-                return Err(anyhow!(
-                    "invalid_daemon_id_file: contents at {} are not 8 lowercase hex chars",
-                    path.display()
-                ));
-            }
-            Ok(trimmed)
+    if tmp.persist_noclobber(path).is_ok() {
+        Ok(id)
+    } else {
+        // Lost the race; load the winner's value.
+        let contents = fs::read_to_string(path)?;
+        let trimmed = contents.trim().to_string();
+        if !validate_daemon_id(&trimmed) {
+            return Err(anyhow!(
+                "invalid_daemon_id_file: contents at {} are not 8 lowercase hex chars",
+                path.display()
+            ));
         }
+        Ok(trimmed)
     }
 }
 
 /// Display form: `grimd-<id>`.
 pub fn display(id: &str) -> String {
-    format!("grimd-{}", id)
+    format!("grimd-{id}")
 }
 
 #[cfg(test)]
@@ -107,7 +106,7 @@ mod tests {
         let path = dir.path().join("daemon.id");
         fs::write(&path, "NOTHEX").unwrap();
         let err = load_or_mint(&path).unwrap_err();
-        assert!(format!("{}", err).contains("invalid_daemon_id_file"));
+        assert!(format!("{err}").contains("invalid_daemon_id_file"));
     }
 
     #[cfg(unix)]

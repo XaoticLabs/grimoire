@@ -112,7 +112,7 @@ fn make_scheduler(
     rdisp: Arc<dyn RestartDispatcher>,
 ) -> Arc<Scheduler> {
     let workers = Arc::new(WorkerRegistry::new_with_bus(
-        Duration::from_secs(60),
+        Duration::from_mins(1),
         bus.clone(),
     ));
     let cap = Arc::new(AtomicU32::new(cap));
@@ -192,7 +192,7 @@ async fn restart_dispatch_passes_session_id() {
                 completion,
             })
         }
-        fn name(&self) -> &str {
+        fn name(&self) -> &'static str {
             "rec"
         }
     }
@@ -244,7 +244,7 @@ async fn restart_dispatch_emits_restarted_event() {
                 completion,
             })
         }
-        fn name(&self) -> &str {
+        fn name(&self) -> &'static str {
             "stub"
         }
     }

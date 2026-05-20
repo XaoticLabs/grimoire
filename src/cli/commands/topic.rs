@@ -67,9 +67,9 @@ async fn run_unfederate(topic: String, peer: String) -> Result<()> {
     }
     let result: TopicUnfederateResult = serde_json::from_value(resp.result.unwrap_or_default())?;
     if result.removed {
-        println!("Unfederated topic {} from peer {}", topic, peer);
+        println!("Unfederated topic {topic} from peer {peer}");
     } else {
-        println!("No federation row found for {}/{}", topic, peer);
+        println!("No federation row found for {topic}/{peer}");
     }
     Ok(())
 }

@@ -12,6 +12,8 @@
 //! Tests drive the scheduler via [`Scheduler::tick_now`] without spawning the
 //! background task — see `tests/scheduler.rs`.
 
+use std::collections::HashSet;
+use std::fmt::Write as _;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Duration;
@@ -82,6 +84,10 @@ pub struct Scheduler {
     state_lookup: Option<Arc<dyn AgentStateLookup>>,
     supervisor: Option<Arc<Supervisor>>,
     restart_dispatcher: Option<Arc<dyn RestartDispatcher>>,
+    /// Providers the daemon's own `LocalExecutor` can run. The eligibility
+    /// check waives the "must have a remote worker" requirement for these,
+    /// so a local-only daemon (no federated workers) can dispatch.
+    local_providers: HashSet<String>,
 }
 
 impl Scheduler {
@@ -103,7 +109,22 @@ impl Scheduler {
             state_lookup: None,
             supervisor: None,
             restart_dispatcher: None,
+            local_providers: HashSet::new(),
         }
+    }
+
+    /// Declare providers handled by the daemon's in-process `LocalExecutor`.
+    /// Dispatch for these will not be gated on a registered remote worker.
+    /// When the local executor and a matching remote worker both exist, the
+    /// dispatcher (AgentManager) currently routes locally — federated
+    /// placement is a separate concern owned by the executor layer.
+    pub fn with_local_providers<I, S>(mut self, providers: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.local_providers = providers.into_iter().map(Into::into).collect();
+        self
     }
 
     /// Wire mail-wake. When both a waker and a state lookup are set, every
@@ -177,8 +198,11 @@ impl Scheduler {
 
             // Eligibility peek: provider_name=None means "any worker" — skip
             // the check entirely and let dispatch_internal pick. When set,
-            // require at least one registered worker that advertises it.
+            // require at least one registered worker that advertises it,
+            // OR that the provider is listed in `local_providers` (the
+            // daemon's in-process LocalExecutor handles it).
             if let Some(provider) = row.provider_name.as_deref()
+                && !self.local_providers.contains(provider)
                 && !self
                     .workers
                     .has_eligible_worker(provider, &VersionReq::STAR)
@@ -219,7 +243,7 @@ impl Scheduler {
                     in_flight += 1;
                 }
                 Err(e) => {
-                    warn!(agent_id = %row.id, error = %e, "dispatch failed; requeueing");
+                    warn!(agent_id = %row.id, error = %e, "dispatch failed; requeuing");
                     let mut rollback = row.clone();
                     rollback.block_reason = None;
                     if let Err(req_err) = self.db.requeue(&rollback) {
@@ -280,11 +304,11 @@ impl Scheduler {
 
     pub fn should_wake(event: &StreamEvent) -> bool {
         match event {
-            StreamEvent::AgentQueued { .. } => true,
-            StreamEvent::WorkerRegistered { .. } => true,
+            StreamEvent::AgentQueued { .. }
+            | StreamEvent::WorkerRegistered { .. }
+            | StreamEvent::MailReceived { .. }
+            | StreamEvent::RestartScheduled { .. } => true,
             StreamEvent::StateChange { new_state, .. } => new_state.is_terminal(),
-            StreamEvent::MailReceived { .. } => true,
-            StreamEvent::RestartScheduled { .. } => true,
             _ => false,
         }
     }
@@ -292,9 +316,8 @@ impl Scheduler {
     /// Drain due pending restarts and dispatch them under the cap. Returns
     /// the updated in-flight count.
     async fn tick_supervision(&self, mut in_flight: usize, cap: usize) -> Result<usize> {
-        let (sup, dispatcher) = match (&self.supervisor, &self.restart_dispatcher) {
-            (Some(s), Some(d)) => (s, d),
-            _ => return Ok(in_flight),
+        let (Some(sup), Some(dispatcher)) = (&self.supervisor, &self.restart_dispatcher) else {
+            return Ok(in_flight);
         };
         if in_flight >= cap {
             return Ok(in_flight);
@@ -324,9 +347,8 @@ impl Scheduler {
     /// Process mail-wake candidates. Returns the updated in-flight count.
     /// Skips silently if mail-wake is not configured.
     async fn tick_mail_wake(&self, mut in_flight: usize, cap: usize) -> Result<usize> {
-        let (waker, lookup) = match (&self.mail_waker, &self.state_lookup) {
-            (Some(w), Some(l)) => (w, l),
-            _ => return Ok(in_flight),
+        let (Some(waker), Some(lookup)) = (&self.mail_waker, &self.state_lookup) else {
+            return Ok(in_flight);
         };
 
         let candidates = self.db.list_recipients_with_pending_wake_eligible_mail()?;
@@ -335,9 +357,8 @@ impl Scheduler {
                 break;
             }
 
-            let state_session = match lookup.get_state_and_session(&agent_id)? {
-                Some(s) => s,
-                None => continue,
+            let Some(state_session) = lookup.get_state_and_session(&agent_id)? else {
+                continue;
             };
             // Only Dormant agents with a session_id can be woken. Complete
             // is the truly-finished state and is no longer a wake candidate;
@@ -346,9 +367,8 @@ impl Scheduler {
             if state_session.0 != AgentState::Dormant {
                 continue;
             }
-            let _session_id = match state_session.1 {
-                Some(s) => s,
-                None => continue,
+            let Some(_session_id) = state_session.1 else {
+                continue;
             };
 
             let pending = self.db.list_pending_wake_eligible(&agent_id)?;
@@ -426,7 +446,7 @@ pub(crate) fn build_wake_prompt(mails: &[crate::shared::types::Mail]) -> (String
     }
 
     if dropped > 0 {
-        buf.push_str(&format!("\n\n[... {} more messages truncated]", dropped));
+        let _ = write!(buf, "\n\n[... {dropped} more messages truncated]");
     }
     (buf, folded_ids)
 }

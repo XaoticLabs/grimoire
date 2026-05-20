@@ -83,7 +83,7 @@ async fn run_send(addr: &str, body: &str) -> Result<()> {
         std::process::exit(1);
     }
     if let Some(id) = result.mail_ids.first() {
-        println!("{}", id);
+        println!("{id}");
     } else {
         println!("delivered: {}", result.delivered);
     }

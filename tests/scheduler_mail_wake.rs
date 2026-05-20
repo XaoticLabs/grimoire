@@ -90,7 +90,7 @@ impl Executor for StubExecutor {
             completion,
         })
     }
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "stub"
     }
 }
@@ -114,7 +114,7 @@ fn seed_dormant_with_session(db: &Database, id: &str, session_id: Option<&str>) 
         provider: Some("claude".into()),
         cwd: PathBuf::from("/tmp"),
         pid: None,
-        session_id: session_id.map(|s| s.to_string()),
+        session_id: session_id.map(std::string::ToString::to_string),
         exit_code: Some(0),
         created_at: Utc::now(),
         updated_at: Utc::now(),
@@ -158,7 +158,7 @@ fn build_scheduler(
     cap: u32,
 ) -> Arc<Scheduler> {
     let workers = Arc::new(WorkerRegistry::new_with_bus(
-        Duration::from_secs(60),
+        Duration::from_mins(1),
         bus.clone(),
     ));
     let cap = Arc::new(AtomicU32::new(cap));
@@ -235,7 +235,7 @@ async fn multiple_pending_mails_are_folded_into_single_invoke() {
     let waker = Arc::new(RecordingWaker::default());
     let id = seed_complete_with_session(&db, "fold0001", Some("sess-3"));
     for (i, body) in ["alpha", "beta", "gamma"].iter().enumerate() {
-        let mail_id = format!("mfld{:04}", i);
+        let mail_id = format!("mfld{i:04}");
         db.insert_mail(&make_pending_mail(&mail_id, &id, body, true))
             .unwrap();
     }
@@ -252,7 +252,7 @@ async fn multiple_pending_mails_are_folded_into_single_invoke() {
     assert!(prompt.contains("---"));
 
     for i in 0..3 {
-        let mail_id = format!("mfld{:04}", i);
+        let mail_id = format!("mfld{i:04}");
         let m = db.get_mail(&mail_id).unwrap().unwrap();
         assert_eq!(m.state, MailState::Delivered);
     }

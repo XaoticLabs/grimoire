@@ -118,7 +118,7 @@ mod tests {
     #[test]
     fn extract_result_returns_last_lines() {
         let p = test_provider();
-        let lines: Vec<String> = (0..3).map(|i| format!("line {}", i)).collect();
+        let lines: Vec<String> = (0..3).map(|i| format!("line {i}")).collect();
         let result = p.extract_result(&lines).unwrap();
         assert_eq!(result, "line 0\nline 1\nline 2");
     }

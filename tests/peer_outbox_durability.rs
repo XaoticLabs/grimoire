@@ -16,7 +16,7 @@ fn fresh_db() -> Arc<Database> {
 
 fn peer_with(name: &str) -> Peer {
     Peer {
-        id: format!("p-{}", name),
+        id: format!("p-{name}"),
         daemon_id: "12345678".into(),
         name: name.into(),
         url: "http://127.0.0.1:1".into(),

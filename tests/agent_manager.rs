@@ -61,7 +61,7 @@ impl Executor for MockExecutor {
         })
     }
 
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "mock"
     }
 }
@@ -134,7 +134,7 @@ async fn enqueue_publishes_agent_queued_event() {
                 saw_event = true;
                 break;
             }
-            Ok(Ok(_)) | Err(_) => continue,
+            Ok(Ok(_)) | Err(_) => {}
             Ok(Err(_)) => break,
         }
     }
@@ -280,7 +280,7 @@ async fn banish_queued_sets_state_banished() {
                     break;
                 }
             }
-            Ok(Ok(_)) | Err(_) => continue,
+            Ok(Ok(_)) | Err(_) => {}
             Ok(Err(_)) => break,
         }
     }

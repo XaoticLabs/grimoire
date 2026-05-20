@@ -8,72 +8,69 @@ use crate::shared::types::Scroll;
 pub async fn run(id: Option<String>, activate: bool, abandon: bool) -> Result<()> {
     let mut client = DaemonClient::connect().await?;
 
-    match id {
-        Some(ref scroll_id) => {
-            if activate {
-                let params = serde_json::json!({"id": scroll_id});
-                let response = client.call("scroll.activate", params).await?;
-                if let Some(error) = response.error {
-                    eprintln!("{} {}", "Error:".red(), error.message);
-                    std::process::exit(1);
-                }
-                println!("{} Scroll {} activated", "✓".green(), scroll_id);
-            } else if abandon {
-                let params = serde_json::json!({"id": scroll_id});
-                let response = client.call("scroll.abandon", params).await?;
-                if let Some(error) = response.error {
-                    eprintln!("{} {}", "Error:".red(), error.message);
-                    std::process::exit(1);
-                }
-                println!("{} Scroll {} abandoned", "✓".green(), scroll_id);
-            } else {
-                // Show status
-                let params = serde_json::json!({"id": scroll_id});
-                let response = client.call("scroll.status", params).await?;
-                if let Some(error) = response.error {
-                    eprintln!("{} {}", "Error:".red(), error.message);
-                    std::process::exit(1);
-                }
-
-                let status: ScrollStatus = serde_json::from_value(response.result.unwrap())?;
-                print_scroll_status(&status);
+    if let Some(ref scroll_id) = id {
+        if activate {
+            let params = serde_json::json!({"id": scroll_id});
+            let response = client.call("scroll.activate", params).await?;
+            if let Some(error) = response.error {
+                eprintln!("{} {}", "Error:".red(), error.message);
+                std::process::exit(1);
             }
-        }
-        None => {
-            // List all scrolls
-            let response = client.call("scroll.list", serde_json::json!({})).await?;
+            println!("{} Scroll {} activated", "✓".green(), scroll_id);
+        } else if abandon {
+            let params = serde_json::json!({"id": scroll_id});
+            let response = client.call("scroll.abandon", params).await?;
+            if let Some(error) = response.error {
+                eprintln!("{} {}", "Error:".red(), error.message);
+                std::process::exit(1);
+            }
+            println!("{} Scroll {} abandoned", "✓".green(), scroll_id);
+        } else {
+            // Show status
+            let params = serde_json::json!({"id": scroll_id});
+            let response = client.call("scroll.status", params).await?;
             if let Some(error) = response.error {
                 eprintln!("{} {}", "Error:".red(), error.message);
                 std::process::exit(1);
             }
 
-            let result: serde_json::Value = response.result.unwrap();
-            let scrolls: Vec<Scroll> = serde_json::from_value(result["scrolls"].clone())?;
+            let status: ScrollStatus = serde_json::from_value(response.result.unwrap())?;
+            print_scroll_status(&status);
+        }
+    } else {
+        // List all scrolls
+        let response = client.call("scroll.list", serde_json::json!({})).await?;
+        if let Some(error) = response.error {
+            eprintln!("{} {}", "Error:".red(), error.message);
+            std::process::exit(1);
+        }
 
-            if scrolls.is_empty() {
-                println!(
-                    "No scrolls. Use {} to create one.",
-                    "grim inscribe <spec.md>".dimmed()
-                );
-                return Ok(());
-            }
+        let result: serde_json::Value = response.result.unwrap();
+        let scrolls: Vec<Scroll> = serde_json::from_value(result["scrolls"].clone())?;
 
-            for scroll in &scrolls {
-                let state_colored = match scroll.state.as_str() {
-                    "inscribed" => scroll.state.to_string().blue(),
-                    "active" => scroll.state.to_string().yellow(),
-                    "complete" => scroll.state.to_string().green(),
-                    "failed" => scroll.state.to_string().red(),
-                    "abandoned" => scroll.state.to_string().dimmed(),
-                    _ => scroll.state.to_string().normal(),
-                };
-                println!(
-                    "  {} {} [{}]",
-                    scroll.id.dimmed(),
-                    scroll.name.bold(),
-                    state_colored,
-                );
-            }
+        if scrolls.is_empty() {
+            println!(
+                "No scrolls. Use {} to create one.",
+                "grim inscribe <spec.md>".dimmed()
+            );
+            return Ok(());
+        }
+
+        for scroll in &scrolls {
+            let state_colored = match scroll.state.as_str() {
+                "inscribed" => scroll.state.to_string().blue(),
+                "active" => scroll.state.to_string().yellow(),
+                "complete" => scroll.state.to_string().green(),
+                "failed" => scroll.state.to_string().red(),
+                "abandoned" => scroll.state.to_string().dimmed(),
+                _ => scroll.state.to_string().normal(),
+            };
+            println!(
+                "  {} {} [{}]",
+                scroll.id.dimmed(),
+                scroll.name.bold(),
+                state_colored,
+            );
         }
     }
 
@@ -123,7 +120,7 @@ fn print_scroll_status(status: &ScrollStatus) {
             .task
             .agent_id
             .as_ref()
-            .map(|id| format!("agent:{}", id))
+            .map(|id| format!("agent:{id}"))
             .unwrap_or_default();
 
         let dep_info = if !rs.depends_on_names.is_empty()

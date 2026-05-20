@@ -1,3 +1,5 @@
+use std::fmt::Write as _;
+
 use colored::Colorize;
 
 /// Parse and format a Claude Code stream-json line into human-readable output.
@@ -7,28 +9,31 @@ pub fn format_stream_json(line: &str) -> Option<String> {
 
     let event_type = v.get("type")?.as_str()?;
 
+    // `rate_limit_event` is split from the catch-all `_` so the explicit
+    // suppression of that known event type stays self-documenting.
+    #[allow(clippy::match_same_arms)]
     match event_type {
-        "system" => format_system(&v),
+        "system" => Some(format_system(&v)),
         "assistant" => format_assistant(&v),
-        "tool_use" => format_tool_use(&v),
-        "tool_result" => format_tool_result(&v),
-        "result" => format_result(&v),
+        "tool_use" => Some(format_tool_use(&v)),
+        "tool_result" => Some(format_tool_result(&v)),
+        "result" => Some(format_result(&v)),
         "rate_limit_event" => None, // suppress
         _ => None,
     }
 }
 
-fn format_system(v: &serde_json::Value) -> Option<String> {
+fn format_system(v: &serde_json::Value) -> String {
     let model = v.get("model").and_then(|m| m.as_str()).unwrap_or("unknown");
     let session_id = v.get("session_id").and_then(|s| s.as_str()).unwrap_or("?");
     let short_session = &session_id[..8.min(session_id.len())];
 
-    Some(format!(
+    format!(
         "{} {} session {}",
         "◆".cyan(),
         model.bold(),
         short_session.dimmed()
-    ))
+    )
 }
 
 fn format_assistant(v: &serde_json::Value) -> Option<String> {
@@ -74,25 +79,25 @@ fn format_tool_call(name: &str, input: &serde_json::Value) -> String {
     match name {
         "Bash" => {
             if let Some(cmd) = input.get("command").and_then(|c| c.as_str()) {
-                out.push_str(&format!("\n  {}", cmd.dimmed()));
+                let _ = write!(out, "\n  {}", cmd.dimmed());
             }
         }
         "Read" | "Write" | "Edit" => {
             if let Some(path) = input.get("file_path").and_then(|p| p.as_str()) {
-                out.push_str(&format!(" {}", path.dimmed()));
+                let _ = write!(out, " {}", path.dimmed());
             }
         }
         "Glob" | "Grep" => {
             if let Some(pattern) = input.get("pattern").and_then(|p| p.as_str()) {
-                out.push_str(&format!(" {}", pattern.dimmed()));
+                let _ = write!(out, " {}", pattern.dimmed());
             }
         }
         _ => {
             // For unknown tools, show a compact summary of the input
             if let Some(obj) = input.as_object() {
-                let keys: Vec<&str> = obj.keys().map(|k| k.as_str()).collect();
+                let keys: Vec<&str> = obj.keys().map(std::string::String::as_str).collect();
                 if !keys.is_empty() {
-                    out.push_str(&format!(" ({})", keys.join(", ").dimmed()));
+                    let _ = write!(out, " ({})", keys.join(", ").dimmed());
                 }
             }
         }
@@ -102,15 +107,18 @@ fn format_tool_call(name: &str, input: &serde_json::Value) -> String {
     out
 }
 
-fn format_tool_use(v: &serde_json::Value) -> Option<String> {
+fn format_tool_use(v: &serde_json::Value) -> String {
     let name = v.get("name").and_then(|n| n.as_str()).unwrap_or("unknown");
     let input = v.get("input").cloned().unwrap_or(serde_json::Value::Null);
-    Some(format_tool_call(name, &input))
+    format_tool_call(name, &input)
 }
 
-fn format_tool_result(v: &serde_json::Value) -> Option<String> {
+fn format_tool_result(v: &serde_json::Value) -> String {
     let name = v.get("name").and_then(|n| n.as_str()).unwrap_or("tool");
-    let is_error = v.get("is_error").and_then(|e| e.as_bool()).unwrap_or(false);
+    let is_error = v
+        .get("is_error")
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false);
 
     if is_error {
         let error_text = v
@@ -118,12 +126,12 @@ fn format_tool_result(v: &serde_json::Value) -> Option<String> {
             .and_then(|c| c.as_str())
             .or_else(|| v.get("output").and_then(|o| o.as_str()))
             .unwrap_or("(error)");
-        Some(format!(
+        format!(
             "  {} {} {}\n",
             "✗".red(),
             name.dimmed(),
             error_text.red()
-        ))
+        )
     } else {
         // Show a brief summary for successful tool results
         let output = v
@@ -134,38 +142,44 @@ fn format_tool_result(v: &serde_json::Value) -> Option<String> {
         if let Some(text) = output {
             let lines: Vec<&str> = text.lines().collect();
             if lines.len() <= 5 {
-                Some(format!(
+                format!(
                     "  {} {}\n{}\n",
                     "✓".green(),
                     name.dimmed(),
                     text.dimmed()
-                ))
+                )
             } else {
                 // Truncate long output
                 let preview: String = lines[..3].join("\n");
-                Some(format!(
+                format!(
                     "  {} {} ({} lines)\n{}\n  {}\n",
                     "✓".green(),
                     name.dimmed(),
                     lines.len(),
                     preview.dimmed(),
                     "...".dimmed()
-                ))
+                )
             }
         } else {
-            Some(format!("  {} {}\n", "✓".green(), name.dimmed()))
+            format!("  {} {}\n", "✓".green(), name.dimmed())
         }
     }
 }
 
-fn format_result(v: &serde_json::Value) -> Option<String> {
+fn format_result(v: &serde_json::Value) -> String {
     let subtype = v
         .get("subtype")
         .and_then(|s| s.as_str())
         .unwrap_or("unknown");
-    let duration_ms = v.get("duration_ms").and_then(|d| d.as_u64()).unwrap_or(0);
-    let cost = v.get("total_cost_usd").and_then(|c| c.as_f64());
-    let turns = v.get("num_turns").and_then(|t| t.as_u64()).unwrap_or(0);
+    let duration_ms = v
+        .get("duration_ms")
+        .and_then(serde_json::Value::as_u64)
+        .unwrap_or(0);
+    let cost = v.get("total_cost_usd").and_then(serde_json::Value::as_f64);
+    let turns = v
+        .get("num_turns")
+        .and_then(serde_json::Value::as_u64)
+        .unwrap_or(0);
 
     let duration_str = if duration_ms > 60_000 {
         format!("{:.1}m", duration_ms as f64 / 60_000.0)
@@ -189,10 +203,10 @@ fn format_result(v: &serde_json::Value) -> Option<String> {
     );
 
     if let Some(c) = cost {
-        line.push_str(&format!(" ${:.4}", c));
+        let _ = write!(line, " ${c:.4}");
     }
 
-    Some(line)
+    line
 }
 
 #[cfg(test)]

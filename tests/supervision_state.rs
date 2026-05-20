@@ -20,7 +20,7 @@ fn is_supervisable_only_failed() {
         AgentState::Dormant,
         AgentState::Restarting,
     ] {
-        assert!(!s.is_supervisable(), "{} should not be supervisable", s);
+        assert!(!s.is_supervisable(), "{s} should not be supervisable");
     }
 }
 

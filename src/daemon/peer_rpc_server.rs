@@ -60,24 +60,19 @@ impl PeerService for PeerSvc {
         let mut inbound = req.into_inner();
 
         // First message must be Hello.
-        let first = match inbound.message().await? {
-            Some(m) => m,
-            None => return Err(Status::invalid_argument("stream closed before Hello")),
+        let Some(first) = inbound.message().await? else {
+            return Err(Status::invalid_argument("stream closed before Hello"));
         };
-        let hello = match first.msg {
-            Some(peer_outbound::Msg::Hello(h)) => h,
-            _ => return Err(Status::invalid_argument("first message must be Hello")),
+        let Some(peer_outbound::Msg::Hello(hello)) = first.msg else {
+            return Err(Status::invalid_argument("first message must be Hello"));
         };
 
         // --- Handshake validation ---
         let token_hash = blake3::hash(hello.bearer_token.as_bytes())
             .as_bytes()
             .to_vec();
-        let peer = match self.db.lookup_peer_by_token_hash(&token_hash) {
-            Ok(Some(p)) => p,
-            _ => {
-                return single_helloack_stream(self.daemon_id.clone(), false, "invalid_token");
-            }
+        let Ok(Some(peer)) = self.db.lookup_peer_by_token_hash(&token_hash) else {
+            return single_helloack_stream(self.daemon_id.clone(), false, "invalid_token");
         };
         if hello.protocol_version != crate::shared::constants::PEER_PROTOCOL_VERSION {
             self.bus.publish(StreamEvent::PeerHandshakeFailed {
@@ -135,10 +130,7 @@ impl PeerService for PeerSvc {
         let db = self.db.clone();
         tokio::spawn(async move {
             while let Some(msg) = inbound.next().await {
-                let msg = match msg {
-                    Ok(m) => m,
-                    Err(_) => break,
-                };
+                let Ok(msg) = msg else { break };
                 let _ = db.set_peer_last_seen(&peer_id_for_loop, unix_now());
                 match msg.msg {
                     Some(peer_outbound::Msg::Heartbeat(h)) => {
@@ -157,7 +149,7 @@ impl PeerService for PeerSvc {
                             Err(e) => MailAck {
                                 mail_id: d.mail_id.clone(),
                                 ok: false,
-                                reason: format!("inbox_error: {}", e),
+                                reason: format!("inbox_error: {e}"),
                             },
                         };
                         let _ = out_tx

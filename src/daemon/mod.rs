@@ -127,6 +127,40 @@ pub async fn start() -> Result<()> {
     manager.set_supervisor(supervisor.clone()).await;
     let _supervisor_task = supervisor.spawn();
 
+    // Scheduler — promotes Queued agents to Active per global capacity and
+    // dispatches supervised restarts when they come due. The daemon's
+    // single load-bearing tick loop: without it, `grim summon` would queue
+    // a row that never starts, and `Failed` agents with `--restart on_failure`
+    // would never resurface. Wired here (rather than per-test) because all
+    // its collaborators (AgentManager as Dispatcher/MailWaker/RestartDispatcher,
+    // WorkerRegistry, Supervisor) are now constructed. Handle is held in the
+    // local binding so the background task lives for the daemon's lifetime.
+    let workers = Arc::new(worker_registry::WorkerRegistry::new_with_bus(
+        std::time::Duration::from_mins(1),
+        event_bus.clone(),
+    ));
+    let cap = config.max_concurrent_atomic();
+    let state_lookup: Arc<dyn scheduler::AgentStateLookup> =
+        Arc::new(scheduler::DbStateLookup { db: db.clone() });
+    let local_providers = provider_registry::ProviderRegistry::from_config(&config).list();
+    let scheduler_obj = scheduler::Scheduler::new(
+        db.clone(),
+        workers.clone(),
+        event_bus.clone(),
+        cap,
+        manager.clone() as Arc<dyn scheduler::Dispatcher>,
+    )
+    .with_local_providers(local_providers)
+    .with_mail_wake(
+        manager.clone() as Arc<dyn scheduler::MailWaker>,
+        state_lookup,
+    )
+    .with_supervision(
+        supervisor.clone(),
+        manager.clone() as Arc<dyn supervisor::RestartDispatcher>,
+    );
+    let _scheduler_handle = Arc::new(scheduler_obj).spawn();
+
     // Start orchestrator (listens for agent completions, fires pacts)
     let orch = orchestrator::Orchestrator::new(db.clone(), manager.clone());
     orch.start(&event_bus);

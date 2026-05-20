@@ -103,10 +103,7 @@ impl WorkspaceWatcher {
                         return;
                     }
                     msg = event_rx.recv() => {
-                        let item = match msg {
-                            Some(m) => m,
-                            None => return,
-                        };
+                        let Some(item) = msg else { return };
                         buffer.push(item);
                         // Drain anything else that's already queued.
                         while let Ok(extra) = event_rx.try_recv() {
@@ -116,7 +113,7 @@ impl WorkspaceWatcher {
                         loop {
                             tokio::select! {
                                 _ = shutdown_rx.recv() => return,
-                                _ = tokio::time::sleep(debounce) => break,
+                                () = tokio::time::sleep(debounce) => break,
                                 msg = event_rx.recv() => {
                                     match msg {
                                         Some(m) => buffer.push(m),
@@ -180,22 +177,21 @@ fn publish_files_topic(
     kinds: &[String],
     truncated: u32,
 ) {
-    let topic = format!("workspace/{}/files", workspace_id);
+    let topic = format!("workspace/{workspace_id}/files");
     let body = serde_json::json!({
         "paths": paths,
         "kinds": kinds,
         "truncated": truncated,
     })
     .to_string();
-    let subscribers = match db.list_subscribers_for_topic(&topic) {
-        Ok(s) => s,
-        Err(_) => return,
+    let Ok(subscribers) = db.list_subscribers_for_topic(&topic) else {
+        return;
     };
     if subscribers.is_empty() {
         return;
     }
     let now = chrono::Utc::now().timestamp();
-    let sender = format!("workspace://{}", workspace_id);
+    let sender = format!("workspace://{workspace_id}");
     let mut mails: Vec<Mail> = Vec::with_capacity(subscribers.len());
     for sub in subscribers {
         mails.push(Mail {
@@ -233,7 +229,7 @@ fn publish_files_topic(
 fn build_default_ignores() -> Result<GlobSet> {
     let mut b = GlobSetBuilder::new();
     for pat in WORKSPACE_WATCH_DEFAULT_IGNORES {
-        let g = Glob::new(pat).map_err(|e| anyhow!("invalid_glob: {}", e))?;
+        let g = Glob::new(pat).map_err(|e| anyhow!("invalid_glob: {e}"))?;
         b.add(g);
     }
     Ok(b.build()?)

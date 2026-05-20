@@ -83,7 +83,7 @@ async fn run_list(orphans: bool) -> Result<()> {
         println!();
         println!("ORPHAN DIRS:");
         for o in &r.orphans {
-            println!("  {}", o);
+            println!("  {o}");
         }
     }
     Ok(())
@@ -103,7 +103,7 @@ async fn run_destroy(id: &str) -> Result<()> {
         std::process::exit(1);
     }
     let _: WorkspaceDestroyResult = serde_json::from_value(resp.result.unwrap())?;
-    println!("destroyed: {}", id);
+    println!("destroyed: {id}");
     Ok(())
 }
 
@@ -116,19 +116,16 @@ async fn run_show(id: &str) -> Result<()> {
     }
     let r: WorkspaceListResult = serde_json::from_value(resp.result.unwrap())?;
     let ws = r.workspaces.iter().find(|w| w.id == id);
-    match ws {
-        Some(w) => {
-            println!("id:         {}", w.id);
-            println!("branch:     {}", w.branch);
-            println!("state:      {}", w.state.as_str());
-            println!("agents:     {}", w.agent_count);
-            println!("path:       {}", w.path.display());
-            println!("created_at: {}", w.created_at);
-        }
-        None => {
-            eprintln!("workspace not found: {}", id);
-            std::process::exit(4);
-        }
+    if let Some(w) = ws {
+        println!("id:         {}", w.id);
+        println!("branch:     {}", w.branch);
+        println!("state:      {}", w.state.as_str());
+        println!("agents:     {}", w.agent_count);
+        println!("path:       {}", w.path.display());
+        println!("created_at: {}", w.created_at);
+    } else {
+        eprintln!("workspace not found: {id}");
+        std::process::exit(4);
     }
     Ok(())
 }

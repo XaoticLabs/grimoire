@@ -1,0 +1,10 @@
+# Tunable thresholds for clippy lints. Stays loose for now; tighten as the
+# pedantic cleanup progresses.
+cognitive-complexity-threshold = 30
+too-many-arguments-threshold = 9
+type-complexity-threshold = 350
+
+# Disallow a few footguns. Extend this list as patterns come up.
+disallowed-methods = [
+    { path = "std::env::set_var", reason = "unsafe in multithreaded programs since Rust 1.80; gate behind test-only helpers" },
+]

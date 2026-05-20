@@ -95,9 +95,9 @@ async fn run_remove(name: String) -> Result<()> {
     }
     let result: PeerRemoveResult = serde_json::from_value(resp.result.unwrap_or_default())?;
     if result.removed {
-        println!("Removed peer {}", name);
+        println!("Removed peer {name}");
     } else {
-        println!("Peer {} not found", name);
+        println!("Peer {name} not found");
     }
     Ok(())
 }

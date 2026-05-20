@@ -110,7 +110,7 @@ async fn test_fire_bypasses_rate_limit() {
     let (_db, _clock, reg, sender, wake_id) = setup_with_capacity(0, 0.0).await;
     // Regular fire would deny; test_fire bypasses.
     let res = reg.test_fire(&wake_id).await;
-    assert!(res.is_ok(), "test_fire must bypass rate limit: {:?}", res);
+    assert!(res.is_ok(), "test_fire must bypass rate limit: {res:?}");
     assert_eq!(sender.calls.lock().await.len(), 1);
 }
 

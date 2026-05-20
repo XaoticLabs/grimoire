@@ -42,12 +42,12 @@ impl WorkerControl for WorkerControlService {
         let first = inbound
             .message()
             .await
-            .map_err(|e| Status::aborted(format!("read register: {}", e)))?;
-        let register = match first {
-            Some(WorkerMessage {
-                kind: Some(worker_message::Kind::Register(r)),
-            }) => r,
-            _ => return Err(Status::invalid_argument("first message must be Register")),
+            .map_err(|e| Status::aborted(format!("read register: {e}")))?;
+        let Some(WorkerMessage {
+            kind: Some(worker_message::Kind::Register(register)),
+        }) = first
+        else {
+            return Err(Status::invalid_argument("first message must be Register"));
         };
 
         if register.protocol_version != crate::shared::constants::WORKER_PROTOCOL_VERSION {
@@ -85,7 +85,7 @@ impl WorkerControl for WorkerControlService {
                 tags: register.tags,
                 assign_tx,
             })
-            .map_err(|e| Status::already_exists(format!("{}", e)))?;
+            .map_err(|e| Status::already_exists(format!("{e}")))?;
 
         info!(worker_id = %register.worker_id, "worker registered");
 
@@ -161,7 +161,7 @@ pub mod test_helpers {
     ) -> TestServerHandle {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
-        let routing: RoutingMap = Arc::new(Mutex::new(Default::default()));
+        let routing: RoutingMap = Arc::new(Mutex::new(std::collections::HashMap::default()));
         let svc = WorkerControlService {
             registry: registry.clone(),
             bearer_secret: bearer_secret.to_string(),

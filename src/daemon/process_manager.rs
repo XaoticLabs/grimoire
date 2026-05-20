@@ -171,7 +171,7 @@ pub async fn monitor_agent(
                 state: AgentState::Failed,
                 exit_code: None,
                 session_id: captured_session_id,
-                error_reason: Some(format!("wait_failed: {}", e)),
+                error_reason: Some(format!("wait_failed: {e}")),
             }
         }
     }

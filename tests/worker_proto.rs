@@ -68,6 +68,9 @@ fn worker_proto_assign_task_optional_fields_default_to_none() {
     assert!(decoded.env.is_empty());
 }
 
+fn _check_client_type<T>() {}
+fn _check_server_type<T>() {}
+
 #[test]
 fn worker_proto_compiles() {
     // Type-only checks: each oneof variant exists; client and server stubs
@@ -93,9 +96,7 @@ fn worker_proto_compiles() {
     let _ = TaskState::Banished;
 
     // Reference the generated client/server stubs so the symbol is exercised.
-    fn _check_client_type<T>() {}
     _check_client_type::<WorkerControlClient<tonic::transport::Channel>>();
-    fn _check_server_type<T>() {}
     _check_server_type::<WorkerControlServer<()>>();
 
     // OptionalModel was introduced as a sanity check that prost's `optional`

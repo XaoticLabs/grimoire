@@ -283,7 +283,7 @@ fn all_stream_event_variants_from_json() {
 
     for json in cases {
         let event: StreamEvent = serde_json::from_str(json).unwrap_or_else(|e| {
-            panic!("Failed to parse: {}\nError: {}", json, e);
+            panic!("Failed to parse: {json}\nError: {e}");
         });
         // Just verify it parsed without panicking
         let _ = event.agent_id();

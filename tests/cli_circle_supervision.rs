@@ -56,7 +56,7 @@ fn circle_renders_dash_for_never_policy() {
     let out = format_circle_text(&agents);
     let lines: Vec<&str> = out.lines().collect();
     let body = lines.last().unwrap();
-    assert!(body.contains(" - "), "expected dash in column: {}", body);
+    assert!(body.contains(" - "), "expected dash in column: {body}");
 }
 
 #[test]

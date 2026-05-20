@@ -48,7 +48,7 @@ impl Drop for TempDbPath {
 fn make_agent(id: &str) -> Agent {
     Agent {
         id: id.to_string(),
-        name: Some(format!("agent-{}", id)),
+        name: Some(format!("agent-{id}")),
         state: AgentState::Summoning,
         task: Some("do something".to_string()),
         model: Some("sonnet".to_string()),
@@ -120,7 +120,7 @@ fn migrate_is_idempotent() {
 fn sample_agent_for_created(id: &str) -> Agent {
     Agent {
         id: id.to_string(),
-        name: Some(format!("agent-{}", id)),
+        name: Some(format!("agent-{id}")),
         state: AgentState::Summoning,
         task: Some("hello".to_string()),
         model: None,
@@ -233,8 +233,7 @@ fn append_event_sets_kind_per_variant() {
             .unwrap();
         assert_eq!(
             kind, expected_kind,
-            "kind mismatch for variant {}",
-            expected_kind
+            "kind mismatch for variant {expected_kind}"
         );
     }
 }
@@ -247,7 +246,7 @@ fn append_event_seq_monotonic_per_agent() {
         db.append_event(&StreamEvent::Output {
             agent_id: "A".to_string(),
             stream: "stdout".to_string(),
-            line: format!("line-{}", i),
+            line: format!("line-{i}"),
         })
         .unwrap();
     }
@@ -387,14 +386,12 @@ fn append_event_populates_scroll_id_only_for_scroll_variants() {
         assert_eq!(
             a.is_some(),
             agent_present,
-            "agent_id presence wrong for {}",
-            kind
+            "agent_id presence wrong for {kind}"
         );
         assert_eq!(
             s.is_some(),
             scroll_present,
-            "scroll_id presence wrong for {}",
-            kind
+            "scroll_id presence wrong for {kind}"
         );
     }
 }
@@ -409,14 +406,12 @@ fn append_event_returns_monotonic_id() {
             .append_event(&StreamEvent::Output {
                 agent_id: "A".to_string(),
                 stream: "stdout".to_string(),
-                line: format!("{}", i),
+                line: format!("{i}"),
             })
             .unwrap();
         assert!(
             id > last,
-            "id should strictly increase: prev={} new={}",
-            last,
-            id
+            "id should strictly increase: prev={last} new={id}"
         );
         last = id;
     }
@@ -517,7 +512,7 @@ fn agent_events_lifecycle() {
             id: None,
             agent_id: "events-1".to_string(),
             event_type: "stdout".to_string(),
-            payload: format!("line {}", i),
+            payload: format!("line {i}"),
             created_at: Utc::now(),
         };
         db.insert_event(&event).unwrap();
@@ -843,8 +838,8 @@ fn scroll_list() {
 
     for i in 0..3 {
         let scroll = Scroll {
-            id: format!("list-{}", i),
-            name: format!("Scroll {}", i),
+            id: format!("list-{i}"),
+            name: format!("Scroll {i}"),
             state: ScrollState::Inscribed,
             source_path: None,
             max_concurrency: 4,
@@ -926,7 +921,7 @@ fn make_queue_row(id: &str, lane: &str, enqueued_at: chrono::DateTime<chrono::Ut
         provider_name: Some("anthropic".to_string()),
         cwd: "/tmp".to_string(),
         model: Some("sonnet".to_string()),
-        task_text: format!("task for {}", id),
+        task_text: format!("task for {id}"),
         block_reason: None,
     }
 }
@@ -1085,7 +1080,7 @@ fn count_queued_matches_list_len() {
         .iter()
         .enumerate()
     {
-        let id = format!("cnt{:05}", i);
+        let id = format!("cnt{i:05}");
         db.insert_agent(&make_queued_agent(&id)).unwrap();
         db.enqueue_task(&make_queue_row(&id, lane, Utc::now()))
             .unwrap();
@@ -1099,7 +1094,7 @@ fn count_queued_matches_list_len() {
 fn list_queue_by_lane_filters() {
     let db = test_db();
     for (i, lane) in ["adhoc", "scroll", "adhoc"].iter().enumerate() {
-        let id = format!("lan{:05}", i);
+        let id = format!("lan{i:05}");
         db.insert_agent(&make_queued_agent(&id)).unwrap();
         db.enqueue_task(&make_queue_row(&id, lane, Utc::now()))
             .unwrap();
@@ -1333,7 +1328,7 @@ fn list_mail_filters_by_state() {
 fn list_mail_clamps_limit() {
     let db = test_db();
     for i in 0..5 {
-        let id = format!("clamp{:03}", i);
+        let id = format!("clamp{i:03}");
         db.insert_mail(&make_mail(&id, "rclamp", "x")).unwrap();
     }
     let huge = db
@@ -1347,7 +1342,7 @@ fn list_mail_clamps_limit() {
 fn list_mail_after_seq_excludes_cursor() {
     let db = test_db();
     for i in 0..4 {
-        let id = format!("aft{:05}", i);
+        let id = format!("aft{i:05}");
         db.insert_mail(&make_mail(&id, "raft", "x")).unwrap();
     }
     let after_one = db

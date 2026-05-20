@@ -20,8 +20,10 @@
 //! All comparisons go through [`AuthToken::verify`], which uses
 //! `subtle::ConstantTimeEq` to avoid leaking timing information.
 
-use anyhow::{Context, Result};
+use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
+
+use anyhow::{Context, Result};
 use subtle::ConstantTimeEq;
 
 use super::constants;
@@ -168,13 +170,14 @@ fn generate_token() -> String {
     let b = uuid::Uuid::new_v4();
     let mut out = String::with_capacity(GENERATED_TOKEN_HEX_LEN);
     for byte in a.as_bytes().iter().chain(b.as_bytes().iter()) {
-        out.push_str(&format!("{:02x}", byte));
+        let _ = write!(out, "{byte:02x}");
     }
     debug_assert_eq!(out.len(), GENERATED_TOKEN_HEX_LEN);
     out
 }
 
 #[cfg(test)]
+#[allow(clippy::disallowed_methods)] // Test-only env mutation, serialized via ENV_LOCK + wrapped in `unsafe`.
 mod tests {
     use super::*;
     use std::sync::Mutex;
@@ -230,7 +233,7 @@ mod tests {
         {
             use std::os::unix::fs::PermissionsExt;
             let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
-            assert_eq!(mode, 0o600, "expected 0600, got {:o}", mode);
+            assert_eq!(mode, 0o600, "expected 0600, got {mode:o}");
         }
 
         // Second call returns the same token (no regeneration).

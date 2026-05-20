@@ -36,9 +36,8 @@ impl InboxHandler {
         if msg.body.len() > MAX_MAIL_BODY_BYTES {
             return Ok(ack_fail(&msg.mail_id, "body_too_large"));
         }
-        let address = match parse_address(&msg.recipient) {
-            Ok(a) => a,
-            Err(_) => return Ok(ack_fail(&msg.mail_id, "invalid_recipient")),
+        let Ok(address) = parse_address(&msg.recipient) else {
+            return Ok(ack_fail(&msg.mail_id, "invalid_recipient"));
         };
 
         // Idempotency check up front — if we've already seen this
@@ -105,12 +104,12 @@ impl InboxHandler {
             body: msg.body.clone(),
             in_reply_to: None,
             state,
-            fail_reason: fail_reason.map(|s| s.to_string()),
+            fail_reason: fail_reason.map(std::string::ToString::to_string),
             created_at: now,
-            delivered_at: if state != MailState::Pending {
-                Some(now)
-            } else {
+            delivered_at: if state == MailState::Pending {
                 None
+            } else {
+                Some(now)
             },
             seq: 0,
             wake_eligible: true,
@@ -165,12 +164,12 @@ impl InboxHandler {
                 body: msg.body.clone(),
                 in_reply_to: None,
                 state,
-                fail_reason: fail_reason.map(|s| s.to_string()),
+                fail_reason: fail_reason.map(std::string::ToString::to_string),
                 created_at: now,
-                delivered_at: if state != MailState::Pending {
-                    Some(now)
-                } else {
+                delivered_at: if state == MailState::Pending {
                     None
+                } else {
+                    Some(now)
                 },
                 seq: 0,
                 wake_eligible: true,

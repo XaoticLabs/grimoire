@@ -593,8 +593,7 @@ impl Database {
             format!(
                 "SELECT id, agent_id, event_type, payload, created_at
                  FROM agent_events WHERE agent_id = ?1
-                 ORDER BY id DESC LIMIT {}",
-                limit
+                 ORDER BY id DESC LIMIT {limit}"
             )
         } else {
             "SELECT id, agent_id, event_type, payload, created_at
@@ -1092,7 +1091,7 @@ impl Database {
                 let state: String = row.get(1)?;
                 Ok((id, state))
             })?;
-            rows.filter_map(|r| r.ok())
+            rows.filter_map(std::result::Result::ok)
                 .map(|(id, s)| {
                     let parsed = s.parse().unwrap_or(AgentState::Failed);
                     (id, parsed)
@@ -1332,7 +1331,7 @@ impl Database {
         let conn = self.conn.lock().unwrap();
         conn.execute(
             "UPDATE agents SET keep_alive = ?1 WHERE id = ?2",
-            params![if keep_alive { 1i64 } else { 0i64 }, agent_id],
+            params![i64::from(keep_alive), agent_id],
         )?;
         Ok(())
     }
@@ -1351,7 +1350,7 @@ impl Database {
                  WHERE state = 'complete' AND session_id IS NOT NULL",
             )?;
             let rows = stmt.query_map([], |row| row.get::<_, String>(0))?;
-            rows.filter_map(|r| r.ok()).collect()
+            rows.filter_map(std::result::Result::ok).collect()
         };
 
         if !ids.is_empty() {
@@ -1417,7 +1416,7 @@ impl Database {
                 mail.created_at,
                 mail.delivered_at,
                 seq,
-                if mail.wake_eligible { 1i64 } else { 0i64 },
+                i64::from(mail.wake_eligible),
             ],
         )?;
         tx.commit()?;
@@ -1446,7 +1445,7 @@ impl Database {
                 mail.created_at,
                 mail.delivered_at,
                 seq,
-                if mail.wake_eligible { 1i64 } else { 0i64 },
+                i64::from(mail.wake_eligible),
             ],
         )?;
         Ok(())
@@ -1619,7 +1618,7 @@ impl Database {
             None => return Ok(None),
         };
         if rows.next()?.is_some() {
-            anyhow::bail!("Ambiguous mail prefix '{}'", prefix);
+            anyhow::bail!("Ambiguous mail prefix '{prefix}'");
         }
         Ok(Some(first))
     }
@@ -1641,7 +1640,7 @@ impl Database {
             params![new_state.as_str(), fail_reason, delivered_at, id],
         )?;
         if n == 0 {
-            anyhow::bail!("mail not found: {}", id);
+            anyhow::bail!("mail not found: {id}");
         }
         Ok(())
     }
@@ -1918,7 +1917,7 @@ impl Database {
         let ids: Vec<AgentId> = {
             let mut stmt = tx.prepare("SELECT id FROM agents WHERE state = 'restarting'")?;
             let rows = stmt.query_map([], |row| row.get::<_, String>(0))?;
-            rows.filter_map(|r| r.ok()).collect()
+            rows.filter_map(std::result::Result::ok).collect()
         };
         if !ids.is_empty() {
             let now = Utc::now().to_rfc3339();
@@ -2342,7 +2341,7 @@ impl Database {
                 |r| r.get::<_, String>(0),
             )
             .ok();
-        Ok(matches!(dir.as_deref(), Some("inbound") | Some("both")))
+        Ok(matches!(dir.as_deref(), Some("inbound" | "both")))
     }
 }
 
@@ -2359,7 +2358,7 @@ fn row_to_peer(row: &rusqlite::Row) -> Result<crate::shared::types::Peer> {
         public_key: row.get(6)?,
         state: state_str
             .parse::<PeerState>()
-            .map_err(|e| anyhow::anyhow!("peer state: {}", e))?,
+            .map_err(|e| anyhow::anyhow!("peer state: {e}"))?,
         last_seen: row.get(8)?,
         registered_at: row.get(9)?,
     })
@@ -2384,7 +2383,7 @@ fn row_to_outbox(row: &rusqlite::Row) -> Result<crate::shared::types::PeerOutbox
         next_attempt_at: row.get(10)?,
         state: state_str
             .parse::<PeerOutboxState>()
-            .map_err(|e| anyhow::anyhow!("outbox state: {}", e))?,
+            .map_err(|e| anyhow::anyhow!("outbox state: {e}"))?,
     })
 }
 
@@ -2397,7 +2396,7 @@ fn row_to_topic_federation(row: &rusqlite::Row) -> Result<crate::shared::types::
         topic: row.get(2)?,
         direction: dir
             .parse::<FederationDirection>()
-            .map_err(|e| anyhow::anyhow!("direction: {}", e))?,
+            .map_err(|e| anyhow::anyhow!("direction: {e}"))?,
         created_at: row.get(4)?,
     })
 }
@@ -2405,7 +2404,7 @@ fn row_to_topic_federation(row: &rusqlite::Row) -> Result<crate::shared::types::
 fn extract_topic(recipient: &str) -> String {
     recipient
         .strip_prefix("topic://")
-        .map(|s| s.to_string())
+        .map(std::string::ToString::to_string)
         .unwrap_or_default()
 }
 
@@ -2438,7 +2437,7 @@ fn row_to_mail(row: &rusqlite::Row) -> Result<Mail> {
 fn parse_timestamp(s: &str) -> Result<DateTime<Utc>> {
     chrono::DateTime::parse_from_rfc3339(s)
         .map(|dt| dt.with_timezone(&Utc))
-        .map_err(|e| anyhow::anyhow!("invalid timestamp '{}': {}", s, e))
+        .map_err(|e| anyhow::anyhow!("invalid timestamp '{s}': {e}"))
 }
 
 fn row_to_scroll(row: &rusqlite::Row) -> Result<Scroll> {
@@ -2571,7 +2570,7 @@ mod tests {
     fn make_agent(id: &str) -> Agent {
         Agent {
             id: id.to_string(),
-            name: Some(format!("agent-{}", id)),
+            name: Some(format!("agent-{id}")),
             state: AgentState::Active,
             task: Some("test task".to_string()),
             model: Some("sonnet".to_string()),
@@ -2592,7 +2591,7 @@ mod tests {
     fn make_scroll(id: &str) -> Scroll {
         Scroll {
             id: id.to_string(),
-            name: format!("Scroll {}", id),
+            name: format!("Scroll {id}"),
             state: ScrollState::Active,
             source_path: None,
             max_concurrency: 4,
@@ -2605,7 +2604,7 @@ mod tests {
         Task {
             id: id.to_string(),
             scroll_id: scroll_id.to_string(),
-            name: format!("Task {}", id),
+            name: format!("Task {id}"),
             prompt: "test".to_string(),
             state,
             agent_id: None,
@@ -2690,7 +2689,7 @@ mod tests {
                 id: None,
                 agent_id: "evt11111".to_string(),
                 event_type: "stdout".to_string(),
-                payload: format!("line {}", i),
+                payload: format!("line {i}"),
                 created_at: Utc::now(),
             })
             .unwrap();
