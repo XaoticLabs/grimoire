@@ -4,6 +4,12 @@ version = "0.1.0"
 edition = "2024"
 rust-version = "1.95"
 license = "MIT OR Apache-2.0"
+description = "Agent orchestration daemon: summon, chain, schedule, federate, and supervise LLM agents over UDS/HTTP/gRPC."
+repository = "https://github.com/XaoticLabs/grimoire"
+homepage = "https://github.com/XaoticLabs/grimoire"
+readme = "README.md"
+keywords = ["agent", "orchestration", "daemon", "llm", "scheduler"]
+categories = ["command-line-utilities", "concurrency", "development-tools"]
 
 [[bin]]
 name = "grim"

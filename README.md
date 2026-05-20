@@ -441,3 +441,12 @@ All state lives in `~/.grimoire/`:
 ## Status
 
 The user-facing feature surface (summon, scrolls, pacts, mail, wake triggers, workspaces, memory, supervision, workers, federation) is complete. The first piece of the **trust layer** has shipped — auth + protocol versioning on UDS, HTTP, peers, and workers (see [Auth](#auth) above). Still open: observability (Prometheus + OTel), sandboxing (cwd jail + cgroups), policy/budget primitives, and replay/eval. See [`ROADMAP.md`](./ROADMAP.md) Part 6 for the next-pickup ordering.
+
+## License
+
+Grimoire is dual-licensed under either of:
+
+- Apache License, Version 2.0 ([LICENSE-APACHE](./LICENSE-APACHE) or <https://www.apache.org/licenses/LICENSE-2.0>)
+- MIT license ([LICENSE-MIT](./LICENSE-MIT) or <https://opensource.org/licenses/MIT>)
+
+at your option. Contributions are accepted under the same dual MIT/Apache-2.0 terms (per Apache-2.0 §5, unless you state otherwise).
