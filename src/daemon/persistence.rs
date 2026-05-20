@@ -1537,7 +1537,7 @@ impl Database {
         state_filter: Option<MailState>,
         limit: u32,
     ) -> Result<Vec<Mail>> {
-        let limit = limit.clamp(1, 1000) as i64;
+        let limit = i64::from(limit.clamp(1, 1000));
         let conn = self.conn.lock().unwrap();
         let mut sql = String::from(
             "SELECT id, recipient_id, sender_id, topic, body, in_reply_to, state, fail_reason, created_at, delivered_at, seq, wake_eligible \
@@ -1832,7 +1832,7 @@ impl Database {
         let conn = self.conn.lock().unwrap();
         conn.execute(
             "UPDATE agents SET escalation_depth = ?1 WHERE id = ?2",
-            params![depth as i64, agent_id],
+            params![i64::from(depth), agent_id],
         )?;
         Ok(())
     }

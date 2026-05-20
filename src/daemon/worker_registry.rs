@@ -14,6 +14,10 @@ pub type WorkerId = String;
 
 pub const MIN_WORKER_VERSION: &str = "0.1.0";
 
+// `worker_id` mirrors the field name used in `RegisterParams`, the proto wire
+// format, and the SQLite schema — renaming to `id` would diverge from every
+// other layer that names the same value.
+#[allow(clippy::struct_field_names)]
 pub struct Worker {
     pub worker_id: WorkerId,
     pub providers: Vec<(String, Version)>,

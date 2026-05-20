@@ -151,7 +151,9 @@ fn rate_limit_init_creates_row_at_full_capacity() {
     let db = fresh();
     seed_agent(&db, "agent_x");
     let (tokens, last, cap, refill) = db.get_or_init_rate_limit("agent_x", 1_000).unwrap();
-    assert_eq!(tokens, cap as f64);
+    #[allow(clippy::cast_precision_loss)]
+    let cap_f = cap as f64;
+    assert!((tokens - cap_f).abs() < f64::EPSILON);
     assert_eq!(last, 1_000);
     assert_eq!(cap, 60);
     assert!((refill - 60.0 / 3600.0).abs() < 1e-6);

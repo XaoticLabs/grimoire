@@ -13,10 +13,10 @@ use async_trait::async_trait;
 
 use grimoire::daemon::agent_manager::{AgentManager, Lane};
 use grimoire::daemon::event_bus::EventBus;
-use grimoire::daemon::scheduler::Dispatcher;
 use grimoire::daemon::executor::{ExecuteRequest, Executor, ExecutorHandle, LocalExecutor};
 use grimoire::daemon::persistence::Database;
 use grimoire::daemon::provider_registry::ProviderRegistry;
+use grimoire::daemon::scheduler::Dispatcher;
 use grimoire::shared::config::Config;
 use grimoire::shared::types::AgentState;
 

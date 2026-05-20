@@ -118,6 +118,7 @@ impl Scheduler {
     /// When the local executor and a matching remote worker both exist, the
     /// dispatcher (AgentManager) currently routes locally — federated
     /// placement is a separate concern owned by the executor layer.
+    #[must_use]
     pub fn with_local_providers<I, S>(mut self, providers: I) -> Self
     where
         I: IntoIterator<Item = S>,
@@ -130,6 +131,7 @@ impl Scheduler {
     /// Wire mail-wake. When both a waker and a state lookup are set, every
     /// `tick_now()` call inspects pending wake-eligible mail and invokes the
     /// recipient (if Complete with a session_id) up to the global cap.
+    #[must_use]
     pub fn with_mail_wake(
         mut self,
         waker: Arc<dyn MailWaker>,
@@ -142,6 +144,7 @@ impl Scheduler {
 
     /// Wire the supervisor + restart dispatcher. When set, every `tick_now()`
     /// pulls due restarts from the supervisor's pending heap.
+    #[must_use]
     pub fn with_supervision(
         mut self,
         supervisor: Arc<Supervisor>,

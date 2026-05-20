@@ -793,6 +793,7 @@ impl_state_enum!(FederationDirection {
 
 impl FederationDirection {
     /// Merge two direction declarations into the most-permissive form.
+    #[must_use]
     pub fn merge(self, other: FederationDirection) -> FederationDirection {
         if self == other {
             return self;

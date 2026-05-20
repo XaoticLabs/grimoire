@@ -126,12 +126,7 @@ fn format_tool_result(v: &serde_json::Value) -> String {
             .and_then(|c| c.as_str())
             .or_else(|| v.get("output").and_then(|o| o.as_str()))
             .unwrap_or("(error)");
-        format!(
-            "  {} {} {}\n",
-            "✗".red(),
-            name.dimmed(),
-            error_text.red()
-        )
+        format!("  {} {} {}\n", "✗".red(), name.dimmed(), error_text.red())
     } else {
         // Show a brief summary for successful tool results
         let output = v
@@ -142,12 +137,7 @@ fn format_tool_result(v: &serde_json::Value) -> String {
         if let Some(text) = output {
             let lines: Vec<&str> = text.lines().collect();
             if lines.len() <= 5 {
-                format!(
-                    "  {} {}\n{}\n",
-                    "✓".green(),
-                    name.dimmed(),
-                    text.dimmed()
-                )
+                format!("  {} {}\n{}\n", "✓".green(), name.dimmed(), text.dimmed())
             } else {
                 // Truncate long output
                 let preview: String = lines[..3].join("\n");

@@ -87,7 +87,7 @@ pub struct RateCounter {
 
 impl RateCounter {
     pub fn new(per_min: u32, now: DateTime<Utc>) -> Self {
-        let cap = per_min.max(1) as f64;
+        let cap = f64::from(per_min.max(1));
         Self {
             tokens: cap,
             last: now,
@@ -370,7 +370,7 @@ impl Supervisor {
         }
 
         let max_restarts = cfg.max_restarts.unwrap_or(0);
-        let window_secs = cfg.window_secs.unwrap_or(0) as i64;
+        let window_secs = i64::from(cfg.window_secs.unwrap_or(0));
         let now = self.clock.now();
         let window_start = now.timestamp() - window_secs;
         let count = self

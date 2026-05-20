@@ -100,9 +100,8 @@ missing_panics_doc = "allow"
 doc_markdown       = "allow"
 
 # `#[must_use]` is valuable on public API but noisy on every getter; we
-# annotate explicitly where it matters.
+# annotate explicitly where it matters (builder `with_*` methods, etc.).
 must_use_candidate    = "allow"
-return_self_not_must_use = "allow"
 
 # SQLite columns are i64; the daemon often casts to u32/u64/usize/f64 with
 # domain knowledge that the value is in range. Re-enable per-call if we
@@ -111,7 +110,6 @@ cast_possible_truncation = "allow"
 cast_possible_wrap       = "allow"
 cast_sign_loss           = "allow"
 cast_precision_loss      = "allow"
-cast_lossless            = "allow"
 
 # Config structs read more clearly when passed by value at the call site;
 # we own them and they're small.
@@ -121,8 +119,9 @@ needless_pass_by_value = "allow"
 # fragment cohesive logic.
 too_many_lines = "allow"
 
-# Wildcard imports are confined to `super::*` in test modules — flagging
-# them adds noise without changing behavior.
+# Broad `use crate::shared::protocol::*` imports re-export dozens of RPC
+# message types; spelling each one out per call site would add hundreds of
+# lines for no semantic gain.
 wildcard_imports = "allow"
 
 # Style preferences that didn't seem worth churning working code over:
@@ -133,13 +132,4 @@ unused_async           = "allow"  # async-trait impls and seam functions for sym
 # uniformity with the rest of the API. A few non-DB call sites also keep a
 # `Result` return for trait/seam symmetry. Re-enable per-fn when removing.
 unnecessary_wraps      = "allow"
-# Fires inside tonic-build-generated proto code where we can't apply the fix.
-default_trait_access   = "allow"
-
-# Edge-case stylistic complaints — explicit allow is clearer than per-site #[allow].
-trivially_copy_pass_by_ref = "allow"  # 1-byte enum receivers
-struct_field_names         = "allow"  # `Worker { worker_id, … }` is the public schema
-float_cmp                  = "allow"  # only fires in tests where exact compare is intentional
-match_wildcard_for_single_variants = "allow"
-used_underscore_items      = "allow"  # _-prefixed test scaffolding crossing module boundaries
 

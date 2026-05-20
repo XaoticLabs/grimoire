@@ -105,7 +105,7 @@ async fn memory_put_get_roundtrip() {
         .unwrap()
     {
         MemoryWriteOutcome::Written { version } => assert_eq!(version, 1),
-        _ => panic!("expected Written"),
+        MemoryWriteOutcome::Conflict { .. } => panic!("expected Written"),
     }
 
     let entry = db.memory_get("ws", "greeting").unwrap().unwrap();
@@ -130,7 +130,7 @@ async fn memory_cas_conflict_surfaces_current_version() {
         .unwrap()
     {
         MemoryWriteOutcome::Conflict { current_version } => assert_eq!(current_version, 2),
-        _ => panic!("expected Conflict"),
+        MemoryWriteOutcome::Written { .. } => panic!("expected Conflict"),
     }
 }
 

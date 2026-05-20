@@ -52,7 +52,7 @@ fn worker_proto_assign_task_optional_fields_default_to_none() {
         provider_constraint: ">=1.0".to_string(),
         provider_name: "claude".to_string(),
         cwd: "/tmp".to_string(),
-        env: Default::default(),
+        env: std::collections::HashMap::new(),
         // Both optional fields explicitly absent.
         model: None,
         optional_resume_session_id: None,
@@ -68,8 +68,8 @@ fn worker_proto_assign_task_optional_fields_default_to_none() {
     assert!(decoded.env.is_empty());
 }
 
-fn _check_client_type<T>() {}
-fn _check_server_type<T>() {}
+fn check_client_type<T>() {}
+fn check_server_type<T>() {}
 
 #[test]
 fn worker_proto_compiles() {
@@ -96,8 +96,8 @@ fn worker_proto_compiles() {
     let _ = TaskState::Banished;
 
     // Reference the generated client/server stubs so the symbol is exercised.
-    _check_client_type::<WorkerControlClient<tonic::transport::Channel>>();
-    _check_server_type::<WorkerControlServer<()>>();
+    check_client_type::<WorkerControlClient<tonic::transport::Channel>>();
+    check_server_type::<WorkerControlServer<()>>();
 
     // OptionalModel was introduced as a sanity check that prost's `optional`
     // field markers produce real `Option<T>` types (no oneof wrapper).
