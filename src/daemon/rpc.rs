@@ -116,8 +116,33 @@ pub async fn handle_rpc(
         "peer.ping" => handle_peer_ping(peer_registry, req).await,
         "topic.federate" => handle_topic_federate(peer_registry, req).await,
         "topic.unfederate" => handle_topic_unfederate(peer_registry, req).await,
+        "notify" => handle_notify(bus, req),
         _ => RpcResponse::error(req.id, -32601, format!("Unknown method: {}", req.method)),
     }
+}
+
+// --- Notify handler ---
+
+/// Publish an operator-facing notification onto the event bus. The `Notifier`
+/// subscriber forwards it to the configured webhook; it also lands in the
+/// durable event log. Decoupling via the bus keeps the RPC layer free of any
+/// HTTP/notifier dependency.
+fn handle_notify(bus: &EventBus, req: RpcRequest) -> RpcResponse {
+    let params: NotifyParams = match parse_params(&req) {
+        Ok(p) => p,
+        Err(e) => return e,
+    };
+    if params.message.trim().is_empty() {
+        return RpcResponse::error(req.id, -32602, "notify: message must not be empty".into());
+    }
+    let level = params.level.unwrap_or_else(|| "info".to_string());
+    bus.publish(StreamEvent::Notification {
+        agent_id: params.agent_id,
+        message: params.message,
+        level,
+        source: "agent".to_string(),
+    });
+    RpcResponse::success_json(req.id, &NotifyResult { published: true })
 }
 
 // --- Wake handlers ---

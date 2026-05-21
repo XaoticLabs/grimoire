@@ -6,9 +6,20 @@
 [![MSRV](https://img.shields.io/badge/MSRV-1.95-blue.svg)](#msrv)
 [![license](https://img.shields.io/crates/l/grimoire.svg)](#license)
 
-A daemon-based orchestrator for AI coding agents. Replaces fragile tmux workflows with proper process supervision — agents run whether or not you're looking at them, wake on schedules and file changes, message each other, and self-heal under supervision.
+**cron + systemd for AI agents — bring your own CLI.** Grimoire is a daemon that runs your coding agents as long-lived, supervised *processes* instead of one-shot commands in a tmux pane. They keep running after you close your laptop, wake on schedules and file changes, restart themselves when they fail, and ping you when something needs a human.
 
-> **Thesis:** Agents are processes, not function calls. Grimoire is `systemd` + `kubelet` + `nats` for AI workers.
+It's not a framework you write agents *in* — it's the substrate your existing agents run *under*. Claude Code is the default, but `pi`, opencode, aider, codex, or any CLI that takes a prompt works just as well ([Providers](#providers)).
+
+> **Thesis:** Agents are processes, not function calls. A library-based orchestrator's agents die when its script ends; a Grimoire agent has an address next week. That's the whole point of being a daemon.
+
+## How it works: two primitives
+
+Almost everything in Grimoire composes from just two things:
+
+1. **A durable event log** — every state change, output line, and lifecycle event is written through to SQLite with per-stream sequence numbers. Nothing is lost when a subscriber is slow or the daemon restarts.
+2. **An addressable mailbox** — every agent has an address (`agent://<id>`) and a mailbox; topics (`topic://<name>`) fan out to subscribers.
+
+The rest are those two composed: **wake triggers** deliver to a mailbox, **supervision** restarts and escalates via the log, **workspaces** publish file changes to a topic, **notifications** are log subscribers, **federation** is mail across daemons. Learn the two primitives and the rest follows.
 
 ## Install
 
@@ -36,6 +47,22 @@ grim scry
 ```
 
 ## Commands
+
+Grimoire uses a deliberately thematic vocabulary. If you'd rather think in plain terms, here's the decoder ring:
+
+| Grimoire verb | Plain meaning |
+|---------------|---------------|
+| `summon` | start / run an agent |
+| `circle` | list agents (`ps`) |
+| `bind` | attach to / tail an agent's output |
+| `banish` | kill an agent |
+| `invoke` | send a follow-up message to a finished agent |
+| `scry` | open the web dashboard |
+| `tome` | view / edit config |
+| `pact` | chain: when A finishes, start B |
+| `inscribe` / `scroll` | load / run a multi-task spec (a DAG) |
+| `wake` | trigger that resumes a dormant agent (cron / file / event) |
+| `notify` | send a message out to *you* (webhook) |
 
 ### Core lifecycle
 
@@ -324,6 +351,44 @@ Features:
 - Summon, banish, and invoke directly from the browser
 - Real-time updates via SSE
 
+## Demos
+
+`grim demo` scaffolds a working standing-agent flow in one command, printing each underlying `grim` action as it runs — so it's a quickstart *and* a legibility aid (nothing magic: it's `summon --keep-alive` + a file-watch wake source + `grim notify`).
+
+```bash
+grim demo standing-review --repo ~/repos/myapp --provider claude
+```
+
+This summons a keep-alive reviewer rooted in the repo and registers a file-watch wake source. Edit a file and the agent wakes, inspects the change, and — if it finds something worth a human's attention — calls `grim notify`. Set `[notifications].webhook_url` (below) to receive the pings; watch it live with `grim bind <id>` or `grim scry`; tear it down with `grim banish <id>`.
+
+It's also an experiment worth running against your own workflow: does a standing, event-woken agent earn its keep over running a one-shot agent in a shell loop?
+
+## Notifications
+
+The daemon can reach *you* — the missing half of "fire it and walk away." Point `[notifications]` at any webhook (Slack/Discord incoming webhook, a relay, anything that accepts a JSON POST):
+
+```toml
+[notifications]
+webhook_url = "https://hooks.example.com/grimoire"
+on_completion = true   # agent reached Complete
+on_failure = true      # Failed / Banished / restart budget exhausted
+on_wake = true         # a standing agent's wake source fired
+on_agent_decided = true # an agent called `grim notify`
+timeout_secs = 10
+```
+
+Each enabled trigger POSTs `{ event, agent_id, message, level, timestamp }`. With no `webhook_url`, the notifier is never spawned (zero overhead).
+
+Agents surface their own findings — "ping me only if interesting" — by shelling out to `grim notify`, provider-neutral (works from claude, `pi`, opencode, aider, …):
+
+```bash
+grim notify "build is red on main — needs a human" --level error
+```
+
+The daemon injects `GRIMOIRE_AGENT_ID` into every agent it spawns, so `grim notify` (and any other `grim` call the agent makes) is automatically attributed to the right agent — the agent never has to know its own id. Notifications also land in the durable event log like every other event.
+
+> Note: identity injection currently covers locally-executed agents. Agents dispatched to a remote `grimw` worker don't yet receive the env var (worker-side injection is a follow-up).
+
 ## Configuration
 
 Config lives at `~/.grimoire/config.toml`.
@@ -334,7 +399,7 @@ grim tome agent.default_model sonnet
 grim tome agent.claude_binary /usr/local/bin/claude
 ```
 
-Available keys: `daemon.port`, `daemon.log_level`, `agent.default_model`, `agent.default_cwd`, `agent.claude_binary`, `agent.default_provider`, plus `[worker]`, `[daemon.auth]`, and `[providers.*]` blocks.
+Available keys: `daemon.port`, `daemon.log_level`, `agent.default_model`, `agent.default_cwd`, `agent.claude_binary`, `agent.default_provider`, plus `[worker]`, `[daemon.auth]`, `[notifications]`, and `[providers.*]` blocks.
 
 ## Auth
 
@@ -450,7 +515,9 @@ The minimum supported Rust version is **1.95**, pinned in `rust-toolchain.toml` 
 
 ## Status
 
-The user-facing feature surface (summon, scrolls, pacts, mail, wake triggers, workspaces, memory, supervision, workers, federation) is complete. The first piece of the **trust layer** has shipped — auth + protocol versioning on UDS, HTTP, peers, and workers (see [Auth](#auth) above). Still open: observability (Prometheus + OTel), sandboxing (cwd jail + cgroups), policy/budget primitives, and replay/eval. See [`ROADMAP.md`](./ROADMAP.md) Part 6 for the next-pickup ordering.
+The user-facing feature surface (summon, scrolls, pacts, mail, wake triggers, workspaces, memory, supervision, workers, federation, outbound notifications) is complete. The **trust layer** has its first piece — auth + protocol versioning on UDS, HTTP, peers, and workers (see [Auth](#auth) above).
+
+Current focus is making what exists *legible and useful* rather than adding surface: outbound notifications and the `grim demo` standing-agent flow have shipped; next is federated shared memory (the org-wide "shared context" piece — only mail/topics federate today). Still open: observability (Prometheus + OTel), sandboxing (cwd jail + cgroups), policy/budget primitives, and replay/eval. See [`ROADMAP.md`](./ROADMAP.md) Part 6 for the ordering and rationale.
 
 ## License
 

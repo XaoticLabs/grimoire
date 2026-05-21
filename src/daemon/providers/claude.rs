@@ -4,11 +4,19 @@ use std::process::Stdio;
 use tokio::process::Command;
 
 use crate::daemon::process_manager::SpawnedAgent;
-use crate::daemon::provider::{OutputFormat, Provider, ProviderCapabilities};
+use crate::daemon::provider::{AgentContext, OutputFormat, Provider, ProviderCapabilities};
 
 pub struct ClaudeProvider {
     pub binary: String,
 }
+
+/// Scoped tool-allow rules so a spawned/woken agent can call back into Grimoire
+/// (notify the operator, message peers, read/write shared memory) without a
+/// permission prompt it can't answer in headless `--print` mode. Deliberately
+/// narrow: it grants the three coordination verbs and NOT arbitrary shell or
+/// destructive grim verbs (`banish`, `summon`, `daemon`). Comma-separated per
+/// `claude --allowedTools` syntax (`Bash(cmd *)`).
+const GRIM_CALLBACK_TOOLS: &str = "Bash(grim notify *),Bash(grim mail *),Bash(grim memory *)";
 
 impl ClaudeProvider {
     pub const fn new(binary: String) -> Self {
@@ -29,12 +37,20 @@ impl Provider for ClaudeProvider {
         }
     }
 
-    fn spawn(&self, task: &str, cwd: &Path, model: Option<&str>) -> Result<SpawnedAgent> {
+    fn spawn(
+        &self,
+        task: &str,
+        cwd: &Path,
+        model: Option<&str>,
+        ctx: &AgentContext,
+    ) -> Result<SpawnedAgent> {
         let mut cmd = Command::new(&self.binary);
         cmd.arg("--print")
             .arg("--output-format")
             .arg("stream-json")
             .arg("--verbose")
+            .arg("--allowedTools")
+            .arg(GRIM_CALLBACK_TOOLS)
             .arg("-p")
             .arg(task)
             .current_dir(cwd)
@@ -46,17 +62,27 @@ impl Provider for ClaudeProvider {
             cmd.arg("--model").arg(m);
         }
 
+        ctx.apply_env(&mut cmd);
+
         let child = cmd.spawn()?;
         let pid = child.id().unwrap_or(0);
         Ok(SpawnedAgent { child, pid })
     }
 
-    fn spawn_resume(&self, session_id: &str, message: &str, cwd: &Path) -> Result<SpawnedAgent> {
+    fn spawn_resume(
+        &self,
+        session_id: &str,
+        message: &str,
+        cwd: &Path,
+        ctx: &AgentContext,
+    ) -> Result<SpawnedAgent> {
         let mut cmd = Command::new(&self.binary);
         cmd.arg("--print")
             .arg("--output-format")
             .arg("stream-json")
             .arg("--verbose")
+            .arg("--allowedTools")
+            .arg(GRIM_CALLBACK_TOOLS)
             .arg("--resume")
             .arg(session_id)
             .arg("-p")
@@ -65,6 +91,8 @@ impl Provider for ClaudeProvider {
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
+
+        ctx.apply_env(&mut cmd);
 
         let child = cmd.spawn()?;
         let pid = child.id().unwrap_or(0);

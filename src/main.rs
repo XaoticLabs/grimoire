@@ -205,6 +205,33 @@ enum Commands {
         #[command(subcommand)]
         cmd: cli::commands::topic::TopicCommand,
     },
+
+    /// Emit an operator-facing notification (forwarded to the configured
+    /// webhook). Agents call this to surface something worth a human's
+    /// attention; the agent id is read from `GRIMOIRE_AGENT_ID`.
+    Notify {
+        /// The notification message
+        message: String,
+
+        /// Severity hint (e.g. info, warn, error). Defaults to info.
+        #[arg(short, long)]
+        level: Option<String>,
+    },
+
+    /// Scaffold a working standing-agent flow in one command. Prints each
+    /// underlying `grim` action it runs. Demos: `standing-review`.
+    Demo {
+        /// Which demo to set up (e.g. standing-review).
+        name: String,
+
+        /// Repository to watch (defaults to the current directory).
+        #[arg(long)]
+        repo: Option<std::path::PathBuf>,
+
+        /// Provider for the agent (e.g. claude, pi, opencode, aider).
+        #[arg(short, long)]
+        provider: Option<String>,
+    },
 }
 
 #[tokio::main]
@@ -313,6 +340,14 @@ async fn main() {
                 Commands::Memory { cmd } => cli::commands::memory::run(cmd).await,
                 Commands::Peer { cmd } => cli::commands::peer::run(cmd).await,
                 Commands::Topic { cmd } => cli::commands::topic::run(cmd).await,
+                Commands::Notify { message, level } => {
+                    cli::commands::notify::run(&message, level).await
+                }
+                Commands::Demo {
+                    name,
+                    repo,
+                    provider,
+                } => cli::commands::demo::run(&name, repo, provider).await,
                 Commands::Daemon => unreachable!(),
             };
 

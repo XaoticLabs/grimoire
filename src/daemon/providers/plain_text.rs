@@ -4,7 +4,7 @@ use std::process::Stdio;
 use tokio::process::Command;
 
 use crate::daemon::process_manager::SpawnedAgent;
-use crate::daemon::provider::{OutputFormat, Provider, ProviderCapabilities};
+use crate::daemon::provider::{AgentContext, OutputFormat, Provider, ProviderCapabilities};
 use crate::shared::config::ProviderConfig;
 
 pub struct PlainTextProvider {
@@ -42,7 +42,13 @@ impl Provider for PlainTextProvider {
         }
     }
 
-    fn spawn(&self, task: &str, cwd: &Path, _model: Option<&str>) -> Result<SpawnedAgent> {
+    fn spawn(
+        &self,
+        task: &str,
+        cwd: &Path,
+        _model: Option<&str>,
+        ctx: &AgentContext,
+    ) -> Result<SpawnedAgent> {
         let mut cmd = Command::new(&self.config.binary);
 
         for arg in self.build_args(task) {
@@ -52,6 +58,8 @@ impl Provider for PlainTextProvider {
         for (k, v) in &self.config.env {
             cmd.env(k, v);
         }
+
+        ctx.apply_env(&mut cmd);
 
         cmd.current_dir(cwd)
             .stdin(Stdio::null())
@@ -63,7 +71,13 @@ impl Provider for PlainTextProvider {
         Ok(SpawnedAgent { child, pid })
     }
 
-    fn spawn_resume(&self, _session_id: &str, _message: &str, _cwd: &Path) -> Result<SpawnedAgent> {
+    fn spawn_resume(
+        &self,
+        _session_id: &str,
+        _message: &str,
+        _cwd: &Path,
+        _ctx: &AgentContext,
+    ) -> Result<SpawnedAgent> {
         Err(anyhow!(
             "Provider '{}' does not support session resume",
             self.provider_name
@@ -138,6 +152,9 @@ mod tests {
     #[test]
     fn resume_not_supported() {
         let p = test_provider();
-        assert!(p.spawn_resume("sid", "msg", Path::new("/tmp")).is_err());
+        assert!(
+            p.spawn_resume("sid", "msg", Path::new("/tmp"), &AgentContext::default())
+                .is_err()
+        );
     }
 }

@@ -451,6 +451,24 @@ pub struct MemoryDeleteParams {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct MemoryDeleteResult {}
 
+// --- Notify params/results ---
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NotifyParams {
+    pub message: String,
+    #[serde(default)]
+    pub agent_id: Option<AgentId>,
+    /// Severity hint passed through to the webhook payload. Defaults to
+    /// `"info"` when absent.
+    #[serde(default)]
+    pub level: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct NotifyResult {
+    pub published: bool,
+}
+
 // --- Streaming events (sent over bind/SSE) ---
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -657,6 +675,18 @@ pub enum StreamEvent {
     },
     #[serde(rename = "topic_federation_removed")]
     TopicFederationRemoved { peer_id: String, topic: String },
+    /// A notification destined for the human operator. Emitted by the `notify`
+    /// RPC (`source = "agent"`, an agent calling `grim notify`) or internally
+    /// (`source = "system"`). The `Notifier` subscriber forwards matching ones
+    /// to the configured webhook; it also lands in the durable event log.
+    #[serde(rename = "notification")]
+    Notification {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        agent_id: Option<AgentId>,
+        message: String,
+        level: String,
+        source: String,
+    },
 }
 
 impl StreamEvent {
@@ -693,6 +723,7 @@ impl StreamEvent {
             Self::MemoryWritten { agent_id, .. } | Self::MemoryDeleted { agent_id, .. } => {
                 agent_id.as_deref()
             }
+            Self::Notification { agent_id, .. } => agent_id.as_deref(),
             Self::ScrollProgress { .. }
             | Self::TaskStateChange { .. }
             | Self::WorkerRegistered { .. }
@@ -762,6 +793,7 @@ impl StreamEvent {
             Self::PeerMailReceived { .. } => "peer_mail_received",
             Self::TopicFederationAdded { .. } => "topic_federation_added",
             Self::TopicFederationRemoved { .. } => "topic_federation_removed",
+            Self::Notification { .. } => "notification",
         }
     }
 }

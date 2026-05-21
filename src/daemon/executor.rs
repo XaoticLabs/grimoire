@@ -98,10 +98,13 @@ impl Executor for LocalExecutor {
                 .registry
                 .get(&req.provider_name)
                 .ok_or_else(|| anyhow!("Unknown provider: {}", req.provider_name))?;
+            let ctx = crate::daemon::provider::AgentContext {
+                agent_id: req.agent_id.clone(),
+            };
             let spawned = if let Some(sid) = &req.resume_session_id {
-                provider.spawn_resume(sid, &req.task, &req.cwd)?
+                provider.spawn_resume(sid, &req.task, &req.cwd, &ctx)?
             } else {
-                provider.spawn(&req.task, &req.cwd, req.model.as_deref())?
+                provider.spawn(&req.task, &req.cwd, req.model.as_deref(), &ctx)?
             };
             (spawned, Some(provider))
         };

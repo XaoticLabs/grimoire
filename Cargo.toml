@@ -86,6 +86,15 @@ cron = "0.12"
 notify = "6"
 globset = "0.4"
 
+# Outbound notification webhook — a hand-rolled hyper client (rather than
+# reqwest) to keep the supply-chain surface minimal. The TLS stack (rustls,
+# tokio-rustls, rustls-native-certs) is already in-tree via tonic; only
+# hyper-rustls is genuinely new.
+hyper = { version = "1", features = ["client", "http1"] }
+hyper-util = { version = "0.1", features = ["client", "client-legacy", "http1", "tokio"] }
+http-body-util = "0.1"
+hyper-rustls = { version = "0.27", default-features = false, features = ["native-tokio", "http1", "ring", "tls12"] }
+
 [build-dependencies]
 tonic-prost-build = "0.14"
 

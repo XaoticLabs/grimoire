@@ -5,6 +5,7 @@ pub mod clock;
 pub mod daemon_id;
 pub mod event_bus;
 pub mod executor;
+pub mod notifier;
 pub mod orchestrator;
 pub mod peer_client;
 pub mod peer_inbox;
@@ -117,6 +118,18 @@ pub async fn start() -> Result<()> {
         manager.clone() as Arc<dyn supervisor::RestartDispatcher>,
     );
     let _scheduler_handle = Arc::new(scheduler_obj).spawn();
+
+    // Outbound notifications: a pure event-bus subscriber that POSTs selected
+    // events to a configured webhook. Only spawned when a webhook is set.
+    if config.notifications.webhook_url.is_some() {
+        match notifier::Notifier::new(config.notifications.clone()) {
+            Ok(n) => {
+                n.start(&event_bus);
+                info!("outbound notifications enabled");
+            }
+            Err(e) => tracing::warn!(error = %e, "notifier init failed; notifications disabled"),
+        }
+    }
 
     // Start orchestrator (listens for agent completions, fires pacts)
     let orch = orchestrator::Orchestrator::new(db.clone(), manager.clone());

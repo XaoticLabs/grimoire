@@ -74,6 +74,7 @@ impl Provider for NoopProvider {
         _: &str,
         _: &std::path::Path,
         _: Option<&str>,
+        _: &grimoire::daemon::provider::AgentContext,
     ) -> Result<grimoire::daemon::process_manager::SpawnedAgent> {
         unimplemented!()
     }
@@ -82,6 +83,7 @@ impl Provider for NoopProvider {
         _: &str,
         _: &str,
         _: &std::path::Path,
+        _: &grimoire::daemon::provider::AgentContext,
     ) -> Result<grimoire::daemon::process_manager::SpawnedAgent> {
         unimplemented!()
     }
@@ -177,6 +179,7 @@ async fn consume_lines_captures_session_id_from_provider() {
             _t: &str,
             _c: &std::path::Path,
             _m: Option<&str>,
+            _ctx: &grimoire::daemon::provider::AgentContext,
         ) -> Result<grimoire::daemon::process_manager::SpawnedAgent> {
             unimplemented!()
         }
@@ -185,6 +188,7 @@ async fn consume_lines_captures_session_id_from_provider() {
             _s: &str,
             _m: &str,
             _c: &std::path::Path,
+            _ctx: &grimoire::daemon::provider::AgentContext,
         ) -> Result<grimoire::daemon::process_manager::SpawnedAgent> {
             unimplemented!()
         }

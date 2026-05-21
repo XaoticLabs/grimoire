@@ -19,6 +19,58 @@ pub struct Config {
     pub providers: HashMap<String, ProviderConfig>,
     #[serde(default)]
     pub worker: Option<WorkerConfig>,
+    #[serde(default)]
+    pub notifications: NotificationsConfig,
+}
+
+/// Outbound notification webhook. When `webhook_url` is set the daemon POSTs
+/// a JSON payload to it for each enabled trigger. Channel-agnostic: point it
+/// at a Slack/Discord incoming-webhook, a relay, or any HTTP endpoint.
+// Each bool is an independent TOML toggle mapping 1:1 to a config key; the
+// clippy-suggested state-machine/enum refactor would obscure that mapping.
+#[allow(clippy::struct_excessive_bools)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NotificationsConfig {
+    /// Webhook endpoint. `None` (default) disables outbound notifications
+    /// entirely — the notifier task is never spawned.
+    #[serde(default)]
+    pub webhook_url: Option<String>,
+    /// Notify when an agent reaches `Complete`.
+    #[serde(default = "default_true")]
+    pub on_completion: bool,
+    /// Notify on `Failed` / `Banished` and restart-budget exhaustion.
+    #[serde(default = "default_true")]
+    pub on_failure: bool,
+    /// Notify when a standing agent's wake source fires.
+    #[serde(default = "default_true")]
+    pub on_wake: bool,
+    /// Notify when an agent emits its own message via `grim notify`.
+    #[serde(default = "default_true")]
+    pub on_agent_decided: bool,
+    /// Per-request timeout for the webhook POST.
+    #[serde(default = "default_notify_timeout")]
+    pub timeout_secs: u64,
+}
+
+impl Default for NotificationsConfig {
+    fn default() -> Self {
+        Self {
+            webhook_url: None,
+            on_completion: true,
+            on_failure: true,
+            on_wake: true,
+            on_agent_decided: true,
+            timeout_secs: default_notify_timeout(),
+        }
+    }
+}
+
+const fn default_true() -> bool {
+    true
+}
+
+const fn default_notify_timeout() -> u64 {
+    10
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

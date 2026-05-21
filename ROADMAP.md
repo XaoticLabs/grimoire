@@ -245,7 +245,35 @@ The six-month spine is complete. The through-line: **every feature above is impo
 
 ## Part 6 — Now / Next (post-spine)
 
-With items 1–8 of Part 5 shipped, the next axis of work is **trust & operability** — the things that turn the fabric from "demo-grade" into something a team can actually point at shared infra. Two parallel tracks, ordered by impact:
+### Direction (decided 2026-05-20)
+
+A deliberate honesty pass on what is actually unique here, so the next phase builds the moat instead of more surface area.
+
+**The moat, stated plainly:** Grimoire is **cron + systemd for AI agents, agnostic to which coding CLI you run.** Not a framework you write agents *in* — a substrate your existing agents (claude, `pi`, opencode, aider, codex) run *under*. The defensible core is the boring, hard infrastructure already shipped — durable event log, supervision/restart, wake triggers, dormant agents, the process lifecycle — plus the provider abstraction that keeps it vendor-neutral. That last point is load-bearing; never recouple the core to a single agent CLI.
+
+**What is genuinely unique** (a daemon can, a library / one-shot CLI cannot):
+
+1. **Standing agents that outlive the invoker and wake on external events** (cron, file-watch, mail). Already shipped, and *daemon-driven* — it does not depend on agents calling back. This is the strongest part and has been under-led in the docs.
+2. **Pooled compute** — the `grimw` worker pool (one control plane, many machines; the "laptop grid").
+3. **Pooled agents + shared context across an org** — federation. The vision (a team sharing one fabric) is real and unique, but **only mail + opt-in topics are built**; the part that actually delivers "shared context" — *federated memory / workspaces across daemons* — is **not built yet**, and is the high-value lift.
+
+**What is over-sold and de-prioritized:** agent-to-agent *messaging* as a headline ("swarms"). It is cheap (it rides the log) and stays in the tree, but multi-agent self-coordination is usually slower and worse than one capable agent. It is a feature, not the pitch. Building *more* peer-messaging plumbing is explicitly **not** the next move.
+
+**Immediate next — three cheap wins** (convert what exists into a real workflow unlock; needed regardless of the federation bet):
+
+1. **Outbound notifications** — let the daemon/agent reach *the user* (Slack / webhook / desktop notify) on completion / wake / failure. The missing half of "fire it and walk away, ping me only if interesting." Rides the existing event stream. *This is the single highest-leverage addition: it makes standing agents actually useful instead of a demo.*
+2. **One runnable standing-agent recipe** wired to a real repo (file-watch → act → notify), provider-neutral. Doubles as an *experiment*: does a persistent event-woken agent beat `claude -p` in a shell loop, or is it ceremony? Answer it against real use before investing further.
+3. **Legibility pass** — reframe the README around the moat above (lead with the two-primitive model — durable log + addressable mailbox — and the BYO-CLI standing-agent story; demote the swarm framing; add a plain-language alias table for the mystical verbs).
+
+**Then — federation, broken up** (the org moat; start only after the three cheap wins, and only if org-wide deployment is real rather than aspirational). Ordered by dependency:
+
+- **F1 — mTLS on the peer + worker gRPC channels.** Gates everything else; the existing roadmap already conditions cross-host trust on it.
+- **F2 — federated memory (cross-daemon shared KV).** The actual "shared context" unlock. Hard part: cross-daemon consistency and auth across trust boundaries.
+- **F3 — federated workspaces (cross-host worktrees).** Builds on F2; harder (filesystem, not just KV).
+- **F4 — cross-peer wake sources.** An agent on daemon-A wakes on an event from daemon-B.
+- **F5 — scroll-spanning.** A single scroll whose tasks run across peers.
+
+The **trust & operability** items below (observability, sandboxing, policy/budget, replay/eval) remain valid but are **demoted beneath the three cheap wins and federation F1–F2** — they harden shared infra but do not move the "unique example" needle. Catalogued here as the standing backlog:
 
 ### Track A — Enterprise hardening (the gate to multi-user)
 
@@ -265,12 +293,9 @@ The Part 3 items that don't yet have a v1:
 
 ### Recommended next pickup
 
-With **Track A §1 done**, two candidates are roughly tied for next:
+Superseded by **Direction (2026-05-20)** at the top of Part 6. Order is now: the three cheap wins (outbound notifications → standing-agent recipe → legibility pass), then federation F1–F2 (mTLS → federated memory) **if** org deployment is real.
 
-- **Track A §2 (observability baseline).** Cheap given `tracing` is already wired, and once metrics + OTel are flowing every other piece of work below gets easier to validate. Most "is this thing actually doing what I think" questions during the next features (budget, replay, sandboxing) want metrics first.
-- **Track B §4 (policy & budget).** The scheduler already owns admission, so this is mostly schema + a check function. Largest "enterprise sell" lever and the natural next step now that the trust layer no longer leaks.
-
-Pick observability first if the next thing you want is *confidence* in what's running; pick policy/budget first if the next thing you want is a *new visible feature*.
+The Track A/B items above (observability, sandboxing, policy/budget, replay/eval) are the standing backlog — pick them up opportunistically or when shared-infra hardening becomes the gate, not before. Of these, observability is still the cheapest and the best "confidence in what's running" investment; policy/budget remains the largest enterprise-sell lever.
 
 ### v2 backlog (deferred, not forgotten)
 
