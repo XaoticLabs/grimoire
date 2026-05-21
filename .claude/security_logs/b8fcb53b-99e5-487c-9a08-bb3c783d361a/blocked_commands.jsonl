@@ -1,1 +1,0 @@
-{"timestamp": "2026-04-24T15:48:43.126943", "command": "rm -f ~/.grimoire/grimoire.db ~/.grimoire/grimoire.db-shm ~/.grimoire/grimoire.db-wal ~/.grimoire/grimd.sock ~/.grimoire/grimd.pid\nls -la ~/.grimoire/", "reason": "Command matches dangerous pattern: rm\\s+(-[rfRF]+\\s+|\\s+-[rfRF]+)(~|\\$HOME|\\${HOME})", "action": "blocked"}
