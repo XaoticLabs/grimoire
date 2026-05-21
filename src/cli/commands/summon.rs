@@ -1,4 +1,4 @@
-use anyhow::{Result, anyhow};
+use anyhow::{Context, Result, anyhow};
 use colored::Colorize;
 
 use crate::cli::client::DaemonClient;
@@ -63,7 +63,11 @@ pub async fn run(
         std::process::exit(1);
     }
 
-    let result: SummonResult = serde_json::from_value(response.result.unwrap())?;
+    let result: SummonResult = serde_json::from_value(
+        response
+            .result
+            .context("daemon returned `ok` with empty result payload")?,
+    )?;
     let mut tail = format!("(state: {})", result.state);
     if restart != "never" {
         let mr = max_n

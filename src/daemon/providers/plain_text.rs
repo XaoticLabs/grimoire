@@ -13,7 +13,7 @@ pub struct PlainTextProvider {
 }
 
 impl PlainTextProvider {
-    pub fn new(name: String, config: ProviderConfig) -> Self {
+    pub const fn new(name: String, config: ProviderConfig) -> Self {
         Self {
             provider_name: name,
             config,

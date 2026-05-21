@@ -1,5 +1,5 @@
+use parking_lot::Mutex;
 use std::collections::HashMap;
-use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use anyhow::{Result, anyhow};
@@ -69,17 +69,17 @@ impl WorkerRegistry {
 
     pub fn new_with_clock_for_test(eviction_after: Duration) -> Self {
         let r = Self::new(eviction_after);
-        r.clock.lock().unwrap().enabled = true;
+        r.clock.lock().enabled = true;
         r
     }
 
     pub fn advance_clock_for_test(&self, by: Duration) {
-        let mut c = self.clock.lock().unwrap();
+        let mut c = self.clock.lock();
         c.offset += by;
     }
 
     fn now(&self) -> Instant {
-        let c = self.clock.lock().unwrap();
+        let c = self.clock.lock();
         if c.enabled {
             // For test clock, use a fixed reference; subtract offset so
             // last_heartbeat looks "older".
@@ -93,12 +93,12 @@ impl WorkerRegistry {
         if !params.bearer_ok {
             return Err(anyhow!("bad bearer token"));
         }
-        let mut workers = self.workers.lock().unwrap();
+        let mut workers = self.workers.lock();
         if workers.contains_key(&params.worker_id) {
             return Err(anyhow!("worker already registered: {}", params.worker_id));
         }
-        let now = if self.clock.lock().unwrap().enabled {
-            Instant::now() + self.clock.lock().unwrap().offset
+        let now = if self.clock.lock().enabled {
+            Instant::now() + self.clock.lock().offset
         } else {
             Instant::now()
         };
@@ -121,16 +121,16 @@ impl WorkerRegistry {
     }
 
     pub fn evict(&self, worker_id: &str) {
-        let mut workers = self.workers.lock().unwrap();
+        let mut workers = self.workers.lock();
         workers.remove(worker_id);
     }
 
     pub fn record_heartbeat(&self, worker_id: &str, in_flight: u32) {
-        let mut workers = self.workers.lock().unwrap();
+        let mut workers = self.workers.lock();
         if let Some(w) = workers.get_mut(worker_id) {
             w.in_flight = in_flight;
-            w.last_heartbeat = if self.clock.lock().unwrap().enabled {
-                Instant::now() + self.clock.lock().unwrap().offset
+            w.last_heartbeat = if self.clock.lock().enabled {
+                Instant::now() + self.clock.lock().offset
             } else {
                 Instant::now()
             };
@@ -138,18 +138,18 @@ impl WorkerRegistry {
     }
 
     pub fn set_in_flight_for_test(&self, worker_id: &str, in_flight: u32) {
-        let mut workers = self.workers.lock().unwrap();
+        let mut workers = self.workers.lock();
         if let Some(w) = workers.get_mut(worker_id) {
             w.in_flight = in_flight;
         }
     }
 
     pub fn count(&self) -> usize {
-        self.workers.lock().unwrap().len()
+        self.workers.lock().len()
     }
 
     pub fn has_eligible_worker(&self, provider_name: &str, constraint: &VersionReq) -> bool {
-        let workers = self.workers.lock().unwrap();
+        let workers = self.workers.lock();
         workers.values().any(|w| {
             w.providers
                 .iter()
@@ -162,7 +162,7 @@ impl WorkerRegistry {
         provider_name: &str,
         constraint: &VersionReq,
     ) -> Option<WorkerId> {
-        let workers = self.workers.lock().unwrap();
+        let workers = self.workers.lock();
         let mut candidates: Vec<&Worker> = workers
             .values()
             .filter(|w| w.in_flight < w.max_concurrent)
@@ -181,7 +181,7 @@ impl WorkerRegistry {
     }
 
     pub fn assign_tx(&self, worker_id: &str) -> Option<mpsc::Sender<DaemonMessage>> {
-        let workers = self.workers.lock().unwrap();
+        let workers = self.workers.lock();
         workers.get(worker_id).map(|w| w.assign_tx.clone())
     }
 
@@ -191,7 +191,7 @@ impl WorkerRegistry {
 
     pub fn run_eviction_pass(&self) {
         let now = self.now();
-        let mut workers = self.workers.lock().unwrap();
+        let mut workers = self.workers.lock();
         let stale: Vec<String> = workers
             .iter()
             .filter(|(_, w)| now.saturating_duration_since(w.last_heartbeat) > self.eviction_after)

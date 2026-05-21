@@ -20,7 +20,7 @@ pub struct GrimwConfig {
     pub providers: HashMap<String, ProviderConfig>,
 }
 
-fn default_max_concurrent() -> u32 {
+const fn default_max_concurrent() -> u32 {
     4
 }
 

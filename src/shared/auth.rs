@@ -20,6 +20,8 @@
 //! All comparisons go through [`AuthToken::verify`], which uses
 //! `subtle::ConstantTimeEq` to avoid leaking timing information.
 
+#![warn(missing_docs)]
+
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
@@ -28,7 +30,9 @@ use subtle::ConstantTimeEq;
 
 use super::constants;
 
+/// Filename of the auto-generated token under [`constants::grimoire_dir`].
 pub const AUTH_TOKEN_FILENAME: &str = "auth.token";
+/// Environment variable that overrides every other token source.
 pub const AUTH_TOKEN_ENV: &str = "GRIMOIRE_AUTH_TOKEN";
 
 /// Length of an auto-generated token, in hex characters (= 32 random bytes).
@@ -40,15 +44,20 @@ const GENERATED_TOKEN_HEX_LEN: usize = 64;
 pub struct AuthToken(String);
 
 impl AuthToken {
+    /// Wrap a raw token string. The input is stored verbatim — callers are
+    /// responsible for trimming whitespace before construction.
     pub fn new(s: impl Into<String>) -> Self {
         Self(s.into())
     }
 
+    /// Returns the raw token bytes as a `&str`. Avoid logging this value.
+    #[must_use]
     pub fn as_str(&self) -> &str {
         &self.0
     }
 
     /// Constant-time equality check.
+    #[must_use]
     pub fn verify(&self, provided: &str) -> bool {
         let a = self.0.as_bytes();
         let b = provided.as_bytes();
@@ -73,6 +82,7 @@ impl std::fmt::Debug for AuthToken {
 
 /// Default path: `~/.grimoire/auth.token`. Honours `GRIMOIRE_AUTH_TOKEN_PATH`
 /// for tests so harnesses can isolate the file.
+#[must_use]
 pub fn token_path() -> PathBuf {
     if let Ok(s) = std::env::var("GRIMOIRE_AUTH_TOKEN_PATH") {
         return PathBuf::from(s);
@@ -177,7 +187,6 @@ fn generate_token() -> String {
 }
 
 #[cfg(test)]
-#[allow(clippy::disallowed_methods)] // Test-only env mutation, serialized via ENV_LOCK + wrapped in `unsafe`.
 mod tests {
     use super::*;
     use std::sync::Mutex;
@@ -188,6 +197,26 @@ mod tests {
     /// `load_or_init_daemon` call. This mutex serializes the env-touching
     /// tests; it lives in test code only.
     static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    /// # Safety
+    ///
+    /// `std::env::set_var` / `remove_var` became `unsafe` in Rust 1.80
+    /// because concurrent reads from other threads can observe a torn
+    /// `environ` pointer. The caller must hold [`ENV_LOCK`] for the entire
+    /// scope in which any env-touching code may run; the lock provides
+    /// the required exclusion across all tests in this module.
+    #[allow(unsafe_code, clippy::disallowed_methods)]
+    unsafe fn env_set(key: &str, value: impl AsRef<std::ffi::OsStr>) {
+        unsafe { std::env::set_var(key, value) };
+    }
+
+    /// # Safety
+    ///
+    /// Same contract as [`env_set`].
+    #[allow(unsafe_code, clippy::disallowed_methods)]
+    unsafe fn env_remove(key: &str) {
+        unsafe { std::env::remove_var(key) };
+    }
 
     #[test]
     fn verify_matches_self() {
@@ -220,9 +249,10 @@ mod tests {
         let _guard = ENV_LOCK.lock().unwrap();
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("auth.token");
+        // SAFETY: ENV_LOCK held for the scope of this test.
         unsafe {
-            std::env::set_var("GRIMOIRE_AUTH_TOKEN_PATH", &path);
-            std::env::remove_var(AUTH_TOKEN_ENV);
+            env_set("GRIMOIRE_AUTH_TOKEN_PATH", &path);
+            env_remove(AUTH_TOKEN_ENV);
         }
 
         let tok = load_or_init_daemon(None).unwrap();
@@ -240,9 +270,8 @@ mod tests {
         let tok2 = load_or_init_daemon(None).unwrap();
         assert_eq!(tok.as_str(), tok2.as_str());
 
-        unsafe {
-            std::env::remove_var("GRIMOIRE_AUTH_TOKEN_PATH");
-        }
+        // SAFETY: ENV_LOCK still held.
+        unsafe { env_remove("GRIMOIRE_AUTH_TOKEN_PATH") };
     }
 
     #[test]
@@ -251,17 +280,19 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("auth.token");
         std::fs::write(&path, "from-file").unwrap();
+        // SAFETY: ENV_LOCK held for the scope of this test.
         unsafe {
-            std::env::set_var("GRIMOIRE_AUTH_TOKEN_PATH", &path);
-            std::env::set_var(AUTH_TOKEN_ENV, "from-env");
+            env_set("GRIMOIRE_AUTH_TOKEN_PATH", &path);
+            env_set(AUTH_TOKEN_ENV, "from-env");
         }
 
         let tok = load_or_init_daemon(Some("from-config")).unwrap();
         assert_eq!(tok.as_str(), "from-env");
 
+        // SAFETY: ENV_LOCK still held.
         unsafe {
-            std::env::remove_var(AUTH_TOKEN_ENV);
-            std::env::remove_var("GRIMOIRE_AUTH_TOKEN_PATH");
+            env_remove(AUTH_TOKEN_ENV);
+            env_remove("GRIMOIRE_AUTH_TOKEN_PATH");
         }
     }
 
@@ -271,16 +302,16 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("auth.token");
         std::fs::write(&path, "from-file").unwrap();
+        // SAFETY: ENV_LOCK held for the scope of this test.
         unsafe {
-            std::env::set_var("GRIMOIRE_AUTH_TOKEN_PATH", &path);
-            std::env::remove_var(AUTH_TOKEN_ENV);
+            env_set("GRIMOIRE_AUTH_TOKEN_PATH", &path);
+            env_remove(AUTH_TOKEN_ENV);
         }
 
         let tok = load_or_init_daemon(Some("from-config")).unwrap();
         assert_eq!(tok.as_str(), "from-config");
 
-        unsafe {
-            std::env::remove_var("GRIMOIRE_AUTH_TOKEN_PATH");
-        }
+        // SAFETY: ENV_LOCK still held.
+        unsafe { env_remove("GRIMOIRE_AUTH_TOKEN_PATH") };
     }
 }

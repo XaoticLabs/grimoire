@@ -37,7 +37,7 @@ impl PeerSvc {
     /// `Arc` to its underlying data, so dropping the registry reference
     /// after construction doesn't affect lifetimes.
     pub fn new(registry: Arc<PeerRegistry>) -> PeerServer<Self> {
-        let svc = PeerSvc {
+        let svc = Self {
             db: registry.db.clone(),
             bus: registry.bus.clone(),
             daemon_id: registry.daemon_id.clone(),
@@ -176,7 +176,8 @@ impl PeerService for PeerSvc {
 
 // `tonic::Status` is large (≈176B), but the streaming-RPC return type is fixed by
 // the generated tonic trait — we can't box it without changing the public API.
-#[allow(clippy::result_large_err)]
+// The `Result` wrapper is likewise dictated by the tonic trait signature.
+#[allow(clippy::result_large_err, clippy::unnecessary_wraps)]
 fn single_helloack_stream(
     daemon_id: String,
     accepted: bool,

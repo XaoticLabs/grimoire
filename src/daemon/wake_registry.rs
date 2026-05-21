@@ -13,6 +13,7 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Duration;
 
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
@@ -28,6 +29,11 @@ use crate::daemon::wake_sources::parent_completion::{
     ParentCompletionConfig, ParentCompletionSource,
 };
 use crate::shared::constants;
+
+/// Wake-source tick — how often the registry sweeps cron sources whose
+/// next-fire time has elapsed. Lower bound is the smallest cron resolution
+/// (1 minute) but we sample at 30s so a freshly-armed cron fires promptly.
+const WAKE_TICK_INTERVAL: Duration = Duration::from_secs(30);
 use crate::shared::protocol::StreamEvent;
 use crate::shared::types::{Mail, MailState, WakeSource, WakeSourceKind, WakeSourceState};
 
@@ -170,7 +176,7 @@ impl WakeRegistry {
         // Cron tick loop: every 30s evaluate all cron sources.
         let me2 = self.clone();
         tokio::spawn(async move {
-            let mut interval = tokio::time::interval(std::time::Duration::from_secs(30));
+            let mut interval = tokio::time::interval(WAKE_TICK_INTERVAL);
             interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
             interval.tick().await;
             loop {
@@ -419,7 +425,7 @@ impl WakeRegistry {
             }
 
             // Cron catch-up.
-            if let WakeSourceKind::Cron = src.kind
+            if src.kind == WakeSourceKind::Cron
                 && let Ok(cfg) = serde_json::from_str::<CronConfig>(&src.config_json)
                 && let Ok(cron) = CronSource::new(&cfg.expr)
             {
@@ -455,7 +461,7 @@ impl WakeRegistry {
                 let (notify_tx, mut notify_rx) = tokio::sync::mpsc::channel::<
                     crate::daemon::wake_sources::file_watch::MatchedChange,
                 >(256);
-                let watcher = source.clone().arm(notify_tx)?;
+                let watcher = source.arm(notify_tx)?;
 
                 // Debounce drain task: collect changes during a 200ms window
                 // after the first event, then send one FireMsg.

@@ -29,7 +29,7 @@ pub struct ParentCompletionSource {
 }
 
 impl ParentCompletionSource {
-    pub fn new(config: ParentCompletionConfig) -> Result<Self> {
+    pub const fn new(config: ParentCompletionConfig) -> Result<Self> {
         Ok(Self { config })
     }
 

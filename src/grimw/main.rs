@@ -1,3 +1,5 @@
+#![cfg_attr(not(test), forbid(unsafe_code))]
+
 use std::path::PathBuf;
 
 use anyhow::{Context, Result};

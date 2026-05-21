@@ -17,14 +17,17 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # The fast checks — compile, lint, format. Fan out from one toolchain install
-  # via a matrix so a single fmt failure doesn't block clippy from reporting.
+  # Fast checks — compile, lint, format. Matrixed across the MSRV
+  # (proves the documented minimum still works) and stable (catches
+  # regressions from newer rustc/clippy). Fan-out is intentional: one
+  # task's failure doesn't suppress the others.
   check:
-    name: ${{ matrix.task }}
+    name: ${{ matrix.toolchain }} / ${{ matrix.task }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
+        toolchain: ["1.95.0", "stable"]
         task: [fmt-check, clippy, test]
     steps:
       - uses: actions/checkout@v4
@@ -35,16 +38,36 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: "1.95.0"
+          toolchain: ${{ matrix.toolchain }}
           components: rustfmt, clippy
 
       - name: Cache cargo registry + target
         uses: Swatinem/rust-cache@v2
         with:
-          shared-key: ${{ matrix.task }}
+          shared-key: ${{ matrix.toolchain }}-${{ matrix.task }}
 
       - name: Run ${{ matrix.task }}
         run: make ${{ matrix.task }}
+
+  # Rustdoc build. Catches broken intra-doc links — a class of bug that
+  # silently rots otherwise. Uses stable so the doc lints are up to date.
+  docs:
+    name: rustdoc
+    runs-on: ubuntu-latest
+    env:
+      RUSTDOCFLAGS: -D warnings -D rustdoc::broken_intra_doc_links -D rustdoc::private_intra_doc_links
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable
+      - name: Cache cargo registry + target
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: docs
+      - name: cargo doc
+        run: cargo doc --locked --no-deps --all-features --document-private-items
 
   # Supply-chain + housekeeping. Slower (downloads advisory-db) and depends on
   # external state (RustSec), so isolated from `check` and allowed to be flakier.
@@ -88,3 +111,28 @@ jobs:
 
       - name: Run ${{ matrix.task }}
         run: make ${{ matrix.task }}
+
+  # Fail when any `review-by:` date inside deny.toml has passed. Without
+  # this, a transitive-advisory ignore can outlive its upstream fix
+  # without anyone noticing. cargo-deny 0.20+ has a native `expiration`
+  # field; the comment-grep is the back-compat path for 0.19.
+  review-by-dates:
+    name: review-by dates
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fail on past review-by dates in deny.toml
+        run: |
+          set -euo pipefail
+          today=$(date -u +%Y-%m-%d)
+          stale=$(grep -nE 'review-by: *[0-9]{4}-[0-9]{2}-[0-9]{2}' deny.toml \
+                    | awk -v t="$today" -F'review-by:' '{
+                        d=$2; sub(/^ */,"",d); sub(/ .*$/,"",d);
+                        if (d < t) print
+                      }')
+          if [ -n "$stale" ]; then
+            echo "::error::Stale review-by dates in deny.toml (today is $today):"
+            echo "$stale"
+            exit 1
+          fi
+          echo "All review-by dates are still in the future."

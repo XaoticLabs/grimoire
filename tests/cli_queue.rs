@@ -15,7 +15,7 @@ use grimoire::shared::protocol::{QueueEntry, QueueListResponse};
 use grimoire::shared::types::{Agent, AgentState};
 use std::path::PathBuf;
 
-fn _ensure_module_loads() {
+const fn _ensure_module_loads() {
     // Touch the symbol so an unused-import warning doesn't fire on the
     // CI compile path; `queue_cmd::run` is async and not called here.
     let _ = &queue_cmd::run;

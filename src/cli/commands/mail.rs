@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
 use clap::Subcommand;
 use colored::Colorize;
 
@@ -73,7 +73,11 @@ async fn run_send(addr: &str, body: &str) -> Result<()> {
         std::process::exit(1);
     }
 
-    let result: MailSendResult = serde_json::from_value(response.result.unwrap())?;
+    let result: MailSendResult = serde_json::from_value(
+        response
+            .result
+            .context("daemon returned `ok` with empty result payload")?,
+    )?;
     if result.delivered == 0 && !result.mail_ids.is_empty() {
         eprintln!(
             "{} send failed (mail_id {})",
@@ -105,7 +109,11 @@ async fn run_list(agent_prefix: &str, pending_only: bool, after: Option<i64>) ->
         eprintln!("{} {}", "Error:".red(), error.message);
         std::process::exit(1);
     }
-    let result: MailListResult = serde_json::from_value(response.result.unwrap())?;
+    let result: MailListResult = serde_json::from_value(
+        response
+            .result
+            .context("daemon returned `ok` with empty result payload")?,
+    )?;
     if result.mails.is_empty() {
         println!("no mail");
         return Ok(());
@@ -126,7 +134,11 @@ async fn run_ack(prefix: &str) -> Result<()> {
         eprintln!("{} {}", "Error:".red(), error.message);
         std::process::exit(1);
     }
-    let result: MailAckResult = serde_json::from_value(response.result.unwrap())?;
+    let result: MailAckResult = serde_json::from_value(
+        response
+            .result
+            .context("daemon returned `ok` with empty result payload")?,
+    )?;
     println!("acked: {}", result.acked);
     Ok(())
 }
@@ -144,7 +156,11 @@ async fn run_subscribe(agent_prefix: &str, topic: &str) -> Result<()> {
         eprintln!("{} {}", "Error:".red(), error.message);
         std::process::exit(1);
     }
-    let result: MailSubscribeResult = serde_json::from_value(response.result.unwrap())?;
+    let result: MailSubscribeResult = serde_json::from_value(
+        response
+            .result
+            .context("daemon returned `ok` with empty result payload")?,
+    )?;
     println!("{}", result.subscription_id);
     Ok(())
 }
@@ -165,7 +181,11 @@ async fn run_unsubscribe(subscription_id: &str) -> Result<()> {
         eprintln!("{} {}", "Error:".red(), error.message);
         std::process::exit(1);
     }
-    let _: MailUnsubscribeResult = serde_json::from_value(response.result.unwrap())?;
+    let _: MailUnsubscribeResult = serde_json::from_value(
+        response
+            .result
+            .context("daemon returned `ok` with empty result payload")?,
+    )?;
     println!("unsubscribed: true");
     Ok(())
 }
@@ -177,7 +197,11 @@ async fn run_topics() -> Result<()> {
         eprintln!("{} {}", "Error:".red(), error.message);
         std::process::exit(1);
     }
-    let result: MailTopicsResult = serde_json::from_value(response.result.unwrap())?;
+    let result: MailTopicsResult = serde_json::from_value(
+        response
+            .result
+            .context("daemon returned `ok` with empty result payload")?,
+    )?;
     if result.topics.is_empty() {
         println!("no topics");
         return Ok(());

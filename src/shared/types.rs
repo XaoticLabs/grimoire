@@ -1,3 +1,5 @@
+#![allow(missing_docs)] // Shared value types; documentation pass pending.
+
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
@@ -26,7 +28,7 @@ pub type PeerId = String;
 macro_rules! impl_state_enum {
     ($name:ident { $($variant:ident => $str:literal),+ $(,)? }) => {
         impl $name {
-            pub fn as_str(&self) -> &'static str {
+            pub const fn as_str(&self) -> &'static str {
                 match self {
                     $(Self::$variant => $str),+
                 }
@@ -86,7 +88,7 @@ impl AgentState {
     /// Slot accounting predicate: `true` when the agent is not consuming a
     /// scheduler slot. Includes `Dormant` (parked, no live process) and
     /// `Restarting` (mid-lifecycle, no live process).
-    pub fn is_terminal(&self) -> bool {
+    pub const fn is_terminal(&self) -> bool {
         matches!(
             self,
             Self::Complete | Self::Failed | Self::Banished | Self::Dormant | Self::Restarting
@@ -96,13 +98,13 @@ impl AgentState {
     /// Lifecycle predicate: `true` only when the agent is truly finished
     /// and will not transition again. Excludes `Dormant` and `Restarting`,
     /// which can still transition back to `Active`.
-    pub fn is_final(&self) -> bool {
+    pub const fn is_final(&self) -> bool {
         matches!(self, Self::Complete | Self::Failed | Self::Banished)
     }
 
     /// Whether the supervisor should evaluate restart policy when an agent
     /// reaches this state. Only `Failed` is considered supervisable.
-    pub fn is_supervisable(&self) -> bool {
+    pub const fn is_supervisable(&self) -> bool {
         matches!(self, Self::Failed)
     }
 }
@@ -147,7 +149,7 @@ pub struct SupervisionConfig {
 }
 
 impl SupervisionConfig {
-    pub fn never() -> Self {
+    pub const fn never() -> Self {
         Self {
             policy: RestartPolicy::Never,
             max_restarts: None,
@@ -794,18 +796,18 @@ impl_state_enum!(FederationDirection {
 impl FederationDirection {
     /// Merge two direction declarations into the most-permissive form.
     #[must_use]
-    pub fn merge(self, other: FederationDirection) -> FederationDirection {
+    pub fn merge(self, other: Self) -> Self {
         if self == other {
             return self;
         }
-        FederationDirection::Both
+        Self::Both
     }
 
-    pub fn allows_outbound(&self) -> bool {
+    pub const fn allows_outbound(&self) -> bool {
         matches!(self, Self::Outbound | Self::Both)
     }
 
-    pub fn allows_inbound(&self) -> bool {
+    pub const fn allows_inbound(&self) -> bool {
         matches!(self, Self::Inbound | Self::Both)
     }
 }

@@ -67,7 +67,7 @@ pub async fn run(key: Option<String>, value: Option<String>) -> Result<()> {
             let config = Config::load()?;
             let value = match key.as_str() {
                 "daemon.port" => config.daemon.port.to_string(),
-                "daemon.log_level" => config.daemon.log_level.clone(),
+                "daemon.log_level" => config.daemon.log_level,
                 "daemon.socket_path" => config
                     .daemon
                     .socket_path

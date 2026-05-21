@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
 use colored::Colorize;
 
 use crate::cli::client::DaemonClient;
@@ -22,7 +22,11 @@ pub async fn run(
             std::process::exit(1);
         }
 
-        let result: PactListResult = serde_json::from_value(response.result.unwrap())?;
+        let result: PactListResult = serde_json::from_value(
+            response
+                .result
+                .context("daemon returned `ok` with empty result payload")?,
+        )?;
 
         if result.pacts.is_empty() {
             println!("{}", "No pacts defined.".dimmed());
@@ -76,7 +80,11 @@ pub async fn run(
             std::process::exit(1);
         }
 
-        let result: PactCreateResult = serde_json::from_value(response.result.unwrap())?;
+        let result: PactCreateResult = serde_json::from_value(
+            response
+                .result
+                .context("daemon returned `ok` with empty result payload")?,
+        )?;
         println!(
             "{} Pact {} created: when {} completes, fire new agent",
             "✓".green(),

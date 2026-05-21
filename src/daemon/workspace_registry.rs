@@ -1,6 +1,6 @@
 //! `WorkspaceRegistry` — daemon-internal owner of workspace lifecycle.
 //!
-//! Mirrors the `WakeRegistry` shape (Arc<Self>, mutex-protected handle map,
+//! Mirrors the `WakeRegistry` shape (`Arc<Self>`, mutex-protected handle map,
 //! shells out via a `GitRunner` seam so tests can swap the git binary). Owns
 //! the `WorkspaceWatcher` handles for active workspaces; lazy-starts a watcher
 //! on first assign, stops on destroy.

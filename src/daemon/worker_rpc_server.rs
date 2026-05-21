@@ -1,5 +1,6 @@
 use std::pin::Pin;
 use std::sync::Arc;
+use std::time::Duration;
 
 use semver::Version;
 use tokio::sync::{Mutex, mpsc};
@@ -13,6 +14,10 @@ use crate::shared::worker_proto::{
 };
 
 use super::worker_registry::{RegisterParams, WorkerRegistry, worker_version_meets_minimum};
+
+/// Tight-loop yield while waiting for the worker registry to observe a
+/// just-registered worker before serving its first message stream.
+const REGISTRY_SETTLE_YIELD: Duration = Duration::from_millis(50);
 
 /// Routes inbound TaskEvent/TaskFinished/TaskAccepted/TaskRejected back to a
 /// per-agent channel registered by RemoteExecutor (Task 6).
@@ -90,7 +95,7 @@ impl WorkerControl for WorkerControlService {
         info!(worker_id = %register.worker_id, "worker registered");
 
         let registry_for_drop = self.registry.clone();
-        let worker_id_for_drop = register.worker_id.clone();
+        let worker_id_for_drop = register.worker_id;
         let routing = self.routing.clone();
 
         tokio::spawn(async move {
@@ -182,7 +187,7 @@ pub mod test_helpers {
                 .await;
         });
         // Brief settle.
-        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        tokio::time::sleep(REGISTRY_SETTLE_YIELD).await;
         TestServerHandle {
             addr,
             registry,

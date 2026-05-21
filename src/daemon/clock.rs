@@ -2,7 +2,7 @@
 //! so tests can drive time deterministically.
 
 use chrono::{DateTime, Utc};
-use std::sync::Mutex;
+use parking_lot::Mutex;
 
 pub trait Clock: Send + Sync {
     fn now(&self) -> DateTime<Utc>;
@@ -21,25 +21,25 @@ pub struct TestClock {
 }
 
 impl TestClock {
-    pub fn new(t: DateTime<Utc>) -> Self {
+    pub const fn new(t: DateTime<Utc>) -> Self {
         Self {
             inner: Mutex::new(t),
         }
     }
 
     pub fn advance(&self, d: chrono::Duration) {
-        let mut g = self.inner.lock().unwrap();
+        let mut g = self.inner.lock();
         *g += d;
     }
 
     pub fn set(&self, t: DateTime<Utc>) {
-        let mut g = self.inner.lock().unwrap();
+        let mut g = self.inner.lock();
         *g = t;
     }
 }
 
 impl Clock for TestClock {
     fn now(&self) -> DateTime<Utc> {
-        *self.inner.lock().unwrap()
+        *self.inner.lock()
     }
 }

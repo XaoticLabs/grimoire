@@ -1,6 +1,6 @@
 //! `grim wake` — manage agent wake sources.
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use clap::Subcommand;
 use colored::Colorize;
 
@@ -120,7 +120,11 @@ async fn run_add(
         eprintln!("{} {}", "Error:".red(), error.message);
         std::process::exit(1);
     }
-    let result: WakeAddResult = serde_json::from_value(response.result.unwrap())?;
+    let result: WakeAddResult = serde_json::from_value(
+        response
+            .result
+            .context("daemon returned `ok` with empty result payload")?,
+    )?;
     println!(
         "Wake source {} registered ({}) for agent {}.",
         result.wake_id.bold(),
@@ -144,7 +148,11 @@ async fn run_list(agent_prefix: Option<String>) -> Result<()> {
         eprintln!("{} {}", "Error:".red(), error.message);
         std::process::exit(1);
     }
-    let result: WakeListResult = serde_json::from_value(response.result.unwrap())?;
+    let result: WakeListResult = serde_json::from_value(
+        response
+            .result
+            .context("daemon returned `ok` with empty result payload")?,
+    )?;
     if result.sources.is_empty() {
         println!("no wake sources");
         return Ok(());
@@ -191,7 +199,11 @@ async fn run_test(wake_id: String) -> Result<()> {
         eprintln!("{} {}", "Error:".red(), error.message);
         std::process::exit(1);
     }
-    let result: WakeTestResult = serde_json::from_value(response.result.unwrap())?;
+    let result: WakeTestResult = serde_json::from_value(
+        response
+            .result
+            .context("daemon returned `ok` with empty result payload")?,
+    )?;
     println!("fired: mail {}", result.mail_id);
     Ok(())
 }

@@ -1,8 +1,8 @@
 use anyhow::Result;
 use chrono::{DateTime, Utc};
+use parking_lot::Mutex;
 use rusqlite::{Connection, params};
 use std::path::Path;
-use std::sync::Mutex;
 
 use crate::shared::protocol::StreamEvent;
 use crate::shared::types::{
@@ -64,14 +64,14 @@ impl Database {
     where
         F: FnOnce(&Connection) -> T,
     {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         f(&conn)
     }
 
     /// Lock and return a guard on the underlying connection. Used by sibling
     /// modules (e.g. `workspace_db`) that need transactional access.
-    pub(crate) fn workspace_conn_lock(&self) -> std::sync::MutexGuard<'_, Connection> {
-        self.conn.lock().unwrap()
+    pub(crate) fn workspace_conn_lock(&self) -> parking_lot::MutexGuard<'_, Connection> {
+        self.conn.lock()
     }
 
     /// Open an in-memory database (for tests).
@@ -86,7 +86,7 @@ impl Database {
     }
 
     fn migrate(&self) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         conn.execute_batch(
             "
             CREATE TABLE IF NOT EXISTS agents (
@@ -440,7 +440,7 @@ impl Database {
         let payload = serde_json::to_string(event)?;
         let ts = Utc::now().to_rfc3339();
 
-        let mut conn = self.conn.lock().unwrap();
+        let mut conn = self.conn.lock();
         let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
 
         let seq: i64 = if let Some(aid) = agent_id {
@@ -470,7 +470,7 @@ impl Database {
     }
 
     pub fn insert_agent(&self, agent: &Agent) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         conn.execute(
             "INSERT INTO agents (id, name, state, task, model, provider, cwd, pid, session_id, exit_code, created_at, updated_at, worker_id)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
@@ -499,7 +499,7 @@ impl Database {
         state: &AgentState,
         exit_code: Option<i32>,
     ) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         let now = Utc::now().to_rfc3339();
         conn.execute(
             "UPDATE agents SET state = ?1, exit_code = ?2, updated_at = ?3 WHERE id = ?4",
@@ -509,7 +509,7 @@ impl Database {
     }
 
     pub fn update_agent_session_id(&self, id: &str, session_id: &str) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         let now = Utc::now().to_rfc3339();
         conn.execute(
             "UPDATE agents SET session_id = ?1, updated_at = ?2 WHERE id = ?3",
@@ -519,7 +519,7 @@ impl Database {
     }
 
     pub fn update_agent_worker_id(&self, id: &str, worker_id: Option<&str>) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         let now = Utc::now().to_rfc3339();
         conn.execute(
             "UPDATE agents SET worker_id = ?1, updated_at = ?2 WHERE id = ?3",
@@ -529,7 +529,7 @@ impl Database {
     }
 
     pub fn update_agent_pid(&self, id: &str, pid: u32) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         let now = Utc::now().to_rfc3339();
         conn.execute(
             "UPDATE agents SET pid = ?1, updated_at = ?2 WHERE id = ?3",
@@ -539,7 +539,7 @@ impl Database {
     }
 
     pub fn get_agent(&self, id: &str) -> Result<Option<Agent>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         let mut stmt = conn.prepare(
             "SELECT id, name, state, task, model, provider, cwd, pid, session_id, exit_code, created_at, updated_at, worker_id, restart_policy, restart_count, workspace_id
              FROM agents WHERE id = ?1",
@@ -552,7 +552,7 @@ impl Database {
     }
 
     pub fn list_agents(&self, state_filter: Option<&str>) -> Result<Vec<Agent>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         let query = match state_filter {
             Some(_) => "SELECT id, name, state, task, model, provider, cwd, pid, session_id, exit_code, created_at, updated_at, worker_id, restart_policy, restart_count, workspace_id
                         FROM agents WHERE state = ?1 ORDER BY created_at DESC",
@@ -572,7 +572,7 @@ impl Database {
     }
 
     pub fn insert_event(&self, event: &AgentEvent) -> Result<i64> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         conn.execute(
             "INSERT INTO agent_events (agent_id, event_type, payload, created_at)
              VALUES (?1, ?2, ?3, ?4)",
@@ -587,7 +587,7 @@ impl Database {
     }
 
     pub fn get_events(&self, agent_id: &str, tail: Option<usize>) -> Result<Vec<AgentEvent>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         let mut events = Vec::new();
         let query = if let Some(limit) = tail {
             format!(
@@ -622,7 +622,7 @@ impl Database {
 
     #[allow(dead_code)]
     pub fn delete_agent(&self, id: &str) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         conn.execute("DELETE FROM agent_events WHERE agent_id = ?1", params![id])?;
         conn.execute("DELETE FROM agents WHERE id = ?1", params![id])?;
         Ok(())
@@ -631,7 +631,7 @@ impl Database {
     // --- Pact methods ---
 
     pub fn insert_pact(&self, pact: &Pact) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         conn.execute(
             "INSERT INTO pacts (id, source_id, task_tpl, name, state, created_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
@@ -648,7 +648,7 @@ impl Database {
     }
 
     pub fn list_pacts(&self, source_id: Option<&str>) -> Result<Vec<Pact>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         let mut pacts = Vec::new();
         if let Some(sid) = source_id {
             let mut stmt = conn.prepare(
@@ -673,7 +673,7 @@ impl Database {
     }
 
     pub fn get_pending_pacts_for_agent(&self, agent_id: &str) -> Result<Vec<Pact>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         let mut stmt = conn.prepare(
             "SELECT id, source_id, task_tpl, name, state, target_id, created_at, fired_at
              FROM pacts WHERE source_id = ?1 AND state = 'pending'",
@@ -687,7 +687,7 @@ impl Database {
     }
 
     pub fn update_pact_fired(&self, id: &str, target_id: &str) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         let now = Utc::now().to_rfc3339();
         conn.execute(
             "UPDATE pacts SET state = 'fired', target_id = ?1, fired_at = ?2 WHERE id = ?3",
@@ -697,7 +697,7 @@ impl Database {
     }
 
     pub fn update_pact_failed(&self, id: &str) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         let now = Utc::now().to_rfc3339();
         conn.execute(
             "UPDATE pacts SET state = 'failed', fired_at = ?1 WHERE id = ?2",
@@ -708,7 +708,7 @@ impl Database {
 
     /// Extract the final result text from an agent's output events.
     pub fn get_agent_output(&self, agent_id: &str) -> Result<Option<String>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         let mut stmt = conn.prepare(
             "SELECT payload FROM agent_events
              WHERE agent_id = ?1 AND event_type = 'stdout'
@@ -730,7 +730,7 @@ impl Database {
     // --- Scroll methods ---
 
     pub fn insert_scroll(&self, scroll: &Scroll) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         conn.execute(
             "INSERT INTO scrolls (id, name, state, source_path, max_concurrency, created_at, updated_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
@@ -748,7 +748,7 @@ impl Database {
     }
 
     pub fn get_scroll(&self, id: &str) -> Result<Option<Scroll>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         let mut stmt = conn.prepare(
             "SELECT id, name, state, source_path, max_concurrency, created_at, updated_at
              FROM scrolls WHERE id = ?1",
@@ -761,7 +761,7 @@ impl Database {
     }
 
     pub fn list_scrolls(&self) -> Result<Vec<Scroll>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         let mut stmt = conn.prepare(
             "SELECT id, name, state, source_path, max_concurrency, created_at, updated_at
              FROM scrolls ORDER BY created_at DESC",
@@ -775,7 +775,7 @@ impl Database {
     }
 
     pub fn update_scroll_state(&self, id: &str, state: &ScrollState) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         let now = Utc::now().to_rfc3339();
         conn.execute(
             "UPDATE scrolls SET state = ?1, updated_at = ?2 WHERE id = ?3",
@@ -787,7 +787,7 @@ impl Database {
     // --- Task methods ---
 
     pub fn insert_task(&self, task: &Task) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         let file_patterns_json = serde_json::to_string(&task.file_patterns)?;
         conn.execute(
             "INSERT INTO tasks (id, scroll_id, name, prompt, state, agent_id, provider, model, cwd, file_patterns, order_index, created_at, updated_at)
@@ -812,7 +812,7 @@ impl Database {
     }
 
     pub fn insert_task_dependency(&self, task_id: &str, depends_on_id: &str) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         conn.execute(
             "INSERT INTO task_dependencies (task_id, depends_on_id) VALUES (?1, ?2)",
             params![task_id, depends_on_id],
@@ -821,7 +821,7 @@ impl Database {
     }
 
     pub fn get_tasks_for_scroll(&self, scroll_id: &str) -> Result<Vec<Task>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         let mut stmt = conn.prepare(
             "SELECT id, scroll_id, name, prompt, state, agent_id, provider, model, cwd, file_patterns, order_index, created_at, updated_at
              FROM tasks WHERE scroll_id = ?1 ORDER BY order_index ASC",
@@ -835,7 +835,7 @@ impl Database {
     }
 
     pub fn get_task_by_agent_id(&self, agent_id: &str) -> Result<Option<Task>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         let mut stmt = conn.prepare(
             "SELECT id, scroll_id, name, prompt, state, agent_id, provider, model, cwd, file_patterns, order_index, created_at, updated_at
              FROM tasks WHERE agent_id = ?1",
@@ -848,7 +848,7 @@ impl Database {
     }
 
     pub fn update_task_state(&self, id: &str, state: &TaskState) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         let now = Utc::now().to_rfc3339();
         conn.execute(
             "UPDATE tasks SET state = ?1, updated_at = ?2 WHERE id = ?3",
@@ -858,7 +858,7 @@ impl Database {
     }
 
     pub fn update_task_agent(&self, task_id: &str, agent_id: &str) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         let now = Utc::now().to_rfc3339();
         conn.execute(
             "UPDATE tasks SET agent_id = ?1, state = 'active', updated_at = ?2 WHERE id = ?3",
@@ -869,7 +869,7 @@ impl Database {
 
     /// Get task IDs that a task depends on
     pub fn get_task_dependencies(&self, task_id: &str) -> Result<Vec<TaskId>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         let mut stmt =
             conn.prepare("SELECT depends_on_id FROM task_dependencies WHERE task_id = ?1")?;
         let mut rows = stmt.query(params![task_id])?;
@@ -882,7 +882,7 @@ impl Database {
 
     /// Get task IDs that depend on a given task (downstream)
     pub fn get_task_dependents(&self, task_id: &str) -> Result<Vec<TaskId>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         let mut stmt =
             conn.prepare("SELECT task_id FROM task_dependencies WHERE depends_on_id = ?1")?;
         let mut rows = stmt.query(params![task_id])?;
@@ -895,7 +895,7 @@ impl Database {
 
     /// Find blocked tasks in a scroll where all dependencies are complete
     pub fn find_ready_tasks(&self, scroll_id: &str) -> Result<Vec<Task>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         // Find tasks that are blocked and have all dependencies in 'complete' state
         let mut stmt = conn.prepare(
             "SELECT r.id, r.scroll_id, r.name, r.prompt, r.state, r.agent_id, r.provider, r.model, r.cwd, r.file_patterns, r.order_index, r.created_at, r.updated_at
@@ -917,7 +917,7 @@ impl Database {
 
     /// Count active tasks in a scroll
     pub fn count_active_tasks(&self, scroll_id: &str) -> Result<usize> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         let count: i64 = conn.query_row(
             "SELECT COUNT(*) FROM tasks WHERE scroll_id = ?1 AND state = 'active'",
             params![scroll_id],
@@ -931,7 +931,7 @@ impl Database {
     /// Insert a new row into `task_queue`. The corresponding `agents` row must
     /// already exist (foreign-key constraint).
     pub fn enqueue_task(&self, row: &QueueRow) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         conn.execute(
             "INSERT INTO task_queue
                 (id, lane, priority, enqueued_at, provider_name, cwd, model, task_text, block_reason)
@@ -954,7 +954,7 @@ impl Database {
     /// List every queued row in dispatch order (ad-hoc lane first, then by
     /// priority DESC, then FIFO by `enqueued_at`, then by id).
     pub fn list_queue(&self) -> Result<Vec<QueueRow>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         let mut stmt = conn.prepare(
             "SELECT id, lane, priority, enqueued_at, provider_name, cwd, model, task_text, block_reason
              FROM task_queue
@@ -971,7 +971,7 @@ impl Database {
 
     /// List queued rows restricted to a single lane, in dispatch order.
     pub fn list_queue_by_lane(&self, lane: &str) -> Result<Vec<QueueRow>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         let mut stmt = conn.prepare(
             "SELECT id, lane, priority, enqueued_at, provider_name, cwd, model, task_text, block_reason
              FROM task_queue
@@ -989,7 +989,7 @@ impl Database {
     /// Return the next row that should be dispatched, honoring lane order
     /// (ad-hoc first), then priority, then FIFO. Does not mutate state.
     pub fn peek_next_dispatch(&self) -> Result<Option<QueueRow>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         let mut stmt = conn.prepare(
             "SELECT id, lane, priority, enqueued_at, provider_name, cwd, model, task_text, block_reason
              FROM task_queue
@@ -1009,7 +1009,7 @@ impl Database {
     /// claimed; `false` if it was already gone (raced with another claim or
     /// a `banish`).
     pub fn claim_for_dispatch(&self, id: &AgentId) -> Result<bool> {
-        let mut conn = self.conn.lock().unwrap();
+        let mut conn = self.conn.lock();
         let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
         let deleted = tx.execute("DELETE FROM task_queue WHERE id = ?1", params![id])?;
         if deleted == 0 {
@@ -1029,7 +1029,7 @@ impl Database {
     /// `enqueued_at` so fairness ordering is not lost. Sets the matching
     /// agent's state back to `queued`.
     pub fn requeue(&self, row: &QueueRow) -> Result<()> {
-        let mut conn = self.conn.lock().unwrap();
+        let mut conn = self.conn.lock();
         let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
         tx.execute(
             "INSERT INTO task_queue
@@ -1059,14 +1059,14 @@ impl Database {
     /// Remove the queue row for `id`, if it exists. Returns `true` when a
     /// row was actually deleted, `false` when it was already gone (idempotent).
     pub fn delete_from_queue(&self, id: &AgentId) -> Result<bool> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         let n = conn.execute("DELETE FROM task_queue WHERE id = ?1", params![id])?;
         Ok(n > 0)
     }
 
     /// Update or clear the `block_reason` for a queued row.
     pub fn set_block_reason(&self, id: &AgentId, reason: Option<&str>) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         conn.execute(
             "UPDATE task_queue SET block_reason = ?1 WHERE id = ?2",
             params![reason, id],
@@ -1080,7 +1080,7 @@ impl Database {
     /// scheduler to pick up. `Complete`/`Failed`/`Banished` rows and `Queued`
     /// rows are left untouched.
     pub fn restart_recovery(&self) -> Result<RecoveryReport> {
-        let mut conn = self.conn.lock().unwrap();
+        let mut conn = self.conn.lock();
         let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
 
         let failed: Vec<(AgentId, AgentState)> = {
@@ -1122,7 +1122,7 @@ impl Database {
     // --- Wake source methods ---
 
     pub fn insert_wake_source(&self, src: &WakeSource) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         conn.execute(
             "INSERT INTO wake_sources \
                 (id, agent_id, kind, config_json, state, fail_reason, last_fired_at, fire_count, created_at) \
@@ -1143,7 +1143,7 @@ impl Database {
     }
 
     pub fn get_wake_source(&self, id: &str) -> Result<Option<WakeSource>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         let mut stmt = conn.prepare(
             "SELECT id, agent_id, kind, config_json, state, fail_reason, last_fired_at, fire_count, created_at \
              FROM wake_sources WHERE id = ?1",
@@ -1156,7 +1156,7 @@ impl Database {
     }
 
     pub fn list_wake_sources_for_agent(&self, agent_id: &str) -> Result<Vec<WakeSource>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         let mut stmt = conn.prepare(
             "SELECT id, agent_id, kind, config_json, state, fail_reason, last_fired_at, fire_count, created_at \
              FROM wake_sources WHERE agent_id = ?1 ORDER BY created_at DESC, id ASC",
@@ -1170,7 +1170,7 @@ impl Database {
     }
 
     pub fn list_all_wake_sources(&self) -> Result<Vec<WakeSource>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         let mut stmt = conn.prepare(
             "SELECT id, agent_id, kind, config_json, state, fail_reason, last_fired_at, fire_count, created_at \
              FROM wake_sources ORDER BY created_at DESC, agent_id ASC, id ASC",
@@ -1184,7 +1184,7 @@ impl Database {
     }
 
     pub fn list_armed_wake_sources(&self) -> Result<Vec<WakeSource>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         let mut stmt = conn.prepare(
             "SELECT id, agent_id, kind, config_json, state, fail_reason, last_fired_at, fire_count, created_at \
              FROM wake_sources WHERE state = 'armed' ORDER BY created_at ASC",
@@ -1198,13 +1198,13 @@ impl Database {
     }
 
     pub fn delete_wake_source(&self, id: &str) -> Result<bool> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         let n = conn.execute("DELETE FROM wake_sources WHERE id = ?1", params![id])?;
         Ok(n > 0)
     }
 
     pub fn delete_wake_sources_for_agent(&self, agent_id: &str) -> Result<usize> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         let n = conn.execute(
             "DELETE FROM wake_sources WHERE agent_id = ?1",
             params![agent_id],
@@ -1218,7 +1218,7 @@ impl Database {
         state: WakeSourceState,
         fail_reason: Option<&str>,
     ) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         conn.execute(
             "UPDATE wake_sources SET state = ?1, fail_reason = ?2 WHERE id = ?3",
             params![state.as_str(), fail_reason, id],
@@ -1228,7 +1228,7 @@ impl Database {
 
     /// Increment `fire_count` and set `last_fired_at`.
     pub fn bump_wake_source_fire(&self, id: &str, last_fired_at: i64) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         conn.execute(
             "UPDATE wake_sources \
              SET fire_count = fire_count + 1, last_fired_at = ?1 \
@@ -1242,7 +1242,7 @@ impl Database {
     /// Returns `(tokens, last_refill_at, capacity, refill_per_sec)`. If the
     /// row doesn't exist yet, it is created at full capacity.
     pub fn get_or_init_rate_limit(&self, agent_id: &str, now: i64) -> Result<(f64, i64, i64, f64)> {
-        let mut conn = self.conn.lock().unwrap();
+        let mut conn = self.conn.lock();
         let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
         let row: Option<(f64, i64, i64, f64)> = tx
             .query_row(
@@ -1275,7 +1275,7 @@ impl Database {
         tokens: f64,
         last_refill_at: i64,
     ) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         conn.execute(
             "UPDATE wake_rate_limits SET tokens = ?1, last_refill_at = ?2 WHERE agent_id = ?3",
             params![tokens, last_refill_at, agent_id],
@@ -1290,7 +1290,7 @@ impl Database {
         refill_per_sec: f64,
         now: i64,
     ) -> Result<()> {
-        let mut conn = self.conn.lock().unwrap();
+        let mut conn = self.conn.lock();
         let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
         let exists: i64 = tx
             .query_row(
@@ -1318,7 +1318,7 @@ impl Database {
     // --- keep_alive flag ---
 
     pub fn get_keep_alive(&self, agent_id: &str) -> Result<bool> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         let v: i64 = conn.query_row(
             "SELECT keep_alive FROM agents WHERE id = ?1",
             params![agent_id],
@@ -1328,7 +1328,7 @@ impl Database {
     }
 
     pub fn set_keep_alive(&self, agent_id: &str, keep_alive: bool) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         conn.execute(
             "UPDATE agents SET keep_alive = ?1 WHERE id = ?2",
             params![i64::from(keep_alive), agent_id],
@@ -1341,7 +1341,7 @@ impl Database {
     /// already-Dormant rows. Returns the IDs that flipped, so the caller can
     /// emit `StateChange { Complete -> Dormant }` events for each.
     pub fn migrate_dormant_agents(&self) -> Result<Vec<AgentId>> {
-        let mut conn = self.conn.lock().unwrap();
+        let mut conn = self.conn.lock();
         let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
 
         let ids: Vec<AgentId> = {
@@ -1368,7 +1368,7 @@ impl Database {
 
     /// Number of rows currently in `task_queue`.
     pub fn count_queued(&self) -> Result<usize> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         let n: i64 = conn.query_row("SELECT COUNT(*) FROM task_queue", [], |r| r.get(0))?;
         Ok(n as usize)
     }
@@ -1376,7 +1376,7 @@ impl Database {
     /// Number of agents currently mid-flight (Active or Summoning) — the
     /// scheduler's `in_flight` count for capacity decisions.
     pub fn count_in_flight_agents(&self) -> Result<usize> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         let n: i64 = conn.query_row(
             "SELECT COUNT(*) FROM agents WHERE state IN ('active', 'summoning')",
             [],
@@ -1394,7 +1394,7 @@ impl Database {
         if mail.recipient_id.is_empty() {
             anyhow::bail!("recipient_id must not be empty");
         }
-        let mut conn = self.conn.lock().unwrap();
+        let mut conn = self.conn.lock();
         let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
         let seq: i64 = tx.query_row(
             "SELECT COALESCE(MAX(seq) + 1, 0) FROM mail WHERE recipient_id = ?1",
@@ -1464,7 +1464,7 @@ impl Database {
         if mails.is_empty() && outbox_fanout.is_empty() {
             return Ok(());
         }
-        let mut conn = self.conn.lock().unwrap();
+        let mut conn = self.conn.lock();
         let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
         for m in mails {
             if m.recipient_id.is_empty() {
@@ -1513,7 +1513,7 @@ impl Database {
         if mails.is_empty() {
             return Ok(());
         }
-        let mut conn = self.conn.lock().unwrap();
+        let mut conn = self.conn.lock();
         let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
         for m in mails {
             if m.recipient_id.is_empty() {
@@ -1538,7 +1538,7 @@ impl Database {
         limit: u32,
     ) -> Result<Vec<Mail>> {
         let limit = i64::from(limit.clamp(1, 1000));
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         let mut sql = String::from(
             "SELECT id, recipient_id, sender_id, topic, body, in_reply_to, state, fail_reason, created_at, delivered_at, seq, wake_eligible \
              FROM mail WHERE recipient_id = ?1",
@@ -1592,7 +1592,7 @@ impl Database {
     }
 
     pub fn get_mail(&self, id: &str) -> Result<Option<Mail>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         let mut stmt = conn.prepare(
             "SELECT id, recipient_id, sender_id, topic, body, in_reply_to, state, fail_reason, created_at, delivered_at, seq, wake_eligible \
              FROM mail WHERE id = ?1",
@@ -1607,7 +1607,7 @@ impl Database {
     /// Find a mail row by short id prefix. Returns `Err` if multiple match,
     /// `Ok(None)` if none match.
     pub fn get_mail_by_prefix(&self, prefix: &str) -> Result<Option<Mail>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         let mut stmt = conn.prepare(
             "SELECT id, recipient_id, sender_id, topic, body, in_reply_to, state, fail_reason, created_at, delivered_at, seq, wake_eligible \
              FROM mail WHERE id LIKE ?1 || '%' LIMIT 2",
@@ -1629,7 +1629,7 @@ impl Database {
         new_state: MailState,
         fail_reason: Option<&str>,
     ) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         let now = unix_now();
         let delivered_at: Option<i64> = match new_state {
             MailState::Delivered | MailState::Failed => Some(now),
@@ -1646,7 +1646,7 @@ impl Database {
     }
 
     pub fn list_pending_wake_eligible(&self, recipient_id: &str) -> Result<Vec<Mail>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         let mut stmt = conn.prepare(
             "SELECT id, recipient_id, sender_id, topic, body, in_reply_to, state, fail_reason, created_at, delivered_at, seq, wake_eligible \
              FROM mail WHERE recipient_id = ?1 AND state = 'Pending' AND wake_eligible = 1 ORDER BY seq ASC",
@@ -1662,7 +1662,7 @@ impl Database {
     /// Returns distinct recipient ids that have at least one Pending,
     /// wake-eligible mail row. Used by the scheduler's mail-wake branch.
     pub fn list_recipients_with_pending_wake_eligible_mail(&self) -> Result<Vec<AgentId>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         let mut stmt = conn.prepare(
             "SELECT recipient_id, MIN(seq) FROM mail \
              WHERE state = 'Pending' AND wake_eligible = 1 \
@@ -1682,7 +1682,7 @@ impl Database {
     /// returns the existing subscription's id. Sets `sub.id` to whatever id
     /// ends up in the DB. Returns the (possibly existing) id.
     pub fn insert_subscription(&self, sub: &Subscription) -> Result<String> {
-        let mut conn = self.conn.lock().unwrap();
+        let mut conn = self.conn.lock();
         let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
         let existing: Option<String> = tx
             .query_row(
@@ -1704,13 +1704,13 @@ impl Database {
     }
 
     pub fn delete_subscription(&self, id: &str) -> Result<bool> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         let n = conn.execute("DELETE FROM subscriptions WHERE id = ?1", params![id])?;
         Ok(n > 0)
     }
 
     pub fn list_subscribers_for_topic(&self, topic: &str) -> Result<Vec<Subscription>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         let mut stmt = conn.prepare(
             "SELECT id, subscriber_id, topic, created_at FROM subscriptions WHERE topic = ?1 ORDER BY created_at ASC, id ASC",
         )?;
@@ -1728,7 +1728,7 @@ impl Database {
     }
 
     pub fn list_subscriptions_by_subscriber(&self, agent_id: &str) -> Result<Vec<Subscription>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         let mut stmt = conn.prepare(
             "SELECT id, subscriber_id, topic, created_at FROM subscriptions WHERE subscriber_id = ?1 ORDER BY topic ASC",
         )?;
@@ -1746,7 +1746,7 @@ impl Database {
     }
 
     pub fn list_topics_with_counts(&self) -> Result<Vec<(String, u32)>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         let mut stmt = conn.prepare(
             "SELECT topic, COUNT(*) FROM subscriptions GROUP BY topic ORDER BY topic ASC",
         )?;
@@ -1763,7 +1763,7 @@ impl Database {
     // --- Supervision methods ---
 
     pub fn set_supervision(&self, agent_id: &str, cfg: &SupervisionConfig) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         conn.execute(
             "UPDATE agents SET restart_policy = ?1, max_restarts = ?2, \
              restart_window_secs = ?3, escalate_to = ?4 WHERE id = ?5",
@@ -1780,7 +1780,7 @@ impl Database {
 
     pub fn get_supervision(&self, agent_id: &str) -> Result<Option<SupervisionConfig>> {
         type SupervisionRow = (String, Option<u32>, Option<u32>, Option<String>);
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         let row: Option<SupervisionRow> = conn
             .query_row(
                 "SELECT restart_policy, max_restarts, restart_window_secs, escalate_to \
@@ -1798,7 +1798,7 @@ impl Database {
     }
 
     pub fn clear_supervision(&self, agent_id: &str) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         conn.execute(
             "UPDATE agents SET restart_policy = 'never', max_restarts = NULL, \
              restart_window_secs = NULL, escalate_to = NULL WHERE id = ?1",
@@ -1808,7 +1808,7 @@ impl Database {
     }
 
     pub fn bump_restart_count(&self, agent_id: &str) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         conn.execute(
             "UPDATE agents SET restart_count = restart_count + 1 WHERE id = ?1",
             params![agent_id],
@@ -1817,7 +1817,7 @@ impl Database {
     }
 
     pub fn get_escalation_depth(&self, agent_id: &str) -> Result<u32> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         let v: i64 = conn
             .query_row(
                 "SELECT escalation_depth FROM agents WHERE id = ?1",
@@ -1829,7 +1829,7 @@ impl Database {
     }
 
     pub fn set_escalation_depth(&self, agent_id: &str, depth: u32) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         conn.execute(
             "UPDATE agents SET escalation_depth = ?1 WHERE id = ?2",
             params![i64::from(depth), agent_id],
@@ -1844,7 +1844,7 @@ impl Database {
         outcome: RestartHistoryOutcome,
         error_summary: Option<&str>,
     ) -> Result<i64> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         conn.execute(
             "INSERT INTO restart_history (agent_id, attempted_at, outcome, error_summary) \
              VALUES (?1, ?2, ?3, ?4)",
@@ -1854,7 +1854,7 @@ impl Database {
     }
 
     pub fn count_restarts_in_window(&self, agent_id: &str, window_start: i64) -> Result<u32> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         let n: i64 = conn.query_row(
             "SELECT COUNT(*) FROM restart_history \
              WHERE agent_id = ?1 AND attempted_at >= ?2 \
@@ -1872,7 +1872,7 @@ impl Database {
         agent_id: &str,
         new_outcome: RestartHistoryOutcome,
     ) -> Result<usize> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         let n = conn.execute(
             "UPDATE restart_history SET outcome = ?1 \
              WHERE id = (SELECT id FROM restart_history \
@@ -1885,7 +1885,7 @@ impl Database {
 
     /// Time of the most recent `restart_history` row for `agent_id`, or `None`.
     pub fn latest_restart_history_attempted_at(&self, agent_id: &str) -> Result<Option<i64>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         let v: Option<i64> = conn
             .query_row(
                 "SELECT MAX(attempted_at) FROM restart_history WHERE agent_id = ?1",
@@ -1898,7 +1898,7 @@ impl Database {
     }
 
     pub fn list_failed_with_active_policy(&self) -> Result<Vec<AgentId>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         let mut stmt = conn.prepare(
             "SELECT id FROM agents \
              WHERE state = 'failed' AND restart_policy != 'never'",
@@ -1912,7 +1912,7 @@ impl Database {
     }
 
     pub fn mark_torn_restarting_as_failed(&self) -> Result<Vec<AgentId>> {
-        let mut conn = self.conn.lock().unwrap();
+        let mut conn = self.conn.lock();
         let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
         let ids: Vec<AgentId> = {
             let mut stmt = tx.prepare("SELECT id FROM agents WHERE state = 'restarting'")?;
@@ -1934,7 +1934,7 @@ impl Database {
     /// row id is later than the latest `restart_history` row for the agent.
     /// Used by boot replay to skip re-escalation.
     pub fn has_escalated_event_after_latest_history(&self, agent_id: &str) -> Result<bool> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         // Find the latest restart_history attempted_at; we'll compare to the
         // event's `ts` (RFC3339 string). For determinism we lookup the most
         // recent event by id rather than timestamp.
@@ -1977,7 +1977,7 @@ impl Database {
         &self,
         scroll_id: &str,
     ) -> Result<Vec<(TaskId, TaskId)>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         let mut stmt = conn.prepare(
             "SELECT rd.task_id, rd.depends_on_id
              FROM task_dependencies rd
@@ -1995,7 +1995,7 @@ impl Database {
     // --- Federation peer DAO (Tasks 3, 7-12) ---
 
     pub fn insert_peer(&self, peer: &crate::shared::types::Peer) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         conn.execute(
             "INSERT INTO peers (id, daemon_id, name, url, bearer_token_hash, bearer_token, public_key, state, last_seen, registered_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
@@ -2016,13 +2016,13 @@ impl Database {
     }
 
     pub fn delete_peer(&self, peer_id: &str) -> Result<bool> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         let n = conn.execute("DELETE FROM peers WHERE id = ?1", params![peer_id])?;
         Ok(n > 0)
     }
 
     pub fn get_peer_by_name(&self, name: &str) -> Result<Option<crate::shared::types::Peer>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         let mut stmt = conn.prepare(
             "SELECT id, daemon_id, name, url, bearer_token_hash, bearer_token, public_key, state, last_seen, registered_at FROM peers WHERE name = ?1",
         )?;
@@ -2038,7 +2038,7 @@ impl Database {
         &self,
         daemon_id: &str,
     ) -> Result<Option<crate::shared::types::Peer>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         let mut stmt = conn.prepare(
             "SELECT id, daemon_id, name, url, bearer_token_hash, bearer_token, public_key, state, last_seen, registered_at FROM peers WHERE daemon_id = ?1",
         )?;
@@ -2051,7 +2051,7 @@ impl Database {
     }
 
     pub fn get_peer(&self, peer_id: &str) -> Result<Option<crate::shared::types::Peer>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         let mut stmt = conn.prepare(
             "SELECT id, daemon_id, name, url, bearer_token_hash, bearer_token, public_key, state, last_seen, registered_at FROM peers WHERE id = ?1",
         )?;
@@ -2067,7 +2067,7 @@ impl Database {
         &self,
         hash: &[u8],
     ) -> Result<Option<crate::shared::types::Peer>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         let mut stmt = conn.prepare(
             "SELECT id, daemon_id, name, url, bearer_token_hash, bearer_token, public_key, state, last_seen, registered_at FROM peers WHERE bearer_token_hash = ?1",
         )?;
@@ -2080,7 +2080,7 @@ impl Database {
     }
 
     pub fn list_peers(&self) -> Result<Vec<crate::shared::types::Peer>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         let mut stmt = conn.prepare(
             "SELECT id, daemon_id, name, url, bearer_token_hash, bearer_token, public_key, state, last_seen, registered_at FROM peers ORDER BY registered_at",
         )?;
@@ -2097,7 +2097,7 @@ impl Database {
         peer_id: &str,
         state: crate::shared::types::PeerState,
     ) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         conn.execute(
             "UPDATE peers SET state = ?1 WHERE id = ?2",
             params![state.as_str(), peer_id],
@@ -2106,7 +2106,7 @@ impl Database {
     }
 
     pub fn set_peer_last_seen(&self, peer_id: &str, ts: i64) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         conn.execute(
             "UPDATE peers SET last_seen = ?1 WHERE id = ?2",
             params![ts, peer_id],
@@ -2115,7 +2115,7 @@ impl Database {
     }
 
     pub fn update_peer_daemon_id(&self, peer_id: &str, daemon_id: &str) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         conn.execute(
             "UPDATE peers SET daemon_id = ?1 WHERE id = ?2",
             params![daemon_id, peer_id],
@@ -2124,7 +2124,7 @@ impl Database {
     }
 
     pub fn outbox_depth(&self, peer_id: &str) -> Result<u64> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         let n: i64 = conn.query_row(
             "SELECT COUNT(*) FROM peer_outbox WHERE peer_id = ?1 AND state IN ('pending','in_flight')",
             params![peer_id],
@@ -2145,7 +2145,7 @@ impl Database {
         topic: Option<&str>,
         next_attempt_at: i64,
     ) -> Result<u64> {
-        let mut conn = self.conn.lock().unwrap();
+        let mut conn = self.conn.lock();
         let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
         let mail_seq: i64 = tx.query_row(
             "SELECT COALESCE(MAX(seq) + 1, 0) FROM mail WHERE recipient_id = ?1",
@@ -2184,7 +2184,7 @@ impl Database {
         peer_id: &str,
         now: i64,
     ) -> Result<Option<crate::shared::types::PeerOutboxRow>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         let mut stmt = conn.prepare(
             "SELECT id, peer_id, mail_id, sender_seq, recipient, sender, topic, body, created_at, attempts, next_attempt_at, state \
              FROM peer_outbox WHERE peer_id = ?1 AND state = 'pending' AND next_attempt_at <= ?2 \
@@ -2199,7 +2199,7 @@ impl Database {
     }
 
     pub fn mark_outbox_in_flight(&self, id: &str) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         conn.execute(
             "UPDATE peer_outbox SET state = 'in_flight' WHERE id = ?1",
             params![id],
@@ -2208,7 +2208,7 @@ impl Database {
     }
 
     pub fn mark_outbox_delivered(&self, id: &str) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         conn.execute(
             "UPDATE peer_outbox SET state = 'delivered', attempts = attempts + 1 WHERE id = ?1",
             params![id],
@@ -2217,7 +2217,7 @@ impl Database {
     }
 
     pub fn mark_outbox_failed_retry(&self, id: &str, next_attempt_at: i64) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         conn.execute(
             "UPDATE peer_outbox SET state = 'pending', attempts = attempts + 1, next_attempt_at = ?2 WHERE id = ?1",
             params![id, next_attempt_at],
@@ -2229,7 +2229,7 @@ impl Database {
     /// drainer re-sends them. Idempotency on the receiver dedupes any
     /// already-delivered messages.
     pub fn reset_outbox_in_flight(&self) -> Result<u32> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         let n = conn.execute(
             "UPDATE peer_outbox SET state = 'pending' WHERE state = 'in_flight'",
             [],
@@ -2247,7 +2247,7 @@ impl Database {
         mail_id: &str,
         received_at: i64,
     ) -> Result<bool> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         let n = conn.execute(
             "INSERT OR IGNORE INTO peer_inbox (sender_daemon_id, sender_seq, mail_id, received_at)
              VALUES (?1, ?2, ?3, ?4)",
@@ -2264,7 +2264,7 @@ impl Database {
         direction: crate::shared::types::FederationDirection,
         created_at: i64,
     ) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         conn.execute(
             "INSERT INTO topic_federations (id, peer_id, topic, direction, created_at)
              VALUES (?1, ?2, ?3, ?4, ?5)",
@@ -2282,7 +2282,7 @@ impl Database {
         created_at: i64,
     ) -> Result<crate::shared::types::FederationDirection> {
         use crate::shared::types::FederationDirection;
-        let mut conn = self.conn.lock().unwrap();
+        let mut conn = self.conn.lock();
         let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
         let existing: Option<String> = tx
             .query_row(
@@ -2308,7 +2308,7 @@ impl Database {
     }
 
     pub fn delete_topic_federation(&self, peer_id: &str, topic: &str) -> Result<bool> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         let n = conn.execute(
             "DELETE FROM topic_federations WHERE peer_id = ?1 AND topic = ?2",
             params![peer_id, topic],
@@ -2320,7 +2320,7 @@ impl Database {
         &self,
         topic: &str,
     ) -> Result<Vec<crate::shared::types::TopicFederation>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         let mut stmt = conn.prepare(
             "SELECT id, peer_id, topic, direction, created_at FROM topic_federations WHERE topic = ?1 AND direction IN ('outbound','both')",
         )?;
@@ -2333,7 +2333,7 @@ impl Database {
     }
 
     pub fn topic_federation_inbound_authorized(&self, peer_id: &str, topic: &str) -> Result<bool> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         let dir: Option<String> = conn
             .query_row(
                 "SELECT direction FROM topic_federations WHERE peer_id = ?1 AND topic = ?2",

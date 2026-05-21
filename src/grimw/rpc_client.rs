@@ -10,6 +10,13 @@ use crate::shared::worker_proto::{
     worker_control_client::WorkerControlClient, worker_message,
 };
 
+/// How long the worker waits for its inbound stream to wake before
+/// declaring the daemon link broken and entering reconnect.
+const STREAM_DEADLINE: Duration = Duration::from_secs(5);
+
+/// Backoff yield between stream-recv retry attempts inside the deadline.
+const STREAM_RETRY_YIELD: Duration = Duration::from_millis(50);
+
 use super::config::GrimwConfig;
 use super::task_runner::TaskDispatcher;
 
@@ -101,9 +108,9 @@ pub async fn run(
                 info!("shutdown requested; draining");
                 dispatcher.drain();
                 // Wait briefly for in-flight tasks to finish; bound to 5s.
-                let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+                let deadline = tokio::time::Instant::now() + STREAM_DEADLINE;
                 while dispatcher.in_flight() > 0 && tokio::time::Instant::now() < deadline {
-                    tokio::time::sleep(Duration::from_millis(50)).await;
+                    tokio::time::sleep(STREAM_RETRY_YIELD).await;
                 }
                 break;
             }

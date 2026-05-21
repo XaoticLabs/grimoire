@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
 use clap::Subcommand;
 use colored::Colorize;
 
@@ -7,7 +7,7 @@ use crate::shared::protocol::{WorkspaceCreateResult, WorkspaceDestroyResult, Wor
 
 #[derive(Debug, Subcommand)]
 pub enum WorkspaceCommand {
-    /// Provision a new workspace (git worktree under ~/.grimoire/workspaces/<name>).
+    /// Provision a new workspace (git worktree under `~/.grimoire/workspaces/<name>`).
     Create {
         name: String,
         #[arg(long)]
@@ -51,7 +51,10 @@ async fn run_create(name: &str, from: &str, branch: &str) -> Result<()> {
         eprintln!("{} {}", "Error:".red(), err.message);
         std::process::exit(1);
     }
-    let r: WorkspaceCreateResult = serde_json::from_value(resp.result.unwrap())?;
+    let r: WorkspaceCreateResult = serde_json::from_value(
+        resp.result
+            .context("daemon returned `ok` with empty result payload")?,
+    )?;
     println!("{}\t{}", r.id, r.path.display());
     Ok(())
 }
@@ -63,7 +66,10 @@ async fn run_list(orphans: bool) -> Result<()> {
         eprintln!("{} {}", "Error:".red(), err.message);
         std::process::exit(1);
     }
-    let r: WorkspaceListResult = serde_json::from_value(resp.result.unwrap())?;
+    let r: WorkspaceListResult = serde_json::from_value(
+        resp.result
+            .context("daemon returned `ok` with empty result payload")?,
+    )?;
     if r.workspaces.is_empty() {
         println!("no workspaces");
     } else {
@@ -102,7 +108,10 @@ async fn run_destroy(id: &str) -> Result<()> {
         eprintln!("{} {}", "Error:".red(), err.message);
         std::process::exit(1);
     }
-    let _: WorkspaceDestroyResult = serde_json::from_value(resp.result.unwrap())?;
+    let _: WorkspaceDestroyResult = serde_json::from_value(
+        resp.result
+            .context("daemon returned `ok` with empty result payload")?,
+    )?;
     println!("destroyed: {id}");
     Ok(())
 }
@@ -114,7 +123,10 @@ async fn run_show(id: &str) -> Result<()> {
         eprintln!("{} {}", "Error:".red(), err.message);
         std::process::exit(1);
     }
-    let r: WorkspaceListResult = serde_json::from_value(resp.result.unwrap())?;
+    let r: WorkspaceListResult = serde_json::from_value(
+        resp.result
+            .context("daemon returned `ok` with empty result payload")?,
+    )?;
     let ws = r.workspaces.iter().find(|w| w.id == id);
     if let Some(w) = ws {
         println!("id:         {}", w.id);

@@ -77,7 +77,7 @@ impl Executor for ControlledExecutor {
         self.started.lock().await.push(req.agent_id.clone());
         let (cancel_tx, _cancel_rx) = oneshot::channel::<()>();
         let completion = tokio::spawn(async move {
-            done_rx.await.unwrap_or(MonitorResult {
+            done_rx.await.unwrap_or_else(|_| MonitorResult {
                 state: AgentState::Failed,
                 exit_code: None,
                 session_id: None,
@@ -275,11 +275,7 @@ async fn restart_recovery_keeps_queued_loses_active() {
     );
 
     // Three Queued survived.
-    let queued: Vec<_> = db2
-        .list_agents(Some("queued"))
-        .unwrap()
-        .into_iter()
-        .collect();
+    let queued = db2.list_agents(Some("queued")).unwrap();
     assert_eq!(queued.len(), 3, "Queued agents must persist across restart");
 
     // task_queue rows still match the surviving agents.

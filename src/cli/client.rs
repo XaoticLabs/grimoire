@@ -42,6 +42,28 @@ impl DaemonClient {
         })
     }
 
+    /// Send `method` with `params` and decode the OK payload as `T`.
+    ///
+    /// Bails out cleanly on transport errors, on RPC `error` responses, on
+    /// an unexpectedly empty `result` field, and on JSON-decoding failures.
+    /// All four error paths carry the method name for grep-ability — a
+    /// stack trace from production should pinpoint which RPC misbehaved.
+    pub async fn call_typed<T: serde::de::DeserializeOwned>(
+        &mut self,
+        method: &str,
+        params: serde_json::Value,
+    ) -> Result<T> {
+        let response = self.call(method, params).await?;
+        if let Some(err) = response.error {
+            anyhow::bail!("daemon returned error for `{method}`: {}", err.message);
+        }
+        let raw = response.result.with_context(|| {
+            format!("daemon returned `ok` for `{method}` but result payload was empty")
+        })?;
+        serde_json::from_value(raw)
+            .with_context(|| format!("decoding `{method}` result payload from daemon"))
+    }
+
     pub async fn call(&mut self, method: &str, params: serde_json::Value) -> Result<RpcResponse> {
         let id = REQ_ID.fetch_add(1, Ordering::Relaxed);
         let req = RpcRequest {
@@ -77,8 +99,11 @@ pub async fn resolve_agent_id(prefix: &str) -> Result<String> {
         anyhow::bail!("Failed to list agents: {}", error.message);
     }
 
-    let result: crate::shared::protocol::CircleResult =
-        serde_json::from_value(response.result.unwrap())?;
+    let result: crate::shared::protocol::CircleResult = serde_json::from_value(
+        response
+            .result
+            .context("daemon returned `ok` for `agent.circle` with empty payload")?,
+    )?;
 
     let matches: Vec<_> = result
         .agents

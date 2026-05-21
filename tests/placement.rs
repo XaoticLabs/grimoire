@@ -60,7 +60,7 @@ async fn placement_picks_remote_when_worker_available() {
             as Arc<dyn grimoire::daemon::executor::Executor>
     });
 
-    let placement = LeastLoadedPlacement::new(registry, local.clone(), remote_factory);
+    let placement = LeastLoadedPlacement::new(registry, local, remote_factory);
     let chosen = placement.pick(&req("claude"));
     assert_eq!(
         chosen.name(),
@@ -77,7 +77,7 @@ async fn placement_falls_back_to_local_when_no_worker() {
         dyn Fn(String) -> Arc<dyn grimoire::daemon::executor::Executor> + Send + Sync,
     > = Arc::new(|_| panic!("remote_factory should not be invoked"));
 
-    let placement = LeastLoadedPlacement::new(registry, local.clone(), remote_factory);
+    let placement = LeastLoadedPlacement::new(registry, local, remote_factory);
     let chosen = placement.pick(&req("claude"));
     assert_eq!(
         chosen.name(),

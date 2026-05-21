@@ -1,4 +1,4 @@
-use anyhow::{Result, anyhow};
+use anyhow::{Context, Result, anyhow};
 use clap::Subcommand;
 use colored::Colorize;
 
@@ -92,7 +92,10 @@ async fn run_put(
         eprintln!("{} {}", "Error:".red(), err.message);
         std::process::exit(1);
     }
-    let r: MemoryPutResult = serde_json::from_value(resp.result.unwrap())?;
+    let r: MemoryPutResult = serde_json::from_value(
+        resp.result
+            .context("daemon returned `ok` with empty result payload")?,
+    )?;
     println!("version: {}", r.version);
     Ok(())
 }
@@ -113,7 +116,10 @@ async fn run_get(workspace: &str, key: &str) -> Result<()> {
         eprintln!("{} {}", "Error:".red(), err.message);
         std::process::exit(1);
     }
-    let r: MemoryGetResult = serde_json::from_value(resp.result.unwrap())?;
+    let r: MemoryGetResult = serde_json::from_value(
+        resp.result
+            .context("daemon returned `ok` with empty result payload")?,
+    )?;
     println!("{}", serde_json::to_string_pretty(&r.value)?);
     Ok(())
 }
@@ -129,7 +135,10 @@ async fn run_list(workspace: &str, prefix: Option<&str>) -> Result<()> {
         eprintln!("{} {}", "Error:".red(), err.message);
         std::process::exit(1);
     }
-    let r: MemoryListResult = serde_json::from_value(resp.result.unwrap())?;
+    let r: MemoryListResult = serde_json::from_value(
+        resp.result
+            .context("daemon returned `ok` with empty result payload")?,
+    )?;
     if r.entries.is_empty() {
         println!("no entries");
     } else {

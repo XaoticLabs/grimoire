@@ -21,6 +21,10 @@ use super::peer_outbox::backoff_secs;
 use super::peer_registry::PeerRegistry;
 use super::persistence::unix_now;
 
+/// Connection timeout for outbound gRPC to a federation peer. After this
+/// elapses the client task falls back to its exponential backoff.
+const PEER_CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
+
 pub struct PeerClientHandle {
     shutdown_tx: Option<oneshot::Sender<()>>,
     join: tokio::task::JoinHandle<()>,
@@ -90,7 +94,7 @@ async fn run_once(
     if peer.url.starts_with("https://") {
         return Err(anyhow::anyhow!("peer_tls_not_supported_yet"));
     }
-    let endpoint = Endpoint::from_shared(peer.url.clone())?.connect_timeout(Duration::from_secs(5));
+    let endpoint = Endpoint::from_shared(peer.url.clone())?.connect_timeout(PEER_CONNECT_TIMEOUT);
     let channel = endpoint.connect().await?;
     let mut client = TonicPeerClient::new(channel);
 

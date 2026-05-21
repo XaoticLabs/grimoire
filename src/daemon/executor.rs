@@ -54,7 +54,7 @@ pub struct LocalExecutor {
 }
 
 impl LocalExecutor {
-    pub fn new(registry: Arc<ProviderRegistry>, bus: EventBus, db: Arc<Database>) -> Self {
+    pub const fn new(registry: Arc<ProviderRegistry>, bus: EventBus, db: Arc<Database>) -> Self {
         Self {
             registry,
             bus,
@@ -148,7 +148,7 @@ pub struct RemoteExecutor {
 }
 
 impl RemoteExecutor {
-    pub fn for_test(
+    pub const fn for_test(
         worker_id: String,
         assign_tx: mpsc::Sender<DaemonMessage>,
         inbound_rx: mpsc::Receiver<RoutedInbound>,

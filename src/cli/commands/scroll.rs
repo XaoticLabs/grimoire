@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
 use colored::Colorize;
 
 use crate::cli::client::DaemonClient;
@@ -34,7 +34,11 @@ pub async fn run(id: Option<String>, activate: bool, abandon: bool) -> Result<()
                 std::process::exit(1);
             }
 
-            let status: ScrollStatus = serde_json::from_value(response.result.unwrap())?;
+            let status: ScrollStatus = serde_json::from_value(
+                response
+                    .result
+                    .context("daemon returned `ok` with empty result payload")?,
+            )?;
             print_scroll_status(&status);
         }
     } else {
@@ -45,7 +49,9 @@ pub async fn run(id: Option<String>, activate: bool, abandon: bool) -> Result<()
             std::process::exit(1);
         }
 
-        let result: serde_json::Value = response.result.unwrap();
+        let result: serde_json::Value = response
+            .result
+            .context("daemon returned `ok` with empty result payload")?;
         let scrolls: Vec<Scroll> = serde_json::from_value(result["scrolls"].clone())?;
 
         if scrolls.is_empty() {

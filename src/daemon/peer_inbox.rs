@@ -28,7 +28,7 @@ pub struct InboxHandler {
 }
 
 impl InboxHandler {
-    pub fn new(db: Arc<Database>, bus: EventBus, daemon_id: DaemonId) -> Self {
+    pub const fn new(db: Arc<Database>, bus: EventBus, daemon_id: DaemonId) -> Self {
         Self { db, bus, daemon_id }
     }
 

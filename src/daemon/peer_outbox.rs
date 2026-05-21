@@ -14,7 +14,7 @@ pub fn backoff_secs(attempts: u32) -> u64 {
 
 /// Predicate used by the drainer to decide whether to halt without
 /// writing further acks (peer is being torn down).
-pub fn should_halt(state: &crate::shared::types::PeerState) -> bool {
+pub const fn should_halt(state: &crate::shared::types::PeerState) -> bool {
     matches!(state, crate::shared::types::PeerState::Removing)
 }
 

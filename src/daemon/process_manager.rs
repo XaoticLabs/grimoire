@@ -34,7 +34,7 @@ pub enum LineSource {
 }
 
 impl LineSource {
-    pub fn as_str(self) -> &'static str {
+    pub const fn as_str(self) -> &'static str {
         match self {
             Self::Stdout => "stdout",
             Self::Stderr => "stderr",

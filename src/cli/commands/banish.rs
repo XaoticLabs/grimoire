@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
 use colored::Colorize;
 
 use crate::cli::client::DaemonClient;
@@ -15,7 +15,11 @@ pub async fn run(id: String) -> Result<()> {
         std::process::exit(1);
     }
 
-    let result: BanishResult = serde_json::from_value(response.result.unwrap())?;
+    let result: BanishResult = serde_json::from_value(
+        response
+            .result
+            .context("daemon returned `ok` with empty result payload")?,
+    )?;
     if result.success {
         println!("{} Agent {} has been banished", "✓".green(), id.bold());
     } else {

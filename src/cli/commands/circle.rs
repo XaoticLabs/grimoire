@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
 use colored::Colorize;
 
 use crate::cli::client::DaemonClient;
@@ -16,7 +16,11 @@ pub async fn run(state: Option<String>) -> Result<()> {
         std::process::exit(1);
     }
 
-    let result: CircleResult = serde_json::from_value(response.result.unwrap())?;
+    let result: CircleResult = serde_json::from_value(
+        response
+            .result
+            .context("daemon returned `ok` with empty result payload")?,
+    )?;
     formatters::format_circle(&result.agents);
 
     Ok(())

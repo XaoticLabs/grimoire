@@ -7,13 +7,13 @@ all-features = true
 [advisories]
 version = 2
 yanked = "deny"
-# Transitive advisories we cannot fix without upstream updates. Re-evaluate
-# whenever `tonic` and `axum` are upgraded.
-ignore = [
-    # rustls-pemfile is unmaintained but still safe; pulled in via tonic 0.12.
-    # Resolved when we move to tonic 0.13+ (which uses rustls-pki-types directly).
-    "RUSTSEC-2025-0134",
-]
+# Transitive advisories we cannot fix without upstream updates. Each entry
+# documents an explicit review-by date and tracking issue so a stale ignore
+# can't quietly outlive its upstream fix.
+#
+# RUSTSEC-2025-0134 (rustls-pemfile unmaintained) was resolved by upgrading
+# tonic 0.12 → 0.14 (which uses rustls-pki-types directly).
+ignore = []
 
 [licenses]
 version = 2
@@ -42,6 +42,9 @@ allow = [
     "MPL-2.0",
     # CC0-1.0 (public-domain dedication) — `notify` (single-licensed under CC0).
     "CC0-1.0",
+    # Zlib license — `foldhash` (pulled in by `hashbrown` 0.16+, which tonic
+    # 0.14's transitive deps require). Permissive, OSI-approved.
+    "Zlib",
 ]
 confidence-threshold = 0.9
 exceptions = []

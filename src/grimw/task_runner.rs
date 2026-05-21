@@ -5,6 +5,10 @@ use std::sync::{
     Arc,
     atomic::{AtomicU32, Ordering},
 };
+use std::time::Duration;
+
+/// Poll interval while waiting for a child task process to exit.
+const TASK_POLL_INTERVAL: Duration = Duration::from_millis(20);
 
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::{Child, Command};
@@ -213,7 +217,7 @@ impl TaskDispatcher {
             };
 
             // Allow stdout/stderr drainers to flush.
-            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+            tokio::time::sleep(TASK_POLL_INTERVAL).await;
 
             let _ = outbound
                 .send(WorkerMessage {

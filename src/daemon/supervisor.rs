@@ -171,7 +171,7 @@ impl EscalationMailSender for DbEscalationMailSender {
                 };
                 self.db.insert_mail(&mail)?;
                 self.bus.publish(StreamEvent::MailReceived {
-                    mail_id: mail_id.clone(),
+                    mail_id,
                     recipient_id: recipient_id.clone(),
                     sender_id: Some(sender_id.to_string()),
                     topic: None,

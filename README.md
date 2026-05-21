@@ -1,5 +1,11 @@
 # Grimoire
 
+[![CI](https://github.com/XaoticLabs/grimoire/actions/workflows/ci.yml/badge.svg)](https://github.com/XaoticLabs/grimoire/actions/workflows/ci.yml)
+[![crates.io](https://img.shields.io/crates/v/grimoire.svg)](https://crates.io/crates/grimoire)
+[![docs.rs](https://img.shields.io/docsrs/grimoire)](https://docs.rs/grimoire)
+[![MSRV](https://img.shields.io/badge/MSRV-1.95-blue.svg)](#msrv)
+[![license](https://img.shields.io/crates/l/grimoire.svg)](#license)
+
 A daemon-based orchestrator for AI coding agents. Replaces fragile tmux workflows with proper process supervision — agents run whether or not you're looking at them, wake on schedules and file changes, message each other, and self-heal under supervision.
 
 > **Thesis:** Agents are processes, not function calls. Grimoire is `systemd` + `kubelet` + `nats` for AI workers.
@@ -437,6 +443,10 @@ All state lives in `~/.grimoire/`:
 - `grimd.pid` — daemon PID file
 - `config.toml` — configuration
 - `workspaces/<name>/` — git worktrees provisioned by `grim workspace create`
+
+## MSRV
+
+The minimum supported Rust version is **1.95**, pinned in `rust-toolchain.toml` and verified by a dedicated CI job. Bumping the MSRV is a minor-version release.
 
 ## Status
 

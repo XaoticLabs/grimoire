@@ -11,7 +11,7 @@ pub struct ClaudeProvider {
 }
 
 impl ClaudeProvider {
-    pub fn new(binary: String) -> Self {
+    pub const fn new(binary: String) -> Self {
         Self { binary }
     }
 }

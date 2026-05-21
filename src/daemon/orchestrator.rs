@@ -13,7 +13,7 @@ pub struct Orchestrator {
 }
 
 impl Orchestrator {
-    pub fn new(db: Arc<Database>, manager: Arc<AgentManager>) -> Self {
+    pub const fn new(db: Arc<Database>, manager: Arc<AgentManager>) -> Self {
         Self { db, manager }
     }
 

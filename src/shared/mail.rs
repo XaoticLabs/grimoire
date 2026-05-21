@@ -1,6 +1,9 @@
+#![allow(missing_docs)] // Module-level doc covers the model; per-item docs pending.
+
 //! Mail address parsing.
 //!
 //! Two schemes are supported:
+//!
 //!   * `agent://<id>` — `<id>` is the 8-char short id (`[0-9a-f]{8}`).
 //!   * `topic://<name>` — `<name>` matches `^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$`.
 //!
@@ -23,9 +26,9 @@ pub enum Address {
 impl std::fmt::Display for Address {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Address::Agent(id) => write!(f, "agent://{id}"),
-            Address::Topic(name) => write!(f, "topic://{name}"),
-            Address::FederatedAgent {
+            Self::Agent(id) => write!(f, "agent://{id}"),
+            Self::Topic(name) => write!(f, "topic://{name}"),
+            Self::FederatedAgent {
                 daemon_id,
                 agent_id,
             } => {
@@ -47,7 +50,7 @@ pub enum AddressParseError {
 }
 
 impl AddressParseError {
-    pub fn code(&self) -> &'static str {
+    pub const fn code(&self) -> &'static str {
         match self {
             Self::InvalidAgentId => "invalid_agent_id",
             Self::InvalidTopicName => "invalid_topic_name",

@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
 use colored::Colorize;
 
 use crate::cli::client::DaemonClient;
@@ -24,7 +24,11 @@ pub async fn run(spec: String, concurrency: u32, activate: bool) -> Result<()> {
         std::process::exit(1);
     }
 
-    let result: ScrollInscribeResult = serde_json::from_value(response.result.unwrap())?;
+    let result: ScrollInscribeResult = serde_json::from_value(
+        response
+            .result
+            .context("daemon returned `ok` with empty result payload")?,
+    )?;
 
     println!(
         "{} Scroll '{}' inscribed (id: {}, {} tasks)",

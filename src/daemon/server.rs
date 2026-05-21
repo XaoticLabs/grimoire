@@ -249,12 +249,12 @@ async fn run_uds_server(state: AppState) -> Result<()> {
 /// function for unit-testability; the caller is responsible for caching
 /// `Pass` results across subsequent RPCs on the same connection.
 #[derive(Debug, PartialEq, Eq)]
-pub(crate) enum UdsAuthDecision {
+pub enum UdsAuthDecision {
     Pass,
     Reject,
 }
 
-pub(crate) fn check_uds_auth(
+pub fn check_uds_auth(
     already_authed: bool,
     presented: Option<&str>,
     daemon_token: &AuthToken,
@@ -600,7 +600,7 @@ async fn http_auth_middleware(
 /// auth integration tests can hit the middleware without dragging in the
 /// rest of `AppState`.
 #[cfg(test)]
-pub(crate) fn test_auth_router(token: Arc<AuthToken>) -> Router {
+pub fn test_auth_router(token: Arc<AuthToken>) -> Router {
     let protected = Router::new()
         .route(
             "/api/ping",

@@ -164,7 +164,7 @@ fn build_scheduler(
     let cap = Arc::new(AtomicU32::new(cap));
     let dispatcher: Arc<dyn Dispatcher> = Arc::new(NoopDispatcher);
     let s = Scheduler::new(db.clone(), workers, bus, cap, dispatcher)
-        .with_mail_wake(waker, Arc::new(DbLookup(db.clone())));
+        .with_mail_wake(waker, Arc::new(DbLookup(db)));
     Arc::new(s)
 }
 

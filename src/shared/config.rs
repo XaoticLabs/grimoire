@@ -1,3 +1,5 @@
+#![allow(missing_docs)] // Config schema; documentation pass pending.
+
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -39,11 +41,11 @@ fn default_worker_listen_addr() -> std::net::SocketAddr {
     "127.0.0.1:7878".parse().unwrap()
 }
 
-fn default_heartbeat_timeout() -> u64 {
+const fn default_heartbeat_timeout() -> u64 {
     30
 }
 
-fn default_heartbeat_interval_hint() -> u64 {
+const fn default_heartbeat_interval_hint() -> u64 {
     5
 }
 
@@ -131,35 +133,35 @@ impl Default for DaemonConfig {
     }
 }
 
-fn default_peer_outbox_max_depth() -> u64 {
+const fn default_peer_outbox_max_depth() -> u64 {
     10_000
 }
 
-fn default_peer_handshake_timeout_secs() -> u64 {
+const fn default_peer_handshake_timeout_secs() -> u64 {
     10
 }
 
-fn default_peer_heartbeat_interval_secs() -> u64 {
+const fn default_peer_heartbeat_interval_secs() -> u64 {
     5
 }
 
-fn default_max_concurrent() -> u32 {
+const fn default_max_concurrent() -> u32 {
     8
 }
 
-fn default_restart_rate_per_min() -> u32 {
+const fn default_restart_rate_per_min() -> u32 {
     30
 }
 
-fn default_tree_depth_cap() -> u32 {
+const fn default_tree_depth_cap() -> u32 {
     3
 }
 
-fn default_workspace_value_cap() -> u64 {
+const fn default_workspace_value_cap() -> u64 {
     262_144 // 256 KiB
 }
 
-fn default_workspace_total_cap() -> u64 {
+const fn default_workspace_total_cap() -> u64 {
     67_108_864 // 64 MiB
 }
 
@@ -175,7 +177,7 @@ pub struct AgentConfig {
     pub default_provider: Option<String>,
 }
 
-fn default_port() -> u16 {
+const fn default_port() -> u16 {
     constants::DAEMON_PORT
 }
 
@@ -192,10 +194,10 @@ impl Config {
         let path = Self::config_path();
         if path.exists() {
             let content = std::fs::read_to_string(&path)?;
-            let config: Config = toml::from_str(&content)?;
+            let config: Self = toml::from_str(&content)?;
             Ok(config)
         } else {
-            Ok(Config::default())
+            Ok(Self::default())
         }
     }
 
@@ -209,7 +211,7 @@ impl Config {
         Ok(())
     }
 
-    pub fn port(&self) -> u16 {
+    pub const fn port(&self) -> u16 {
         self.daemon.port
     }
 

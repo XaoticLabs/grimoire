@@ -265,7 +265,7 @@ impl Scheduler {
     /// The returned handle owns the task; dropping the handle aborts it.
     pub fn spawn(self: Arc<Self>) -> SchedulerHandle {
         let mut rx = self.bus.subscribe();
-        let sched = self.clone();
+        let sched = self;
         let handle = tokio::spawn(async move {
             let mut interval = tokio::time::interval(TICK_INTERVAL);
             // Skip the immediate fire so a quiet boot doesn't spin a tick
@@ -305,7 +305,7 @@ impl Scheduler {
         SchedulerHandle { handle }
     }
 
-    pub fn should_wake(event: &StreamEvent) -> bool {
+    pub const fn should_wake(event: &StreamEvent) -> bool {
         match event {
             StreamEvent::AgentQueued { .. }
             | StreamEvent::WorkerRegistered { .. }
@@ -418,7 +418,7 @@ impl Scheduler {
 /// Returns (prompt, folded_mail_ids) where `folded_mail_ids` is the list of
 /// mail rows that contributed (including any partially truncated message — it
 /// still counts as folded so it doesn't block forever).
-pub(crate) fn build_wake_prompt(mails: &[crate::shared::types::Mail]) -> (String, Vec<String>) {
+pub fn build_wake_prompt(mails: &[crate::shared::types::Mail]) -> (String, Vec<String>) {
     const SEP: &str = "\n\n---\n\n";
     let mut buf = String::new();
     let mut folded_ids: Vec<String> = Vec::new();

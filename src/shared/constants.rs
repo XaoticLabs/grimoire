@@ -1,3 +1,5 @@
+#![allow(missing_docs)] // Path and version constants; self-explanatory.
+
 use std::path::PathBuf;
 
 pub const DAEMON_PORT: u16 = 6660;

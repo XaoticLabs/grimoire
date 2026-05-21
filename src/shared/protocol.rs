@@ -1,3 +1,5 @@
+#![allow(missing_docs)] // RPC wire types; one-line docs per message pending.
+
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
@@ -45,7 +47,7 @@ pub struct RpcError {
 }
 
 impl RpcResponse {
-    pub fn success(id: u64, result: serde_json::Value) -> Self {
+    pub const fn success(id: u64, result: serde_json::Value) -> Self {
         Self {
             id,
             result: Some(result),
@@ -53,7 +55,7 @@ impl RpcResponse {
         }
     }
 
-    pub fn error(id: u64, code: i32, message: String) -> Self {
+    pub const fn error(id: u64, code: i32, message: String) -> Self {
         Self {
             id,
             result: None,
@@ -714,7 +716,7 @@ impl StreamEvent {
     /// Stable kind tag matching the serde rename for this variant.
     /// Used as the durable event log's `kind` column so serialized payload
     /// and kind cannot drift.
-    pub fn kind(&self) -> &'static str {
+    pub const fn kind(&self) -> &'static str {
         match self {
             Self::Output { .. } => "output",
             Self::StateChange { .. } => "state_change",

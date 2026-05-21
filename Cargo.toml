@@ -11,6 +11,21 @@ readme = "README.md"
 keywords = ["agent", "orchestration", "daemon", "llm", "scheduler"]
 categories = ["command-line-utilities", "concurrency", "development-tools"]
 
+# docs.rs build configuration. `all-features` ensures every feature-gated
+# item appears in the rendered docs; `rustdoc-args` enables the
+# `--cfg docsrs` flag so `#[cfg(docsrs)]` annotations (e.g. nightly
+# `doc_auto_cfg`) take effect. Both are the docs.rs-recommended defaults.
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+targets = ["x86_64-unknown-linux-gnu"]
+
+# `tonic-prost` is consumed indirectly by the tonic-prost-build generated
+# code (it provides the `ProstCodec` impl). cargo-machete can't see this
+# usage because it's threaded through generated source.
+[package.metadata.cargo-machete]
+ignored = ["tonic-prost"]
+
 [[bin]]
 name = "grim"
 path = "src/main.rs"
@@ -51,12 +66,19 @@ nix = { version = "0.29", features = ["signal", "process", "user"] }
 async-stream = "0.3"
 async-trait = "0.1"
 toml = "1.1.2"
-tonic = { version = "0.12", features = ["tls", "tls-roots"] }
-prost = "0.13"
+tonic = { version = "0.14", features = ["tls-native-roots", "router"] }
+tonic-prost = "0.14"
+prost = "0.14"
 semver = "1"
 blake3 = "1"
 subtle = "2"
 tempfile = "3"
+# `parking_lot::Mutex` is faster, smaller, and never poisons compared to
+# `std::sync::Mutex`. Used for sync mutexes that never cross an `.await`
+# (rusqlite Connection, in-memory registries). The async path uses
+# `tokio::sync::Mutex` instead — see the call sites in `agent_manager`
+# and friends.
+parking_lot = "0.12"
 futures = "0.3"
 
 # Wake-source runtime support
@@ -65,32 +87,65 @@ notify = "6"
 globset = "0.4"
 
 [build-dependencies]
-tonic-build = "0.12"
+tonic-prost-build = "0.14"
 
 [dev-dependencies]
 tempfile = "3"
 tower = { version = "0.5", features = ["util"] }
 
 [lints.rust]
-# Treat every other rustc warning as a build error so regressions are
-# caught locally and in CI. `dead_code` is allowed for now because the
-# codebase still has ~80 cross-file test-helper items that the compiler
-# can't see uses of without a structural sweep (separate task).
+# Treat every rustc warning as a build error so regressions are caught
+# locally and in CI. `dead_code` is allowed because integration tests
+# pull in helper modules whose items the compiler can't see uses of
+# across the `tests/` boundary without restructuring.
 #
 # Note on the precedence dance: `-D warnings` in rustc acts as a hard
 # ceiling that won't be relaxed by a later `-W dead_code`, only by
-# `-A dead_code`. So this *has* to be `allow`, not `warn`, until the
-# cleanup ships.
+# `-A dead_code`.
 warnings = { level = "deny", priority = -1 }
 dead_code = "allow"
+# `missing_docs` is enforced at the library level via `#![warn(missing_docs)]`
+# in `src/lib.rs`. Scoping it there (rather than crate-wide via `[lints.rust]`)
+# keeps integration tests and binary entry points free of the lint while
+# still gating the public library surface. Modules opt out per-file with
+# `#![allow(missing_docs)]` until their public surface is documented;
+# `shared::auth` is the first graduate.
+# `unsafe_code` is forbidden in non-test code via `#![cfg_attr(not(test),
+# forbid(unsafe_code))]` in `lib.rs` and the two `main.rs` entry points.
+# That's stronger than a Cargo-level deny because `forbid` can't be
+# relaxed by an inner `#[allow]`. The only `unsafe` in the crate is a
+# test helper that mutates env vars under a serializing mutex.
 
 [lints.clippy]
-# Pedantic is on at warn-level. Categories below are allow-listed because
-# they're either too noisy at this codebase size (doc lints), too aggressive
-# for SQLite plumbing (i64 ↔ u32/u64 cast lints), or a different
-# preference (passing config-like structs by value reads cleaner than
-# by reference). Each entry is a deliberate trade-off, not a TODO.
+# Pedantic + nursery are on at warn-level. Categories below are allow-listed
+# because they're either too noisy at this codebase size (doc lints),
+# too aggressive for SQLite plumbing (i64 ↔ u32/u64 cast lints), or a
+# different preference (passing config-like structs by value reads cleaner
+# than by reference). Each entry is a deliberate trade-off, not a TODO.
+#
+# `nursery` is the upcoming lints — bug-prone categories at warn so we get
+# early signal, with the known-high-false-positive ones explicitly allowed.
 pedantic = { level = "warn", priority = -1 }
+nursery  = { level = "warn", priority = -1 }
+
+# Nursery: high-false-positive lints. Each opt-out is intentional.
+#
+# `significant_drop_tightening` fires on most `Mutex`/`RwLock` guard scopes
+# — usually correct code that holds the lock across an await or multiple
+# operations. Tightening for tightening's sake risks subtle races.
+significant_drop_tightening      = "allow"
+# Same family — fires when a lock guard is in an `if let` scrutinee. The
+# Rust 2024 temporary-lifetime rules already shorten these correctly.
+significant_drop_in_scrutinee    = "allow"
+# Style preference: `if let Some(_) = x { a } else { b }` reads more clearly
+# than `x.map_or_else(|| b, |_| a)` at most call sites in this codebase.
+option_if_let_else               = "allow"
+# Style preference: long first paragraphs in module docs (//!) are fine
+# when the module's intro genuinely takes a paragraph to set up context.
+too_long_first_doc_paragraph     = "allow"
+# Fires on template strings like `task.replace("{output}", &val)` where
+# `{output}` is a domain-level placeholder, not a Rust format-arg.
+literal_string_with_formatting_args = "allow"
 
 # Doc lints — would force `# Errors`/`# Panics` sections on hundreds of
 # internal Result/panic-capable helpers. Re-enable per-module when the
@@ -99,8 +154,10 @@ missing_errors_doc = "allow"
 missing_panics_doc = "allow"
 doc_markdown       = "allow"
 
-# `#[must_use]` is valuable on public API but noisy on every getter; we
-# annotate explicitly where it matters (builder `with_*` methods, etc.).
+# `#[must_use]` is valuable on public API but noisy on every getter, and
+# tonic-build-generated proto code triggers it on every accessor. We've
+# annotated the hand-written API surface; the remaining fires are all in
+# generated code we don't control.
 must_use_candidate    = "allow"
 
 # SQLite columns are i64; the daemon often casts to u32/u64/usize/f64 with

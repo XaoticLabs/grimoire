@@ -1,3 +1,5 @@
+#![allow(missing_docs)] // Daemon internals; documentation pass pending per-module.
+
 pub mod agent_manager;
 pub mod clock;
 pub mod daemon_id;
@@ -30,7 +32,12 @@ pub mod workspace_watcher;
 
 use anyhow::Result;
 use std::sync::Arc;
+use std::time::Duration;
 use tracing::info;
+
+/// Heartbeat interval used by the worker registry to probe outbound worker
+/// liveness. Workers that miss two consecutive probes are marked stale.
+const WORKER_HEARTBEAT_INTERVAL: Duration = Duration::from_mins(1);
 
 use crate::shared::auth;
 use crate::shared::config::Config;
@@ -38,64 +45,14 @@ use crate::shared::constants;
 
 pub async fn start() -> Result<()> {
     let config = Config::load()?;
-
-    let dir = constants::grimoire_dir();
-    std::fs::create_dir_all(&dir)?;
-
-    let pid = std::process::id();
-    std::fs::write(constants::pid_path(), pid.to_string())?;
-
-    let socket = config.socket_path();
-    let port = config.port();
-
-    eprintln!();
-    eprintln!("  ◆ grimoire daemon v{}", env!("CARGO_PKG_VERSION"));
-    eprintln!(
-        "    pid {}  ·  socket {}  ·  http 127.0.0.1:{}",
-        pid,
-        socket.display(),
-        port
-    );
-    eprintln!("    db {}", constants::db_path().display());
-    eprintln!();
-
-    info!(pid = pid, dir = %dir.display(), "Grimoire daemon starting");
+    bootstrap_runtime(&config)?;
 
     let daemon_id = daemon_id::load_or_mint(&constants::daemon_id_path())?;
     info!(daemon_id = %daemon_id, "daemon id loaded");
 
     let db = Arc::new(persistence::Database::open(&constants::db_path())?);
-
-    // Promote Complete-with-session agents to Dormant before any subsystem
-    // (scheduler, wake registry) starts looking at agent state. Idempotent.
-    let migrated_ids = match db.migrate_dormant_agents() {
-        Ok(ids) => {
-            if !ids.is_empty() {
-                info!(
-                    count = ids.len(),
-                    "migrated agents from complete to dormant"
-                );
-            }
-            ids
-        }
-        Err(e) => {
-            tracing::error!(error = %e, "dormant migration failed");
-            Vec::new()
-        }
-    };
-
     let event_bus = event_bus::EventBus::new(db.clone());
-
-    // Publish a StateChange for each migration on the live bus so the event
-    // log captures the transition and any subscriber attached during boot
-    // sees it. The bus's writer task persists each event to the events table.
-    for id in &migrated_ids {
-        event_bus.publish(crate::shared::protocol::StreamEvent::StateChange {
-            agent_id: id.clone(),
-            old_state: crate::shared::types::AgentState::Complete,
-            new_state: crate::shared::types::AgentState::Dormant,
-        });
-    }
+    replay_dormant_migration(&db, &event_bus);
 
     let manager =
         agent_manager::AgentManager::new(db.clone(), event_bus.clone(), config.clone()).await;
@@ -136,7 +93,7 @@ pub async fn start() -> Result<()> {
     // WorkerRegistry, Supervisor) are now constructed. Handle is held in the
     // local binding so the background task lives for the daemon's lifetime.
     let workers = Arc::new(worker_registry::WorkerRegistry::new_with_bus(
-        std::time::Duration::from_mins(1),
+        WORKER_HEARTBEAT_INTERVAL,
         event_bus.clone(),
     ));
     let cap = config.max_concurrent_atomic();
@@ -192,24 +149,8 @@ pub async fn start() -> Result<()> {
     }
     peer_registry.spawn_all_active().await;
 
-    // Spawn the peer gRPC listener if configured.
     if let Some(addr) = config.daemon.peer_listen_addr.clone() {
-        let registry_clone = peer_registry.clone();
-        tokio::spawn(async move {
-            match addr.parse::<std::net::SocketAddr>() {
-                Ok(sa) => {
-                    let svc = peer_rpc_server::PeerSvc::new(registry_clone);
-                    if let Err(e) = tonic::transport::Server::builder()
-                        .add_service(svc)
-                        .serve(sa)
-                        .await
-                    {
-                        tracing::error!(error = %e, "peer gRPC listener exited");
-                    }
-                }
-                Err(e) => tracing::warn!(addr = %addr, error = %e, "invalid peer_listen_addr"),
-            }
-        });
+        spawn_peer_listener(addr, peer_registry.clone());
     }
 
     // Resolve (and on first boot mint) the CLI/HTTP bearer token. Workers
@@ -237,8 +178,91 @@ pub async fn start() -> Result<()> {
     )
     .await?;
 
+    cleanup_runtime_files();
+    Ok(())
+}
+
+/// Create the grimoire dir, write the pid file, and print the boot banner.
+fn bootstrap_runtime(config: &Config) -> Result<()> {
+    let dir = constants::grimoire_dir();
+    std::fs::create_dir_all(&dir)?;
+
+    let pid = std::process::id();
+    std::fs::write(constants::pid_path(), pid.to_string())?;
+
+    let socket = config.socket_path();
+    let port = config.port();
+
+    eprintln!();
+    eprintln!("  ◆ grimoire daemon v{}", env!("CARGO_PKG_VERSION"));
+    eprintln!(
+        "    pid {}  ·  socket {}  ·  http 127.0.0.1:{}",
+        pid,
+        socket.display(),
+        port
+    );
+    eprintln!("    db {}", constants::db_path().display());
+    eprintln!();
+
+    info!(pid = pid, dir = %dir.display(), "Grimoire daemon starting");
+    Ok(())
+}
+
+/// Promote Complete-with-session agents to Dormant and publish the
+/// corresponding `StateChange` events on the live bus, so the event log
+/// captures the transition and any boot-time subscriber sees it. Idempotent.
+///
+/// Runs *before* any subsystem (scheduler, wake registry) starts reading
+/// agent state, otherwise the boot-time view would be inconsistent.
+fn replay_dormant_migration(db: &Arc<persistence::Database>, event_bus: &event_bus::EventBus) {
+    let migrated_ids = match db.migrate_dormant_agents() {
+        Ok(ids) => {
+            if !ids.is_empty() {
+                info!(
+                    count = ids.len(),
+                    "migrated agents from complete to dormant"
+                );
+            }
+            ids
+        }
+        Err(e) => {
+            tracing::error!(error = %e, "dormant migration failed");
+            Vec::new()
+        }
+    };
+    for id in &migrated_ids {
+        event_bus.publish(crate::shared::protocol::StreamEvent::StateChange {
+            agent_id: id.clone(),
+            old_state: crate::shared::types::AgentState::Complete,
+            new_state: crate::shared::types::AgentState::Dormant,
+        });
+    }
+}
+
+/// Spawn the peer-federation gRPC listener as a background task. Errors in
+/// address parsing or the server loop are logged and the daemon continues
+/// without federation rather than failing boot.
+fn spawn_peer_listener(addr: String, peer_registry: Arc<peer_registry::PeerRegistry>) {
+    tokio::spawn(async move {
+        match addr.parse::<std::net::SocketAddr>() {
+            Ok(sa) => {
+                let svc = peer_rpc_server::PeerSvc::new(peer_registry);
+                if let Err(e) = tonic::transport::Server::builder()
+                    .add_service(svc)
+                    .serve(sa)
+                    .await
+                {
+                    tracing::error!(error = %e, "peer gRPC listener exited");
+                }
+            }
+            Err(e) => tracing::warn!(addr = %addr, error = %e, "invalid peer_listen_addr"),
+        }
+    });
+}
+
+/// Remove the socket + pid files. Best-effort: failures here mean the next
+/// daemon start will overwrite them anyway.
+fn cleanup_runtime_files() {
     let _ = std::fs::remove_file(constants::socket_path());
     let _ = std::fs::remove_file(constants::pid_path());
-
-    Ok(())
 }

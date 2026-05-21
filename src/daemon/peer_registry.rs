@@ -9,6 +9,7 @@
 use anyhow::{Result, anyhow};
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::sync::Mutex;
 use tokio::sync::Notify;
 
@@ -21,6 +22,10 @@ use super::event_bus::EventBus;
 use super::peer_client::PeerClientHandle;
 use super::peer_inbox::InboxHandler;
 use super::persistence::{Database, unix_now};
+
+/// Tight-loop yield while waiting for a spawned peer-client task to
+/// register itself with the registry before observing its initial state.
+const PEER_SPAWN_SETTLE_YIELD: Duration = Duration::from_millis(50);
 
 pub struct PeerHandle {
     pub state: PeerState,
@@ -186,7 +191,7 @@ impl PeerRegistry {
                 }
                 return Err(anyhow!("peer_handshake_timeout"));
             }
-            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            tokio::time::sleep(PEER_SPAWN_SETTLE_YIELD).await;
         }
     }
 

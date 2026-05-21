@@ -660,7 +660,7 @@ fn handle_direct_send(
             let reason = fail_reason.unwrap_or("unknown").to_string();
             bus.publish(StreamEvent::MailFailed {
                 mail_id: mail_id.clone(),
-                recipient_id: recipient_id.clone(),
+                recipient_id,
                 sender_id: params.sender.clone(),
                 reason,
             });
@@ -918,7 +918,7 @@ fn handle_mail_ack(db: &Arc<Database>, bus: &EventBus, req: RpcRequest) -> RpcRe
             }
             bus.publish(StreamEvent::MailDelivered {
                 mail_id: mail.id.clone(),
-                recipient_id: mail.recipient_id.clone(),
+                recipient_id: mail.recipient_id,
                 origin_daemon_id: None,
             });
             let r = MailAckResult { acked: true };
@@ -1444,7 +1444,7 @@ async fn handle_topic_federate(peer_registry: &Arc<PeerRegistry>, req: RpcReques
     peer_registry
         .bus
         .publish(StreamEvent::TopicFederationAdded {
-            peer_id: peer.id.clone(),
+            peer_id: peer.id,
             topic: params.topic.clone(),
             direction: final_dir.as_str().to_string(),
         });

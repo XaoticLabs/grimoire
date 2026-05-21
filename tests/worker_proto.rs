@@ -68,8 +68,8 @@ fn worker_proto_assign_task_optional_fields_default_to_none() {
     assert!(decoded.env.is_empty());
 }
 
-fn check_client_type<T>() {}
-fn check_server_type<T>() {}
+const fn check_client_type<T>() {}
+const fn check_server_type<T>() {}
 
 #[test]
 fn worker_proto_compiles() {

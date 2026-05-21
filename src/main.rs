@@ -1,4 +1,14 @@
+#![cfg_attr(not(test), forbid(unsafe_code))]
+
+use std::time::Duration;
+
 use clap::{Parser, Subcommand};
+
+/// How long the CLI waits after auto-spawning the daemon before retrying
+/// the socket connection. Tuned so a healthy daemon is usually up by the
+/// first retry without making CLI startup feel laggy when the daemon is
+/// already running.
+const DAEMON_AUTOSTART_POLL: Duration = Duration::from_millis(500);
 
 mod cli;
 mod daemon;
@@ -224,7 +234,7 @@ async fn main() {
                     eprintln!("Start it manually with: grim daemon");
                     std::process::exit(1);
                 }
-                tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                tokio::time::sleep(DAEMON_AUTOSTART_POLL).await;
                 if !cli::client::is_daemon_running().await {
                     eprintln!("Daemon failed to start. Start it manually with: grim daemon");
                     std::process::exit(1);

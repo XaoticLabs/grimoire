@@ -31,7 +31,7 @@ pub enum Lane {
 }
 
 impl Lane {
-    pub fn as_str(self) -> &'static str {
+    pub const fn as_str(self) -> &'static str {
         match self {
             Self::Adhoc => "adhoc",
             Self::Scroll => "scroll",
@@ -157,7 +157,7 @@ impl AgentManager {
             .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/")))
     }
 
-    pub fn max_concurrent_agents(&self) -> u32 {
+    pub const fn max_concurrent_agents(&self) -> u32 {
         self.config.daemon.max_concurrent_agents
     }
 
@@ -254,7 +254,8 @@ impl AgentManager {
 
     /// Enqueue an agent for the scheduler to pick up. Inserts the agent in
     /// `Queued` state and writes a row into `task_queue`; does NOT start the
-    /// executor — that is the scheduler's job (see [`AgentManager::dispatch_internal`]).
+    /// executor — that is the scheduler's job (handled by
+    /// `AgentManager::dispatch_internal`).
     pub async fn enqueue(
         self: &Arc<Self>,
         task: &str,

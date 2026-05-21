@@ -56,7 +56,7 @@ impl WorkspaceWatcher {
         let (shutdown_tx, mut shutdown_rx) = mpsc::unbounded_channel::<()>();
 
         let watcher_root = canonical_root.clone();
-        let watcher_ignore = ignore_set.clone();
+        let watcher_ignore = ignore_set;
         let mut watcher = notify::recommended_watcher(move |res: notify::Result<NotifyEvent>| {
             let event = match res {
                 Ok(e) => e,
@@ -91,9 +91,9 @@ impl WorkspaceWatcher {
         })?;
         watcher.watch(&canonical_root, RecursiveMode::Recursive)?;
 
-        let task_workspace = workspace_id.clone();
-        let task_bus = bus.clone();
-        let task_db = db.clone();
+        let task_workspace = workspace_id;
+        let task_bus = bus;
+        let task_db = db;
         let task = tokio::spawn(async move {
             let debounce = Duration::from_millis(WORKSPACE_WATCH_DEBOUNCE_MS);
             let mut buffer: Vec<ChangeRecord> = Vec::new();
