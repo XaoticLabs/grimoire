@@ -6,20 +6,23 @@
 [![MSRV](https://img.shields.io/badge/MSRV-1.95-blue.svg)](#msrv)
 [![license](https://img.shields.io/crates/l/grimoire.svg)](#license)
 
-**cron + systemd for AI agents — bring your own CLI.** Grimoire is a daemon that runs your coding agents as long-lived, supervised *processes* instead of one-shot commands in a tmux pane. They keep running after you close your laptop, wake on schedules and file changes, restart themselves when they fail, and ping you when something needs a human.
+It's cron and systemd for AI agents, and you bring your own CLI.
 
-It's not a framework you write agents *in* — it's the substrate your existing agents run *under*. Claude Code is the default, but `pi`, opencode, aider, codex, or any CLI that takes a prompt works just as well ([Providers](#providers)).
+Grimoire runs your coding agents as long-lived, supervised processes instead of one-shot commands you babysit in a tmux pane. They keep working after you close your laptop, wake on schedules and file changes, restart themselves when they fall over, and ping you when something actually needs a human.
 
-> **Thesis:** Agents are processes, not function calls. A library-based orchestrator's agents die when its script ends; a Grimoire agent has an address next week. That's the whole point of being a daemon.
+You don't write your agents in Grimoire. You run the agents you already use under it. Claude Code is the default, but `pi`, opencode, aider, codex, or anything that takes a prompt works just as well (see [Providers](#providers)).
+
+> The idea: agents are processes, not function calls. A library orchestrator's agents die when its script ends. A Grimoire agent still has an address next week. That's the whole reason to run a daemon.
 
 ## How it works: two primitives
 
-Almost everything in Grimoire composes from just two things:
+Almost everything here is built from two things.
 
-1. **A durable event log** — every state change, output line, and lifecycle event is written through to SQLite with per-stream sequence numbers. Nothing is lost when a subscriber is slow or the daemon restarts.
-2. **An addressable mailbox** — every agent has an address (`agent://<id>`) and a mailbox; topics (`topic://<name>`) fan out to subscribers.
+The first is a durable event log. Every state change, output line, and lifecycle event gets written through to SQLite with per-stream sequence numbers, so nothing is lost if a subscriber lags or the daemon restarts.
 
-The rest are those two composed: **wake triggers** deliver to a mailbox, **supervision** restarts and escalates via the log, **workspaces** publish file changes to a topic, **notifications** are log subscribers, **federation** is mail across daemons. Learn the two primitives and the rest follows.
+The second is an addressable mailbox. Every agent has an address (`agent://<id>`) and a mailbox, and topics (`topic://<name>`) fan out to whoever subscribed.
+
+Everything else is those two composed. Wake triggers deliver to a mailbox. Supervision restarts and escalates through the log. Workspaces publish file changes to a topic. Notifications are just log subscribers. Federation is mail between daemons. Learn the two primitives and the rest falls out.
 
 ## Install
 
@@ -48,7 +51,7 @@ grim scry
 
 ## Commands
 
-Grimoire uses a deliberately thematic vocabulary. If you'd rather think in plain terms, here's the decoder ring:
+The vocabulary is deliberately thematic. If you'd rather think in plain terms, here's the decoder ring:
 
 | Grimoire verb | Plain meaning |
 |---------------|---------------|
@@ -62,7 +65,7 @@ Grimoire uses a deliberately thematic vocabulary. If you'd rather think in plain
 | `pact` | chain: when A finishes, start B |
 | `inscribe` / `scroll` | load / run a multi-task spec (a DAG) |
 | `wake` | trigger that resumes a dormant agent (cron / file / event) |
-| `notify` | send a message out to *you* (webhook) |
+| `notify` | send a message out to you (webhook) |
 
 ### Core lifecycle
 
@@ -85,7 +88,7 @@ Grimoire uses a deliberately thematic vocabulary. If you'd rather think in plain
 
 | Command | Description |
 |---------|-------------|
-| `grim pact <id> --task "<tpl>"` | Chain agents — fire a new task when `<id>` completes |
+| `grim pact <id> --task "<tpl>"` | Chain agents: fire a new task when `<id>` completes |
 | `grim pact --list` | List all pacts |
 | `grim inscribe <spec> [-c N] [-a]` | Load a spec for orchestrated execution |
 | `grim scroll [id]` | View scroll status or list all scrolls |
@@ -148,15 +151,15 @@ Once peered, `grim mail send agent://grimd-<peer>/<id> "<body>"` delivers across
 |---------|-------------|
 | `grim scry` | Open `http://127.0.0.1:6660` web dashboard |
 
-All commands accepting an agent ID support short prefixes (e.g. `grim bind 4a` instead of `4a8c1b2f`).
+Any command that takes an agent ID also takes a short prefix, so `grim bind 4a` works instead of `4a8c1b2f`.
 
 ## Worker Pool
 
-Grimoire can run agents on remote machines via the `grimw` worker binary. With zero workers registered the daemon falls back to a local executor and behavior is unchanged.
+Grimoire can run agents on remote machines through the `grimw` worker binary. With no workers registered it just uses a local executor and nothing changes.
 
-**Single machine (default):** no `[worker]` block in `config.toml`. `grim summon` runs locally as before.
+Single machine (the default): no `[worker]` block in `config.toml`, and `grim summon` runs locally like always.
 
-**Multi-machine:** add a `[worker]` block to the daemon `config.toml`:
+Multi-machine: add a `[worker]` block to the daemon `config.toml`:
 
 ```toml
 [worker]
@@ -185,24 +188,24 @@ Then run:
 grimw --config ~/.grimoire/grimw.toml
 ```
 
-`grim status` on the daemon host lists the registered worker. `grim circle` annotates each agent with the worker it ran on (or `local`). The scheduler picks the least-loaded worker matching each summon's provider and capability tags; if no worker matches it falls back to `LocalExecutor`.
+`grim status` on the daemon host lists the registered worker, and `grim circle` shows which worker each agent ran on (or `local`). The scheduler picks the least-loaded worker that matches a summon's provider and capability tags, and falls back to the local executor if none match.
 
-**Security note:** `listen_addr` defaults to `127.0.0.1` — never `0.0.0.0`. Cross-machine deployments should listen on a Tailscale interface (or equivalent overlay network), not the public internet.
+A note on security: `listen_addr` defaults to `127.0.0.1`, never `0.0.0.0`. For cross-machine setups, listen on a Tailscale interface or some equivalent overlay network, not the public internet.
 
 ## Pacts (Agent Chaining)
 
-Pacts let you chain agents together. When a source agent completes, the pact fires and spawns a new agent with the source's output templated in.
+Pacts chain agents together. When a source agent completes, the pact fires and spawns a new agent with the source's output templated in.
 
 ```bash
 grim summon "find all TODO comments in this project"
 grim pact <id> --task "fix these TODOs: {output}"
 ```
 
-`{output}` is replaced with the source agent's result text. Chain pacts to build pipelines: A → B → C.
+`{output}` gets replaced with the source agent's result text. Chain pacts to build pipelines: A then B then C.
 
 ## Messaging
 
-Agents can send each other mail and subscribe to topics. Direct addresses (`agent://<id>`) deliver one row per send; topic addresses (`topic://<name>`) fan out to current subscribers. Dormant agents with a `session_id` are woken on incoming mail; live agents read pending mail at their next turn boundary.
+Agents can send each other mail and subscribe to topics. Direct addresses (`agent://<id>`) deliver one row per send. Topic addresses (`topic://<name>`) fan out to whoever's currently subscribed. A dormant agent with a `session_id` wakes on incoming mail, and a live agent reads pending mail at its next turn boundary.
 
 ```bash
 # Direct
@@ -220,21 +223,22 @@ grim mail ack <mail-id>
 
 ## Dormant Agents & Wake Triggers
 
-Agents don't have to exit after one task. With `--keep-alive` (or once they finish a normal run with a `session_id`) they enter `Dormant` and can be woken on:
+Agents don't have to exit after one task. With `--keep-alive` (or once they finish a normal run with a `session_id`) they go `Dormant` and can be woken by:
 
-- **cron** — `grim wake add 4a --cron "0 9 * * *"` for a 9am daily kickoff
-- **file-watch** — `grim wake add 4a --file-watch ./src` (debounced, ignores `.git`/`target`/`node_modules`)
-- **parent-completion** — `grim wake add 4a --on-complete 7b` to chain off another agent
-- **incoming mail** — automatic for any dormant agent with subscribed topics or pending direct mail
+- **cron**: `grim wake add 4a --cron "0 9 * * *"` for a 9am daily kickoff
+- **file-watch**: `grim wake add 4a --file-watch ./src` (debounced, ignores `.git`/`target`/`node_modules`)
+- **parent-completion**: `grim wake add 4a --on-complete 7b` to chain off another agent
+- **incoming mail**: automatic for any dormant agent with subscribed topics or pending direct mail
 
-All wake fires are rate-limited per agent (token bucket) and logged to the durable event stream as `WakeSourceFired` / `WakeSourceFailed`. `grim banish <id>` cascades and retires every wake source atomically.
+Every wake fire is rate-limited per agent (token bucket) and logged to the durable event stream as `WakeSourceFired` / `WakeSourceFailed`. `grim banish <id>` cascades and retires every wake source atomically.
 
 ## Workspaces & Shared Memory
 
-A workspace is a git worktree the daemon provisions and lifecycles. Multiple agents can be assigned to the same workspace and coordinate through:
+A workspace is a git worktree the daemon provisions and manages. You can assign several agents to the same workspace and let them coordinate two ways.
 
-- The **filesystem itself** — every change publishes to `topic://workspace/<id>/files`, so other agents in the workspace can subscribe and react.
-- **Shared memory KV** — `grim memory put/get/list/delete` with optimistic CAS (`--expected-version`), namespaced per workspace, with segment-prefix subscriptions: writing to `findings/auth/jwt` wakes anything subscribed to `topic://workspace/<id>/memory/findings`.
+Through the filesystem: every change publishes to `topic://workspace/<id>/files`, so other agents in the workspace can subscribe and react.
+
+Through a shared memory KV: `grim memory put/get/list/delete` with optimistic CAS (`--expected-version`), namespaced per workspace. It supports segment-prefix subscriptions, so writing to `findings/auth/jwt` wakes anything subscribed to `topic://workspace/<id>/memory/findings`.
 
 ```bash
 grim workspace create feature-auth --repo ~/repos/app --branch feat/auth
@@ -242,7 +246,7 @@ grim summon --workspace feature-auth "implement JWT verification"
 grim memory put feature-auth design/auth-decision @notes.md
 ```
 
-Per-value cap 256 KiB, per-workspace cap 64 MiB. Workspace destroy cascades memory and assignments.
+Caps are 256 KiB per value and 64 MiB per workspace. Destroying a workspace cascades its memory and assignments.
 
 ## Supervision Trees
 
@@ -252,11 +256,11 @@ Every agent can have a supervisor policy borrowed from OTP:
 grim summon --supervisor <parent-id> --restart on_failure --max-restarts 3 --window-secs 60 "<task>"
 ```
 
-If the child fails too often the parent agent is woken with the failure summary and decides what to do (retry with another provider, decompose further, give up). `grim circle` shows the supervision view; supervision events flow through the durable log.
+If a child fails too often, the parent agent wakes with the failure summary and decides what to do: retry with another provider, decompose further, or give up. `grim circle` shows the supervision view, and supervision events flow through the durable log.
 
 ## Federation
 
-Two `grimd` instances can peer with each other. Each daemon mints a stable `DaemonId` on first boot (`~/.grimoire/daemon.id`, surfaced via `grim status`). Once peered:
+Two `grimd` instances can peer with each other. Each daemon mints a stable `DaemonId` on first boot (`~/.grimoire/daemon.id`, shown in `grim status`). Once peered:
 
 ```bash
 grim peer add office https://office.tailnet.ts.net:7878 --secret <token>
@@ -264,11 +268,11 @@ grim mail send agent://grimd-office/4a8c "kick off the nightly run"
 grim topic federate pr-opened --peer office
 ```
 
-Direct mail and topic forwarding are at-least-once with `(sender_daemon_id, sender_seq)` dedupe at the inbox. Scroll-spanning, federated workspaces, and mTLS are post-v1.
+Direct mail and topic forwarding are at-least-once, with `(sender_daemon_id, sender_seq)` dedupe at the inbox. Scroll-spanning, federated workspaces, and mTLS are still to come.
 
 ## Providers
 
-Grimoire supports multiple AI CLI tools via a provider system. Claude Code is the default.
+Grimoire drives multiple AI CLI tools through a provider system. Claude Code is the default.
 
 ```toml
 [agent]
@@ -291,7 +295,7 @@ grim summon --provider codex "fix the login bug"
 
 ## Scrolls (Spec-based Orchestration)
 
-Scrolls let you define a spec document with multiple tasks, dependencies, and file ownership. Grimoire executes independent tasks in parallel, respects the dependency DAG, and detects file conflicts.
+A scroll is a spec document with multiple tasks, dependencies, and file ownership. Grimoire runs independent tasks in parallel, respects the dependency DAG, and detects file conflicts.
 
 ```markdown
 # Scroll: Implement Auth
@@ -331,63 +335,64 @@ grim inscribe spec.md --activate
 grim scroll <id>
 ```
 
-Features:
-- Parallel execution up to configurable concurrency (`-c N`, default 4)
-- Dependency tracking — blocked tasks wait for their dependencies
-- File conflict detection — tasks with overlapping file patterns are serialized
-- Failure propagation — downstream tasks are skipped when a dependency fails
+What you get:
+
+- Parallel execution up to a configurable concurrency (`-c N`, default 4)
+- Dependency tracking, so blocked tasks wait for what they depend on
+- File conflict detection, so tasks with overlapping file patterns get serialized
+- Failure propagation, so downstream tasks are skipped when a dependency fails
 - Per-task provider/model overrides
 
 ## Scheduler & Queue
 
-`summon` enqueues; the daemon scheduler (`grim queue`) promotes `Queued → Active` under a global `max_concurrent_agents` cap and a worker-eligibility check. Atomic claim-for-dispatch with requeue-on-failure; reactor wakes on `AgentQueued`, `WorkerRegistered`, terminal `StateChange`, plus a 100 ms safety tick. Per-tenant quotas, token-bucket rate limits, and `quiet_hours` are still on the roadmap.
+`summon` enqueues, and the daemon scheduler (`grim queue`) promotes `Queued` to `Active` under a global `max_concurrent_agents` cap plus a worker-eligibility check. Claim-for-dispatch is atomic and requeues on failure. The reactor wakes on `AgentQueued`, `WorkerRegistered`, a terminal `StateChange`, and a 100 ms safety tick. Per-tenant quotas, token-bucket rate limits, and `quiet_hours` are still on the list.
 
 ## Web Dashboard
 
 `grim scry` opens `http://127.0.0.1:6660` with:
 
-- Live agent list with per-agent activity previews
+- A live agent list with per-agent activity previews
 - Click into any agent for formatted output (tool calls, results, cost)
-- Summon, banish, and invoke directly from the browser
-- Real-time updates via SSE
+- Summon, banish, and invoke straight from the browser
+- Real-time updates over SSE
 
 ## Demos
 
-`grim demo` scaffolds a working standing-agent flow in one command, printing each underlying `grim` action as it runs — so it's a quickstart *and* a legibility aid (nothing magic: it's `summon --keep-alive` + a file-watch wake source + `grim notify`).
+`grim demo` sets up a working standing-agent flow in one command. It prints each underlying `grim` action as it runs, so it's both a quickstart and a way to see exactly what's happening. Nothing magic: it's `summon --keep-alive` plus a file-watch wake source plus `grim notify`.
 
 ```bash
 grim demo standing-review --repo ~/repos/myapp --provider claude
 ```
 
-This summons a keep-alive reviewer rooted in the repo and registers a file-watch wake source. Edit a file and the agent wakes, inspects the change, and — if it finds something worth a human's attention — calls `grim notify`. Set `[notifications].webhook_url` (below) to receive the pings; watch it live with `grim bind <id>` or `grim scry`; tear it down with `grim banish <id>`.
+This summons a keep-alive reviewer rooted in the repo and registers a file-watch wake source. Edit a file and the agent wakes, looks at the change, and calls `grim notify` if it finds something worth your attention. Set `[notifications].webhook_url` (below) to get the pings, watch it live with `grim bind <id>` or `grim scry`, and tear it down with `grim banish <id>`.
 
-It's also an experiment worth running against your own workflow: does a standing, event-woken agent earn its keep over running a one-shot agent in a shell loop?
+It's worth running against your own workflow as an experiment: does a standing, event-woken agent actually earn its keep over running a one-shot agent in a shell loop?
 
 ## Notifications
 
-The daemon can reach *you* — the missing half of "fire it and walk away." Point `[notifications]` at any webhook (Slack/Discord incoming webhook, a relay, anything that accepts a JSON POST):
+The daemon can reach you, which is the missing half of "fire it and walk away." Point `[notifications]` at any webhook (a Slack or Discord incoming webhook, a relay, anything that accepts a JSON POST):
 
 ```toml
 [notifications]
 webhook_url = "https://hooks.example.com/grimoire"
-on_completion = true   # agent reached Complete
-on_failure = true      # Failed / Banished / restart budget exhausted
-on_wake = true         # a standing agent's wake source fired
+on_completion = true    # agent reached Complete
+on_failure = true       # Failed / Banished / restart budget exhausted
+on_wake = true          # a standing agent's wake source fired
 on_agent_decided = true # an agent called `grim notify`
 timeout_secs = 10
 ```
 
-Each enabled trigger POSTs `{ event, agent_id, message, level, timestamp }`. With no `webhook_url`, the notifier is never spawned (zero overhead).
+Each enabled trigger POSTs `{ event, agent_id, message, level, timestamp }`. With no `webhook_url` set, the notifier never even starts, so there's no overhead.
 
-Agents surface their own findings — "ping me only if interesting" — by shelling out to `grim notify`, provider-neutral (works from claude, `pi`, opencode, aider, …):
+Agents surface their own findings ("ping me only if it's interesting") by shelling out to `grim notify`. This works from any provider that can run a shell command (claude, `pi`, opencode, aider, and so on):
 
 ```bash
-grim notify "build is red on main — needs a human" --level error
+grim notify "build is red on main, needs a human" --level error
 ```
 
-The daemon injects `GRIMOIRE_AGENT_ID` into every agent it spawns, so `grim notify` (and any other `grim` call the agent makes) is automatically attributed to the right agent — the agent never has to know its own id. Notifications also land in the durable event log like every other event.
+The daemon injects `GRIMOIRE_AGENT_ID` into every agent it spawns, so `grim notify` (and any other `grim` call the agent makes) is attributed to the right agent without the agent ever needing to know its own id. Notifications also land in the durable event log like everything else.
 
-> Note: identity injection currently covers locally-executed agents. Agents dispatched to a remote `grimw` worker don't yet receive the env var (worker-side injection is a follow-up).
+One caveat: identity injection currently covers locally-executed agents. Agents dispatched to a remote `grimw` worker don't get the env var yet. Worker-side injection is a follow-up.
 
 ## Configuration
 
@@ -399,90 +404,92 @@ grim tome agent.default_model sonnet
 grim tome agent.claude_binary /usr/local/bin/claude
 ```
 
-Available keys: `daemon.port`, `daemon.log_level`, `agent.default_model`, `agent.default_cwd`, `agent.claude_binary`, `agent.default_provider`, plus `[worker]`, `[daemon.auth]`, `[notifications]`, and `[providers.*]` blocks.
+Available keys: `daemon.port`, `daemon.log_level`, `agent.default_model`, `agent.default_cwd`, `agent.claude_binary`, `agent.default_provider`, plus the `[worker]`, `[daemon.auth]`, `[notifications]`, and `[providers.*]` blocks.
 
 ## Auth
 
-Grimoire has three independent trust domains; each ships with auth on by default.
+Grimoire has three independent trust domains, and each ships with auth on by default.
 
-- **CLI ↔ daemon (UDS)** — connections from the daemon's own UID are trusted via `SO_PEERCRED` (no token needed). Cross-UID connections must present the daemon's bearer token on the first RPC. The token is auto-generated on first boot at `~/.grimoire/auth.token` (mode `0600`) and read by both `grim` and the dashboard. Resolution order: `GRIMOIRE_AUTH_TOKEN` env → `[daemon.auth] token = "…"` in `config.toml` → the file.
-- **Dashboard (HTTP)** — `/api/*` requires `Authorization: Bearer <token>` or a `grim_auth` cookie set by `/auth/login`. `grim scry` mints a one-shot login URL (`/auth/login?t=<token>`) and opens the browser; the browser stores the cookie and you're in. Loopback bind (`127.0.0.1`) is enforced — there is no "loopback bypass" of auth.
-- **Federation peers (gRPC)** and **worker pool (gRPC)** carry their own per-link tokens (`peer add --token …` and `[worker] secret = …` respectively). These are orthogonal to the CLI/HTTP token.
+CLI to daemon (UDS): connections from the daemon's own UID are trusted via `SO_PEERCRED`, no token needed. Cross-UID connections have to present the daemon's bearer token on the first RPC. The token is auto-generated on first boot at `~/.grimoire/auth.token` (mode `0600`) and read by both `grim` and the dashboard. Resolution order is `GRIMOIRE_AUTH_TOKEN` env, then `[daemon.auth] token = "..."` in `config.toml`, then the file.
 
-All three transports also negotiate a protocol version on the first message and reject mismatches with `unsupported_protocol_version` — this is what lets future wire-incompatible changes ship cleanly instead of silently misbehaving.
+Dashboard (HTTP): `/api/*` needs `Authorization: Bearer <token>` or a `grim_auth` cookie set by `/auth/login`. `grim scry` mints a one-shot login URL (`/auth/login?t=<token>`) and opens the browser, the browser stores the cookie, and you're in. The listener is bound to loopback (`127.0.0.1`) and there's no loopback bypass of auth.
+
+Federation peers (gRPC) and the worker pool (gRPC) each carry their own per-link tokens (`peer add --token ...` and `[worker] secret = ...`). These are separate from the CLI/HTTP token.
+
+All three transports also negotiate a protocol version on the first message and reject mismatches with `unsupported_protocol_version`. That's what lets future wire-incompatible changes ship cleanly instead of silently misbehaving.
 
 ### Token recovery
 
-The token at `~/.grimoire/auth.token` is the canonical source. If it's lost or you want to rotate:
+The token at `~/.grimoire/auth.token` is the canonical source. If it's lost, or you want to rotate it:
 
 ```bash
-# Stop the daemon, delete the token, restart — a fresh token is minted on boot.
+# Stop the daemon, delete the token, restart, and a fresh token is minted on boot.
 pkill -f "grim daemon"
 rm ~/.grimoire/auth.token
 grim daemon
 ```
 
-If `[daemon.auth] token = "…"` is pinned in `config.toml`, that value wins on next boot and the file is rewritten to match it. The `GRIMOIRE_AUTH_TOKEN` env var (highest priority) is a one-shot override for the current process — it does not persist back to the file.
+If `[daemon.auth] token = "..."` is pinned in `config.toml`, that value wins on the next boot and the file is rewritten to match. The `GRIMOIRE_AUTH_TOKEN` env var (highest priority) is a one-shot override for the current process and doesn't persist back to the file.
 
-There are no `grim auth rotate / show / reset` subcommands yet; the file is the UX.
+There are no `grim auth rotate / show / reset` subcommands yet. The file is the UX.
 
 ### CLI vs worker vs peer tokens (side-by-side)
 
-The three trust domains use **independent** credentials. Configuring one does not affect the others:
+The three trust domains use independent credentials. Configuring one doesn't touch the others:
 
 | Domain | Where it lives | Used by |
 | --- | --- | --- |
-| CLI ↔ daemon (UDS) + Dashboard (HTTP) | `~/.grimoire/auth.token`, or `[daemon.auth] token` in `config.toml`, or `GRIMOIRE_AUTH_TOKEN` env | `grim *` cross-UID, browser dashboard |
-| Daemon ↔ worker (gRPC) | `[worker] secret = "…"` (matched on both daemon and worker `config.toml`) | `grimw` registering with the daemon |
-| Peer ↔ peer (gRPC) | Per-peer, set with `grim peer add … --token <T>` (stored in the `peers` table) | Federation gossip / outbox |
+| CLI to daemon (UDS) + Dashboard (HTTP) | `~/.grimoire/auth.token`, or `[daemon.auth] token` in `config.toml`, or `GRIMOIRE_AUTH_TOKEN` env | `grim *` cross-UID, browser dashboard |
+| Daemon to worker (gRPC) | `[worker] secret = "..."` (matched on both daemon and worker `config.toml`) | `grimw` registering with the daemon |
+| Peer to peer (gRPC) | Per-peer, set with `grim peer add ... --token <T>` (stored in the `peers` table) | Federation gossip / outbox |
 
-Rotating any of these is independent: change the daemon token without touching workers, swap a peer token without affecting the dashboard, etc.
+Rotating any of these is independent. Change the daemon token without touching workers, swap a peer token without affecting the dashboard, and so on.
 
 ### Cross-UID deployment
 
 The peercred bypass only fires for connections from the daemon's own UID. To run a shared `grimd` as a service account with multiple human users:
 
-1. Run the daemon as a dedicated user (e.g. `grimd`): `sudo -u grimd grim daemon`.
+1. Run the daemon as a dedicated user (say `grimd`): `sudo -u grimd grim daemon`.
 2. Read its token: `sudo -u grimd cat ~grimd/.grimoire/auth.token`.
 3. Distribute the token to each user's `~/.grimoire/auth.token` (or set `GRIMOIRE_AUTH_TOKEN` in their shell, or pin `[daemon.auth] token` in a shared `config.toml`).
-4. Each `grim` invocation now connects across UIDs and presents the token on the first RPC.
+4. Each `grim` call now connects across UIDs and presents the token on the first RPC.
 
-The daemon's UDS socket lives at `~grimd/.grimoire/grimd.sock` and is `0600`, so users also need group/ACL access to the socket path (typically by adding them to a `grimd` group and tightening the file mode in the service unit).
+The daemon's UDS socket lives at `~grimd/.grimoire/grimd.sock` and is `0600`, so users also need group or ACL access to the socket path. Usually that means adding them to a `grimd` group and tightening the file mode in the service unit.
 
 ### HTTP login internals
 
 `/auth/login` accepts the token two ways:
 
-- `GET /auth/login?t=<token>` — intentional for the magic-link UX (`grim scry` opens `http://127.0.0.1:<port>/auth/login?t=<token>` in the browser; the browser exchanges it for the `grim_auth` cookie and redirects to `/`).
-- `POST /auth/login` (`token=<token>`, form-encoded) — used by the fallback login page when the URL doesn't carry the token.
+- `GET /auth/login?t=<token>` for the magic-link flow. `grim scry` opens `http://127.0.0.1:<port>/auth/login?t=<token>` in the browser, the browser exchanges it for the `grim_auth` cookie, and redirects to `/`.
+- `POST /auth/login` (`token=<token>`, form-encoded) for the fallback login page when the URL doesn't carry the token.
 
-The cookie is `HttpOnly; SameSite=Strict; Max-Age=86400` and currently **does not** set `Secure` because the listener is plain HTTP on loopback. When peer/HTTP TLS lands (Roadmap Part 6), flip `Secure` on conditionally — see the TODO comment in `src/daemon/server.rs::login_success_response`.
+The cookie is `HttpOnly; SameSite=Strict; Max-Age=86400`. It doesn't set `Secure` yet because the listener is plain HTTP on loopback. When peer/HTTP TLS lands, flip `Secure` on conditionally. There's a TODO comment in `src/daemon/server.rs::login_success_response`.
 
 ### Test-only env var
 
-`GRIMOIRE_AUTH_TOKEN_PATH` overrides the token file location. It exists so the integration test suite can isolate auth state per-test under `tempfile`-managed directories. Not intended for ops use — pin `[daemon.auth] token` in `config.toml` instead if you want a stable token at a non-default path.
+`GRIMOIRE_AUTH_TOKEN_PATH` overrides the token file location. It exists so the integration test suite can isolate auth state per-test under `tempfile`-managed directories. It's not meant for ops use. Pin `[daemon.auth] token` in `config.toml` instead if you want a stable token at a non-default path.
 
 ### Hard-cutover notes (v0.1)
 
-These landed alongside the auth + protocol-version work and may surprise contributors upgrading mid-stream:
+These landed alongside the auth and protocol-version work and might surprise contributors upgrading mid-stream:
 
-- **Old workers are rejected.** Workers built before `protocol_version` was added to `RegisterWorker` are rejected at registration with `FailedPrecondition: unsupported_protocol_version`. Rebuild `grimw` from this tree.
-- **Old `grim` CLIs still work from the owning UID.** A CLI built before `auth_token` was added to the JSON-RPC envelope passes through the peercred bypass. Cross-UID calls from old CLIs are rejected — rebuild.
-- **UDS socket is `0600`.** Earlier builds left it world-readable in some setups. If you script around the socket, expect EACCES from other UIDs (which is the point — fall back to the HTTP listener or TCP forwarding).
+- Old workers are rejected. Workers built before `protocol_version` was added to `RegisterWorker` get rejected at registration with `FailedPrecondition: unsupported_protocol_version`. Rebuild `grimw` from this tree.
+- Old `grim` CLIs still work from the owning UID. A CLI built before `auth_token` was added to the JSON-RPC envelope passes through the peercred bypass. Cross-UID calls from old CLIs are rejected, so rebuild.
+- The UDS socket is `0600`. Earlier builds left it world-readable in some setups. If you script around the socket, expect EACCES from other UIDs. That's the point: fall back to the HTTP listener or TCP forwarding.
 
 ## Architecture
 
-Single Rust binary (`grim`) that runs as both CLI and daemon. A second binary (`grimw`) is the remote worker.
+A single Rust binary (`grim`) runs as both CLI and daemon. A second binary (`grimw`) is the remote worker.
 
-- **Daemon (`grimd`)** manages agent lifecycles, persists state in SQLite, exposes a JSON-RPC UDS, an HTTP/SSE dashboard, and a peer gRPC channel.
+- **Daemon (`grimd`)** manages agent lifecycles, persists state in SQLite, and exposes a JSON-RPC UDS, an HTTP/SSE dashboard, and a peer gRPC channel.
 - **Scheduler** owns admission control, capability-aware placement across workers, and dispatch.
-- **Provider registry** abstracts CLI tools (Claude, Codex, aider, …) behind a common trait.
+- **Provider registry** abstracts CLI tools (Claude, Codex, aider, and so on) behind a common trait.
 - **Orchestrator** fires pacts and supervision restarts on agent completions.
-- **ScrollKeeper** executes spec DAGs with parallel scheduling, conflict detection, and dependency tracking.
-- **WakeRegistry** owns cron / file-watch / parent-completion wake sources; fires through the mail bus.
+- **ScrollKeeper** runs spec DAGs with parallel scheduling, conflict detection, and dependency tracking.
+- **WakeRegistry** owns cron, file-watch, and parent-completion wake sources, and fires through the mail bus.
 - **WorkspaceRegistry + WorkspaceWatcher** provision worktrees and emit `WorkspaceFileChanged` topic mail.
 - **Supervisor** enforces restart policies and escalation routing.
-- **EventBus** is write-through to a SQLite `events` table with per-stream sequence numbers (durable log).
+- **EventBus** writes through to a SQLite `events` table with per-stream sequence numbers (the durable log).
 - **Peer client/server + outbox/inbox** federate direct mail and opt-in topics across daemons.
 
 ```
@@ -491,7 +498,7 @@ Browser   ──HTTP──▶    │              └─▶ Scheduler ──▶ 
 Peer grimd ──gRPC──▶   │
                        ├── SQLite (agents, events, pacts, scrolls, tasks, mail,
                        │           subscriptions, wake_sources, workspaces,
-                       │           workspace_memory, peers, peer_outbox, …)
+                       │           workspace_memory, peers, peer_outbox, ...)
                        ├── EventBus (durable, per-stream seq)
                        ├── Orchestrator + Supervisor
                        ├── ScrollKeeper / WakeRegistry / WorkspaceRegistry
@@ -502,22 +509,22 @@ Peer grimd ──gRPC──▶   │
 
 All state lives in `~/.grimoire/`:
 
-- `grimoire.db` — SQLite database (everything durable)
-- `daemon.id` — stable `DaemonId` minted on first boot
-- `grimd.sock` — Unix domain socket
-- `grimd.pid` — daemon PID file
-- `config.toml` — configuration
-- `workspaces/<name>/` — git worktrees provisioned by `grim workspace create`
+- `grimoire.db` is the SQLite database (everything durable)
+- `daemon.id` is the stable `DaemonId` minted on first boot
+- `grimd.sock` is the Unix domain socket
+- `grimd.pid` is the daemon PID file
+- `config.toml` is the configuration
+- `workspaces/<name>/` holds the git worktrees from `grim workspace create`
 
 ## MSRV
 
-The minimum supported Rust version is **1.95**, pinned in `rust-toolchain.toml` and verified by a dedicated CI job. Bumping the MSRV is a minor-version release.
+The minimum supported Rust version is **1.95**, pinned in `rust-toolchain.toml` and checked by a dedicated CI job. Bumping the MSRV is a minor-version release.
 
 ## Status
 
-The user-facing feature surface (summon, scrolls, pacts, mail, wake triggers, workspaces, memory, supervision, workers, federation, outbound notifications) is complete. The **trust layer** has its first piece — auth + protocol versioning on UDS, HTTP, peers, and workers (see [Auth](#auth) above).
+The user-facing feature surface is complete: summon, scrolls, pacts, mail, wake triggers, workspaces, memory, supervision, workers, federation, and outbound notifications. The trust layer has its first piece, with auth and protocol versioning on UDS, HTTP, peers, and workers (see [Auth](#auth)).
 
-Current focus is making what exists *legible and useful* rather than adding surface: outbound notifications and the `grim demo` standing-agent flow have shipped; next is federated shared memory (the org-wide "shared context" piece — only mail/topics federate today). Still open: observability (Prometheus + OTel), sandboxing (cwd jail + cgroups), policy/budget primitives, and replay/eval. See [`ROADMAP.md`](./ROADMAP.md) Part 6 for the ordering and rationale.
+Right now the focus is making what's already here legible and useful rather than piling on more surface. Outbound notifications and the `grim demo` standing-agent flow have shipped. Next up is federated shared memory, which is the org-wide shared-context piece (today only mail and topics federate). Still open after that: observability (Prometheus and OTel), sandboxing (cwd jail and cgroups), policy and budget primitives, and replay/eval.
 
 ## License
 
