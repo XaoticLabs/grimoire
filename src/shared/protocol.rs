@@ -55,6 +55,15 @@ impl RpcResponse {
         }
     }
 
+    /// Build a success response from any serializable payload. Panics only if
+    /// serialization fails, which for the plain `derive(Serialize)` result
+    /// structs used here is a programmer error, not a runtime condition.
+    pub fn success_json<T: Serialize>(id: u64, value: &T) -> Self {
+        let result = serde_json::to_value(value)
+            .expect("RPC result payloads are plain derive(Serialize) structs");
+        Self::success(id, result)
+    }
+
     pub const fn error(id: u64, code: i32, message: String) -> Self {
         Self {
             id,
@@ -877,7 +886,6 @@ mod tests {
 
     #[test]
     fn agent_id_extraction() {
-        // Output event
         let event = StreamEvent::Output {
             agent_id: "abc".to_string(),
             stream: "stdout".to_string(),
@@ -885,7 +893,6 @@ mod tests {
         };
         assert_eq!(event.agent_id(), Some("abc"));
 
-        // StateChange event
         let event = StreamEvent::StateChange {
             agent_id: "xyz".to_string(),
             old_state: AgentState::Active,
@@ -917,7 +924,6 @@ mod tests {
             Some("test1234")
         );
 
-        // AgentEvent event
         let event = StreamEvent::AgentEvent {
             event: AgentEvent {
                 id: None,

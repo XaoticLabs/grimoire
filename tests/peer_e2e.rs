@@ -68,12 +68,7 @@ async fn handshake_and_invalid_token_rejected() {
     let url = format!("http://{}", b.addr);
     let result = a
         .registry
-        .register_peer(
-            "b".to_string(),
-            url,
-            "abcdefabcdefabcdef0000000000000000000000".to_string(),
-            2,
-        )
+        .register_peer("b", &url, "abcdefabcdefabcdef0000000000000000000000", 2)
         .await;
     assert!(
         result.is_err(),
@@ -105,10 +100,7 @@ async fn registered_token_handshake_succeeds() {
     b.db.insert_peer(&peer).unwrap();
 
     let url = format!("http://{}", b.addr);
-    let result = a
-        .registry
-        .register_peer("b".to_string(), url, token, 5)
-        .await;
+    let result = a.registry.register_peer("b", &url, &token, 5).await;
     assert!(
         result.is_ok(),
         "handshake should succeed: {:?}",

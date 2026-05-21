@@ -42,7 +42,6 @@ pub async fn run(id: Option<String>, activate: bool, abandon: bool) -> Result<()
             print_scroll_status(&status);
         }
     } else {
-        // List all scrolls
         let response = client.call("scroll.list", serde_json::json!({})).await?;
         if let Some(error) = response.error {
             eprintln!("{} {}", "Error:".red(), error.message);

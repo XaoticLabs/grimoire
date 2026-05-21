@@ -4,11 +4,9 @@ use colored::Colorize;
 use crate::cli::client::DaemonClient;
 use crate::shared::protocol::ScrollInscribeResult;
 
-pub async fn run(spec: String, concurrency: u32, activate: bool) -> Result<()> {
-    // Resolve to absolute path
-    let spec_path = std::fs::canonicalize(&spec)
-        .map(|p| p.to_string_lossy().to_string())
-        .unwrap_or(spec);
+pub async fn run(spec: &str, concurrency: u32, activate: bool) -> Result<()> {
+    let spec_path = std::fs::canonicalize(spec)
+        .map_or_else(|_| spec.to_string(), |p| p.to_string_lossy().to_string());
 
     let mut client = DaemonClient::connect().await?;
 

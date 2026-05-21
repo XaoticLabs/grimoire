@@ -24,9 +24,9 @@ const REGISTRY_SETTLE_YIELD: Duration = Duration::from_millis(50);
 pub type RoutingMap = Arc<Mutex<std::collections::HashMap<String, mpsc::Sender<WorkerMessage>>>>;
 
 pub struct WorkerControlService {
-    pub registry: Arc<WorkerRegistry>,
-    pub bearer_secret: String,
-    pub routing: RoutingMap,
+    registry: Arc<WorkerRegistry>,
+    bearer_secret: String,
+    routing: RoutingMap,
 }
 
 #[tonic::async_trait]

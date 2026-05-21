@@ -19,7 +19,6 @@ pub async fn run(key: Option<String>, value: Option<String>) -> Result<()> {
             let toml = toml::to_string_pretty(&config)?;
             println!("{toml}");
         }
-        // Key + value: set a config value
         (Some(key), Some(value)) => {
             let mut config = Config::load()?;
 

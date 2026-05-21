@@ -143,10 +143,8 @@ impl ScrollKeeper {
             }
         }
 
-        // Validate: no cycles
         self.validate_dag(&scroll_id)?;
 
-        // Detect file conflicts
         let conflicts = Self::detect_all_conflicts(&tasks);
 
         info!(scroll_id = %scroll_id, name = %spec.name, tasks = tasks.len(), "Scroll inscribed");

@@ -403,7 +403,9 @@ pub fn validate_workspace_id(s: &str) -> Result<(), NameError> {
         return Err(NameError::TooLong);
     }
     let mut chars = s.chars();
-    let first = chars.next().unwrap();
+    let Some(first) = chars.next() else {
+        return Err(NameError::Empty);
+    };
     if !first.is_ascii_alphanumeric() {
         return Err(NameError::LeadingNonAlphanumeric);
     }

@@ -4,7 +4,7 @@ use colored::Colorize;
 use crate::cli::client::DaemonClient;
 use crate::shared::protocol::BanishResult;
 
-pub async fn run(id: String) -> Result<()> {
+pub async fn run(id: &str) -> Result<()> {
     let mut client = DaemonClient::connect().await?;
 
     let params = serde_json::json!({ "id": id });

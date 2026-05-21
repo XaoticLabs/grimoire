@@ -50,22 +50,22 @@ pub async fn run(cmd: WakeCommand) -> Result<()> {
             ignore,
             on_parent,
             states,
-        } => run_add(agent_id, cron, watch, ignore, on_parent, states).await,
+        } => run_add(&agent_id, cron, watch, ignore, on_parent, states).await,
         WakeCommand::List { agent_id } => run_list(agent_id).await,
-        WakeCommand::Remove { wake_id } => run_remove(wake_id).await,
-        WakeCommand::Test { wake_id } => run_test(wake_id).await,
+        WakeCommand::Remove { wake_id } => run_remove(&wake_id).await,
+        WakeCommand::Test { wake_id } => run_test(&wake_id).await,
     }
 }
 
 async fn run_add(
-    agent_prefix: String,
+    agent_prefix: &str,
     cron: Option<String>,
     watch: Vec<String>,
     ignore: Vec<String>,
     on_parent: Option<String>,
     states: Option<String>,
 ) -> Result<()> {
-    let agent_id = resolve_agent_id(&agent_prefix).await?;
+    let agent_id = resolve_agent_id(agent_prefix).await?;
     let mut client = DaemonClient::connect().await?;
 
     let (kind, config) = if let Some(expr) = cron {
@@ -177,7 +177,7 @@ async fn run_list(agent_prefix: Option<String>) -> Result<()> {
     Ok(())
 }
 
-async fn run_remove(wake_id: String) -> Result<()> {
+async fn run_remove(wake_id: &str) -> Result<()> {
     let mut client = DaemonClient::connect().await?;
     let response = client
         .call("wake.remove", serde_json::json!({ "wake_id": wake_id }))
@@ -190,7 +190,7 @@ async fn run_remove(wake_id: String) -> Result<()> {
     Ok(())
 }
 
-async fn run_test(wake_id: String) -> Result<()> {
+async fn run_test(wake_id: &str) -> Result<()> {
     let mut client = DaemonClient::connect().await?;
     let response = client
         .call("wake.test", serde_json::json!({ "wake_id": wake_id }))

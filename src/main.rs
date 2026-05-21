@@ -215,8 +215,9 @@ async fn main() {
         Commands::Daemon => {
             tracing_subscriber::fmt()
                 .with_env_filter(
-                    tracing_subscriber::EnvFilter::try_from_default_env()
-                        .unwrap_or_else(|_| "grimoire=info".parse().unwrap()),
+                    tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| {
+                        "grimoire=info".parse().expect("valid static env filter")
+                    }),
                 )
                 .init();
 
@@ -255,12 +256,12 @@ async fn main() {
                     workspace,
                 } => {
                     cli::commands::summon::run(
-                        task,
+                        &task,
                         name,
                         model,
                         provider,
                         keep_alive,
-                        restart,
+                        &restart,
                         max_restarts,
                         escalate_to,
                         workspace,
@@ -270,15 +271,15 @@ async fn main() {
                 Commands::Circle { state } => cli::commands::circle::run(state).await,
                 Commands::Bind { id, tail } => {
                     let id = resolve_id(&id).await;
-                    cli::commands::bind::run(id, tail).await
+                    cli::commands::bind::run(&id, tail).await
                 }
                 Commands::Banish { id } => {
                     let id = resolve_id(&id).await;
-                    cli::commands::banish::run(id).await
+                    cli::commands::banish::run(&id).await
                 }
                 Commands::Invoke { id, message } => {
                     let id = resolve_id(&id).await;
-                    cli::commands::invoke::run(id, message).await
+                    cli::commands::invoke::run(&id, &message).await
                 }
                 Commands::Pact {
                     source_id,
@@ -296,7 +297,7 @@ async fn main() {
                     spec,
                     concurrency,
                     activate,
-                } => cli::commands::inscribe::run(spec, concurrency, activate).await,
+                } => cli::commands::inscribe::run(&spec, concurrency, activate).await,
                 Commands::Scroll {
                     id,
                     activate,

@@ -431,6 +431,41 @@ impl Database {
         Ok(())
     }
 
+    fn exec(&self, sql: &str, params: impl rusqlite::Params) -> Result<usize> {
+        Ok(self.conn.lock().execute(sql, params)?)
+    }
+
+    fn query_opt<T>(
+        &self,
+        sql: &str,
+        params: impl rusqlite::Params,
+        map: impl FnOnce(&rusqlite::Row) -> Result<T>,
+    ) -> Result<Option<T>> {
+        let conn = self.conn.lock();
+        let mut stmt = conn.prepare(sql)?;
+        let mut rows = stmt.query(params)?;
+        match rows.next()? {
+            Some(row) => Ok(Some(map(row)?)),
+            None => Ok(None),
+        }
+    }
+
+    fn query_vec<T>(
+        &self,
+        sql: &str,
+        params: impl rusqlite::Params,
+        mut map: impl FnMut(&rusqlite::Row) -> Result<T>,
+    ) -> Result<Vec<T>> {
+        let conn = self.conn.lock();
+        let mut stmt = conn.prepare(sql)?;
+        let mut rows = stmt.query(params)?;
+        let mut out = Vec::new();
+        while let Some(row) = rows.next()? {
+            out.push(map(row)?);
+        }
+        Ok(out)
+    }
+
     /// Append a stream event to the durable log. Returns the new row's id.
     /// Computes `seq` per (agent_id) when present, else per (scroll_id), else 0.
     pub fn append_event(&self, event: &StreamEvent) -> Result<i64> {
@@ -470,8 +505,7 @@ impl Database {
     }
 
     pub fn insert_agent(&self, agent: &Agent) -> Result<()> {
-        let conn = self.conn.lock();
-        conn.execute(
+        self.exec(
             "INSERT INTO agents (id, name, state, task, model, provider, cwd, pid, session_id, exit_code, created_at, updated_at, worker_id)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
             params![
@@ -499,9 +533,8 @@ impl Database {
         state: &AgentState,
         exit_code: Option<i32>,
     ) -> Result<()> {
-        let conn = self.conn.lock();
         let now = Utc::now().to_rfc3339();
-        conn.execute(
+        self.exec(
             "UPDATE agents SET state = ?1, exit_code = ?2, updated_at = ?3 WHERE id = ?4",
             params![state.as_str(), exit_code, now, id],
         )?;
@@ -509,9 +542,8 @@ impl Database {
     }
 
     pub fn update_agent_session_id(&self, id: &str, session_id: &str) -> Result<()> {
-        let conn = self.conn.lock();
         let now = Utc::now().to_rfc3339();
-        conn.execute(
+        self.exec(
             "UPDATE agents SET session_id = ?1, updated_at = ?2 WHERE id = ?3",
             params![session_id, now, id],
         )?;
@@ -519,9 +551,8 @@ impl Database {
     }
 
     pub fn update_agent_worker_id(&self, id: &str, worker_id: Option<&str>) -> Result<()> {
-        let conn = self.conn.lock();
         let now = Utc::now().to_rfc3339();
-        conn.execute(
+        self.exec(
             "UPDATE agents SET worker_id = ?1, updated_at = ?2 WHERE id = ?3",
             params![worker_id, now, id],
         )?;
@@ -529,9 +560,8 @@ impl Database {
     }
 
     pub fn update_agent_pid(&self, id: &str, pid: u32) -> Result<()> {
-        let conn = self.conn.lock();
         let now = Utc::now().to_rfc3339();
-        conn.execute(
+        self.exec(
             "UPDATE agents SET pid = ?1, updated_at = ?2 WHERE id = ?3",
             params![pid, now, id],
         )?;
@@ -539,36 +569,29 @@ impl Database {
     }
 
     pub fn get_agent(&self, id: &str) -> Result<Option<Agent>> {
-        let conn = self.conn.lock();
-        let mut stmt = conn.prepare(
+        self.query_opt(
             "SELECT id, name, state, task, model, provider, cwd, pid, session_id, exit_code, created_at, updated_at, worker_id, restart_policy, restart_count, workspace_id
              FROM agents WHERE id = ?1",
-        )?;
-        let mut rows = stmt.query(params![id])?;
-        match rows.next()? {
-            Some(row) => Ok(Some(row_to_agent(row)?)),
-            None => Ok(None),
-        }
+            params![id],
+            row_to_agent,
+        )
     }
 
     pub fn list_agents(&self, state_filter: Option<&str>) -> Result<Vec<Agent>> {
-        let conn = self.conn.lock();
-        let query = match state_filter {
-            Some(_) => "SELECT id, name, state, task, model, provider, cwd, pid, session_id, exit_code, created_at, updated_at, worker_id, restart_policy, restart_count, workspace_id
-                        FROM agents WHERE state = ?1 ORDER BY created_at DESC",
-            None => "SELECT id, name, state, task, model, provider, cwd, pid, session_id, exit_code, created_at, updated_at, worker_id, restart_policy, restart_count, workspace_id
-                     FROM agents ORDER BY created_at DESC",
-        };
-        let mut stmt = conn.prepare(query)?;
-        let mut rows = match state_filter {
-            Some(state) => stmt.query(params![state])?,
-            None => stmt.query([])?,
-        };
-        let mut agents = Vec::new();
-        while let Some(row) = rows.next()? {
-            agents.push(row_to_agent(row)?);
+        match state_filter {
+            Some(state) => self.query_vec(
+                "SELECT id, name, state, task, model, provider, cwd, pid, session_id, exit_code, created_at, updated_at, worker_id, restart_policy, restart_count, workspace_id
+                 FROM agents WHERE state = ?1 ORDER BY created_at DESC",
+                params![state],
+                row_to_agent,
+            ),
+            None => self.query_vec(
+                "SELECT id, name, state, task, model, provider, cwd, pid, session_id, exit_code, created_at, updated_at, worker_id, restart_policy, restart_count, workspace_id
+                 FROM agents ORDER BY created_at DESC",
+                [],
+                row_to_agent,
+            ),
         }
-        Ok(agents)
     }
 
     pub fn insert_event(&self, event: &AgentEvent) -> Result<i64> {
@@ -609,8 +632,7 @@ impl Database {
                 agent_id: row.get(1)?,
                 event_type: row.get(2)?,
                 payload: row.get(3)?,
-                created_at: chrono::DateTime::parse_from_rfc3339(&row.get::<_, String>(4)?)
-                    .unwrap()
+                created_at: chrono::DateTime::parse_from_rfc3339(&row.get::<_, String>(4)?)?
                     .with_timezone(&chrono::Utc),
             });
         }
@@ -628,11 +650,8 @@ impl Database {
         Ok(())
     }
 
-    // --- Pact methods ---
-
     pub fn insert_pact(&self, pact: &Pact) -> Result<()> {
-        let conn = self.conn.lock();
-        conn.execute(
+        self.exec(
             "INSERT INTO pacts (id, source_id, task_tpl, name, state, created_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
             params![
@@ -648,48 +667,34 @@ impl Database {
     }
 
     pub fn list_pacts(&self, source_id: Option<&str>) -> Result<Vec<Pact>> {
-        let conn = self.conn.lock();
-        let mut pacts = Vec::new();
-        if let Some(sid) = source_id {
-            let mut stmt = conn.prepare(
+        match source_id {
+            Some(sid) => self.query_vec(
                 "SELECT id, source_id, task_tpl, name, state, target_id, created_at, fired_at
                  FROM pacts WHERE source_id = ?1 ORDER BY created_at DESC",
-            )?;
-            let mut rows = stmt.query(params![sid])?;
-            while let Some(row) = rows.next()? {
-                pacts.push(row_to_pact(row)?);
-            }
-        } else {
-            let mut stmt = conn.prepare(
+                params![sid],
+                row_to_pact,
+            ),
+            None => self.query_vec(
                 "SELECT id, source_id, task_tpl, name, state, target_id, created_at, fired_at
                  FROM pacts ORDER BY created_at DESC",
-            )?;
-            let mut rows = stmt.query([])?;
-            while let Some(row) = rows.next()? {
-                pacts.push(row_to_pact(row)?);
-            }
+                [],
+                row_to_pact,
+            ),
         }
-        Ok(pacts)
     }
 
     pub fn get_pending_pacts_for_agent(&self, agent_id: &str) -> Result<Vec<Pact>> {
-        let conn = self.conn.lock();
-        let mut stmt = conn.prepare(
+        self.query_vec(
             "SELECT id, source_id, task_tpl, name, state, target_id, created_at, fired_at
              FROM pacts WHERE source_id = ?1 AND state = 'pending'",
-        )?;
-        let mut rows = stmt.query(params![agent_id])?;
-        let mut pacts = Vec::new();
-        while let Some(row) = rows.next()? {
-            pacts.push(row_to_pact(row)?);
-        }
-        Ok(pacts)
+            params![agent_id],
+            row_to_pact,
+        )
     }
 
     pub fn update_pact_fired(&self, id: &str, target_id: &str) -> Result<()> {
-        let conn = self.conn.lock();
         let now = Utc::now().to_rfc3339();
-        conn.execute(
+        self.exec(
             "UPDATE pacts SET state = 'fired', target_id = ?1, fired_at = ?2 WHERE id = ?3",
             params![target_id, now, id],
         )?;
@@ -697,9 +702,8 @@ impl Database {
     }
 
     pub fn update_pact_failed(&self, id: &str) -> Result<()> {
-        let conn = self.conn.lock();
         let now = Utc::now().to_rfc3339();
-        conn.execute(
+        self.exec(
             "UPDATE pacts SET state = 'failed', fired_at = ?1 WHERE id = ?2",
             params![now, id],
         )?;
@@ -727,11 +731,8 @@ impl Database {
         Ok(None)
     }
 
-    // --- Scroll methods ---
-
     pub fn insert_scroll(&self, scroll: &Scroll) -> Result<()> {
-        let conn = self.conn.lock();
-        conn.execute(
+        self.exec(
             "INSERT INTO scrolls (id, name, state, source_path, max_concurrency, created_at, updated_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
             params![
@@ -748,48 +749,35 @@ impl Database {
     }
 
     pub fn get_scroll(&self, id: &str) -> Result<Option<Scroll>> {
-        let conn = self.conn.lock();
-        let mut stmt = conn.prepare(
+        self.query_opt(
             "SELECT id, name, state, source_path, max_concurrency, created_at, updated_at
              FROM scrolls WHERE id = ?1",
-        )?;
-        let mut rows = stmt.query(params![id])?;
-        match rows.next()? {
-            Some(row) => Ok(Some(row_to_scroll(row)?)),
-            None => Ok(None),
-        }
+            params![id],
+            row_to_scroll,
+        )
     }
 
     pub fn list_scrolls(&self) -> Result<Vec<Scroll>> {
-        let conn = self.conn.lock();
-        let mut stmt = conn.prepare(
+        self.query_vec(
             "SELECT id, name, state, source_path, max_concurrency, created_at, updated_at
              FROM scrolls ORDER BY created_at DESC",
-        )?;
-        let mut rows = stmt.query([])?;
-        let mut scrolls = Vec::new();
-        while let Some(row) = rows.next()? {
-            scrolls.push(row_to_scroll(row)?);
-        }
-        Ok(scrolls)
+            [],
+            row_to_scroll,
+        )
     }
 
     pub fn update_scroll_state(&self, id: &str, state: &ScrollState) -> Result<()> {
-        let conn = self.conn.lock();
         let now = Utc::now().to_rfc3339();
-        conn.execute(
+        self.exec(
             "UPDATE scrolls SET state = ?1, updated_at = ?2 WHERE id = ?3",
             params![state.as_str(), now, id],
         )?;
         Ok(())
     }
 
-    // --- Task methods ---
-
     pub fn insert_task(&self, task: &Task) -> Result<()> {
-        let conn = self.conn.lock();
         let file_patterns_json = serde_json::to_string(&task.file_patterns)?;
-        conn.execute(
+        self.exec(
             "INSERT INTO tasks (id, scroll_id, name, prompt, state, agent_id, provider, model, cwd, file_patterns, order_index, created_at, updated_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
             params![
@@ -812,8 +800,7 @@ impl Database {
     }
 
     pub fn insert_task_dependency(&self, task_id: &str, depends_on_id: &str) -> Result<()> {
-        let conn = self.conn.lock();
-        conn.execute(
+        self.exec(
             "INSERT INTO task_dependencies (task_id, depends_on_id) VALUES (?1, ?2)",
             params![task_id, depends_on_id],
         )?;
@@ -821,36 +808,26 @@ impl Database {
     }
 
     pub fn get_tasks_for_scroll(&self, scroll_id: &str) -> Result<Vec<Task>> {
-        let conn = self.conn.lock();
-        let mut stmt = conn.prepare(
+        self.query_vec(
             "SELECT id, scroll_id, name, prompt, state, agent_id, provider, model, cwd, file_patterns, order_index, created_at, updated_at
              FROM tasks WHERE scroll_id = ?1 ORDER BY order_index ASC",
-        )?;
-        let mut rows = stmt.query(params![scroll_id])?;
-        let mut tasks = Vec::new();
-        while let Some(row) = rows.next()? {
-            tasks.push(row_to_task(row)?);
-        }
-        Ok(tasks)
+            params![scroll_id],
+            row_to_task,
+        )
     }
 
     pub fn get_task_by_agent_id(&self, agent_id: &str) -> Result<Option<Task>> {
-        let conn = self.conn.lock();
-        let mut stmt = conn.prepare(
+        self.query_opt(
             "SELECT id, scroll_id, name, prompt, state, agent_id, provider, model, cwd, file_patterns, order_index, created_at, updated_at
              FROM tasks WHERE agent_id = ?1",
-        )?;
-        let mut rows = stmt.query(params![agent_id])?;
-        match rows.next()? {
-            Some(row) => Ok(Some(row_to_task(row)?)),
-            None => Ok(None),
-        }
+            params![agent_id],
+            row_to_task,
+        )
     }
 
     pub fn update_task_state(&self, id: &str, state: &TaskState) -> Result<()> {
-        let conn = self.conn.lock();
         let now = Utc::now().to_rfc3339();
-        conn.execute(
+        self.exec(
             "UPDATE tasks SET state = ?1, updated_at = ?2 WHERE id = ?3",
             params![state.as_str(), now, id],
         )?;
@@ -858,46 +835,32 @@ impl Database {
     }
 
     pub fn update_task_agent(&self, task_id: &str, agent_id: &str) -> Result<()> {
-        let conn = self.conn.lock();
         let now = Utc::now().to_rfc3339();
-        conn.execute(
+        self.exec(
             "UPDATE tasks SET agent_id = ?1, state = 'active', updated_at = ?2 WHERE id = ?3",
             params![agent_id, now, task_id],
         )?;
         Ok(())
     }
 
-    /// Get task IDs that a task depends on
     pub fn get_task_dependencies(&self, task_id: &str) -> Result<Vec<TaskId>> {
-        let conn = self.conn.lock();
-        let mut stmt =
-            conn.prepare("SELECT depends_on_id FROM task_dependencies WHERE task_id = ?1")?;
-        let mut rows = stmt.query(params![task_id])?;
-        let mut deps = Vec::new();
-        while let Some(row) = rows.next()? {
-            deps.push(row.get(0)?);
-        }
-        Ok(deps)
+        self.query_vec(
+            "SELECT depends_on_id FROM task_dependencies WHERE task_id = ?1",
+            params![task_id],
+            |row| Ok(row.get(0)?),
+        )
     }
 
-    /// Get task IDs that depend on a given task (downstream)
     pub fn get_task_dependents(&self, task_id: &str) -> Result<Vec<TaskId>> {
-        let conn = self.conn.lock();
-        let mut stmt =
-            conn.prepare("SELECT task_id FROM task_dependencies WHERE depends_on_id = ?1")?;
-        let mut rows = stmt.query(params![task_id])?;
-        let mut deps = Vec::new();
-        while let Some(row) = rows.next()? {
-            deps.push(row.get(0)?);
-        }
-        Ok(deps)
+        self.query_vec(
+            "SELECT task_id FROM task_dependencies WHERE depends_on_id = ?1",
+            params![task_id],
+            |row| Ok(row.get(0)?),
+        )
     }
 
-    /// Find blocked tasks in a scroll where all dependencies are complete
     pub fn find_ready_tasks(&self, scroll_id: &str) -> Result<Vec<Task>> {
-        let conn = self.conn.lock();
-        // Find tasks that are blocked and have all dependencies in 'complete' state
-        let mut stmt = conn.prepare(
+        self.query_vec(
             "SELECT r.id, r.scroll_id, r.name, r.prompt, r.state, r.agent_id, r.provider, r.model, r.cwd, r.file_patterns, r.order_index, r.created_at, r.updated_at
              FROM tasks r
              WHERE r.scroll_id = ?1 AND r.state = 'blocked'
@@ -906,13 +869,9 @@ impl Database {
                  JOIN tasks dep ON dep.id = rd.depends_on_id
                  WHERE rd.task_id = r.id AND dep.state != 'complete'
              )",
-        )?;
-        let mut rows = stmt.query(params![scroll_id])?;
-        let mut tasks = Vec::new();
-        while let Some(row) = rows.next()? {
-            tasks.push(row_to_task(row)?);
-        }
-        Ok(tasks)
+            params![scroll_id],
+            row_to_task,
+        )
     }
 
     /// Count active tasks in a scroll
@@ -926,13 +885,10 @@ impl Database {
         Ok(count as usize)
     }
 
-    // --- task_queue methods ---
-
     /// Insert a new row into `task_queue`. The corresponding `agents` row must
     /// already exist (foreign-key constraint).
     pub fn enqueue_task(&self, row: &QueueRow) -> Result<()> {
-        let conn = self.conn.lock();
-        conn.execute(
+        self.exec(
             "INSERT INTO task_queue
                 (id, lane, priority, enqueued_at, provider_name, cwd, model, task_text, block_reason)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
@@ -954,54 +910,40 @@ impl Database {
     /// List every queued row in dispatch order (ad-hoc lane first, then by
     /// priority DESC, then FIFO by `enqueued_at`, then by id).
     pub fn list_queue(&self) -> Result<Vec<QueueRow>> {
-        let conn = self.conn.lock();
-        let mut stmt = conn.prepare(
+        self.query_vec(
             "SELECT id, lane, priority, enqueued_at, provider_name, cwd, model, task_text, block_reason
              FROM task_queue
              ORDER BY CASE lane WHEN 'adhoc' THEN 0 ELSE 1 END,
                       priority DESC, enqueued_at ASC, id ASC",
-        )?;
-        let mut rows = stmt.query([])?;
-        let mut out = Vec::new();
-        while let Some(row) = rows.next()? {
-            out.push(row_to_queue_row(row)?);
-        }
-        Ok(out)
+            [],
+            row_to_queue_row,
+        )
     }
 
     /// List queued rows restricted to a single lane, in dispatch order.
     pub fn list_queue_by_lane(&self, lane: &str) -> Result<Vec<QueueRow>> {
-        let conn = self.conn.lock();
-        let mut stmt = conn.prepare(
+        self.query_vec(
             "SELECT id, lane, priority, enqueued_at, provider_name, cwd, model, task_text, block_reason
              FROM task_queue
              WHERE lane = ?1
              ORDER BY priority DESC, enqueued_at ASC, id ASC",
-        )?;
-        let mut rows = stmt.query(params![lane])?;
-        let mut out = Vec::new();
-        while let Some(row) = rows.next()? {
-            out.push(row_to_queue_row(row)?);
-        }
-        Ok(out)
+            params![lane],
+            row_to_queue_row,
+        )
     }
 
     /// Return the next row that should be dispatched, honoring lane order
     /// (ad-hoc first), then priority, then FIFO. Does not mutate state.
     pub fn peek_next_dispatch(&self) -> Result<Option<QueueRow>> {
-        let conn = self.conn.lock();
-        let mut stmt = conn.prepare(
+        self.query_opt(
             "SELECT id, lane, priority, enqueued_at, provider_name, cwd, model, task_text, block_reason
              FROM task_queue
              ORDER BY CASE lane WHEN 'adhoc' THEN 0 ELSE 1 END,
                       priority DESC, enqueued_at ASC, id ASC
              LIMIT 1",
-        )?;
-        let mut rows = stmt.query([])?;
-        match rows.next()? {
-            Some(row) => Ok(Some(row_to_queue_row(row)?)),
-            None => Ok(None),
-        }
+            [],
+            row_to_queue_row,
+        )
     }
 
     /// Atomically remove the queue row for `id` and flip the matching agent
@@ -1066,8 +1008,7 @@ impl Database {
 
     /// Update or clear the `block_reason` for a queued row.
     pub fn set_block_reason(&self, id: &AgentId, reason: Option<&str>) -> Result<()> {
-        let conn = self.conn.lock();
-        conn.execute(
+        self.exec(
             "UPDATE task_queue SET block_reason = ?1 WHERE id = ?2",
             params![reason, id],
         )?;
@@ -1119,11 +1060,8 @@ impl Database {
         })
     }
 
-    // --- Wake source methods ---
-
     pub fn insert_wake_source(&self, src: &WakeSource) -> Result<()> {
-        let conn = self.conn.lock();
-        conn.execute(
+        self.exec(
             "INSERT INTO wake_sources \
                 (id, agent_id, kind, config_json, state, fail_reason, last_fired_at, fire_count, created_at) \
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
@@ -1143,73 +1081,50 @@ impl Database {
     }
 
     pub fn get_wake_source(&self, id: &str) -> Result<Option<WakeSource>> {
-        let conn = self.conn.lock();
-        let mut stmt = conn.prepare(
+        self.query_opt(
             "SELECT id, agent_id, kind, config_json, state, fail_reason, last_fired_at, fire_count, created_at \
              FROM wake_sources WHERE id = ?1",
-        )?;
-        let mut rows = stmt.query(params![id])?;
-        match rows.next()? {
-            Some(row) => Ok(Some(row_to_wake_source(row)?)),
-            None => Ok(None),
-        }
+            params![id],
+            row_to_wake_source,
+        )
     }
 
     pub fn list_wake_sources_for_agent(&self, agent_id: &str) -> Result<Vec<WakeSource>> {
-        let conn = self.conn.lock();
-        let mut stmt = conn.prepare(
+        self.query_vec(
             "SELECT id, agent_id, kind, config_json, state, fail_reason, last_fired_at, fire_count, created_at \
              FROM wake_sources WHERE agent_id = ?1 ORDER BY created_at DESC, id ASC",
-        )?;
-        let mut rows = stmt.query(params![agent_id])?;
-        let mut out = Vec::new();
-        while let Some(row) = rows.next()? {
-            out.push(row_to_wake_source(row)?);
-        }
-        Ok(out)
+            params![agent_id],
+            row_to_wake_source,
+        )
     }
 
     pub fn list_all_wake_sources(&self) -> Result<Vec<WakeSource>> {
-        let conn = self.conn.lock();
-        let mut stmt = conn.prepare(
+        self.query_vec(
             "SELECT id, agent_id, kind, config_json, state, fail_reason, last_fired_at, fire_count, created_at \
              FROM wake_sources ORDER BY created_at DESC, agent_id ASC, id ASC",
-        )?;
-        let mut rows = stmt.query([])?;
-        let mut out = Vec::new();
-        while let Some(row) = rows.next()? {
-            out.push(row_to_wake_source(row)?);
-        }
-        Ok(out)
+            [],
+            row_to_wake_source,
+        )
     }
 
     pub fn list_armed_wake_sources(&self) -> Result<Vec<WakeSource>> {
-        let conn = self.conn.lock();
-        let mut stmt = conn.prepare(
+        self.query_vec(
             "SELECT id, agent_id, kind, config_json, state, fail_reason, last_fired_at, fire_count, created_at \
              FROM wake_sources WHERE state = 'armed' ORDER BY created_at ASC",
-        )?;
-        let mut rows = stmt.query([])?;
-        let mut out = Vec::new();
-        while let Some(row) = rows.next()? {
-            out.push(row_to_wake_source(row)?);
-        }
-        Ok(out)
+            [],
+            row_to_wake_source,
+        )
     }
 
     pub fn delete_wake_source(&self, id: &str) -> Result<bool> {
-        let conn = self.conn.lock();
-        let n = conn.execute("DELETE FROM wake_sources WHERE id = ?1", params![id])?;
-        Ok(n > 0)
+        Ok(self.exec("DELETE FROM wake_sources WHERE id = ?1", params![id])? > 0)
     }
 
     pub fn delete_wake_sources_for_agent(&self, agent_id: &str) -> Result<usize> {
-        let conn = self.conn.lock();
-        let n = conn.execute(
+        self.exec(
             "DELETE FROM wake_sources WHERE agent_id = ?1",
             params![agent_id],
-        )?;
-        Ok(n)
+        )
     }
 
     pub fn update_wake_source_state(
@@ -1218,18 +1133,15 @@ impl Database {
         state: WakeSourceState,
         fail_reason: Option<&str>,
     ) -> Result<()> {
-        let conn = self.conn.lock();
-        conn.execute(
+        self.exec(
             "UPDATE wake_sources SET state = ?1, fail_reason = ?2 WHERE id = ?3",
             params![state.as_str(), fail_reason, id],
         )?;
         Ok(())
     }
 
-    /// Increment `fire_count` and set `last_fired_at`.
     pub fn bump_wake_source_fire(&self, id: &str, last_fired_at: i64) -> Result<()> {
-        let conn = self.conn.lock();
-        conn.execute(
+        self.exec(
             "UPDATE wake_sources \
              SET fire_count = fire_count + 1, last_fired_at = ?1 \
              WHERE id = ?2",
@@ -1275,8 +1187,7 @@ impl Database {
         tokens: f64,
         last_refill_at: i64,
     ) -> Result<()> {
-        let conn = self.conn.lock();
-        conn.execute(
+        self.exec(
             "UPDATE wake_rate_limits SET tokens = ?1, last_refill_at = ?2 WHERE agent_id = ?3",
             params![tokens, last_refill_at, agent_id],
         )?;
@@ -1315,8 +1226,6 @@ impl Database {
         Ok(())
     }
 
-    // --- keep_alive flag ---
-
     pub fn get_keep_alive(&self, agent_id: &str) -> Result<bool> {
         let conn = self.conn.lock();
         let v: i64 = conn.query_row(
@@ -1328,8 +1237,7 @@ impl Database {
     }
 
     pub fn set_keep_alive(&self, agent_id: &str, keep_alive: bool) -> Result<()> {
-        let conn = self.conn.lock();
-        conn.execute(
+        self.exec(
             "UPDATE agents SET keep_alive = ?1 WHERE id = ?2",
             params![i64::from(keep_alive), agent_id],
         )?;
@@ -1384,8 +1292,6 @@ impl Database {
         )?;
         Ok(n as usize)
     }
-
-    // --- Mail methods ---
 
     /// Insert a mail row, computing `seq` per `recipient_id` inside an
     /// IMMEDIATE transaction so concurrent inserts to the same recipient
@@ -1592,16 +1498,12 @@ impl Database {
     }
 
     pub fn get_mail(&self, id: &str) -> Result<Option<Mail>> {
-        let conn = self.conn.lock();
-        let mut stmt = conn.prepare(
+        self.query_opt(
             "SELECT id, recipient_id, sender_id, topic, body, in_reply_to, state, fail_reason, created_at, delivered_at, seq, wake_eligible \
              FROM mail WHERE id = ?1",
-        )?;
-        let mut rows = stmt.query(params![id])?;
-        match rows.next()? {
-            Some(row) => Ok(Some(row_to_mail(row)?)),
-            None => Ok(None),
-        }
+            params![id],
+            row_to_mail,
+        )
     }
 
     /// Find a mail row by short id prefix. Returns `Err` if multiple match,
@@ -1646,37 +1548,25 @@ impl Database {
     }
 
     pub fn list_pending_wake_eligible(&self, recipient_id: &str) -> Result<Vec<Mail>> {
-        let conn = self.conn.lock();
-        let mut stmt = conn.prepare(
+        self.query_vec(
             "SELECT id, recipient_id, sender_id, topic, body, in_reply_to, state, fail_reason, created_at, delivered_at, seq, wake_eligible \
              FROM mail WHERE recipient_id = ?1 AND state = 'Pending' AND wake_eligible = 1 ORDER BY seq ASC",
-        )?;
-        let mut rows = stmt.query(params![recipient_id])?;
-        let mut out = Vec::new();
-        while let Some(row) = rows.next()? {
-            out.push(row_to_mail(row)?);
-        }
-        Ok(out)
+            params![recipient_id],
+            row_to_mail,
+        )
     }
 
     /// Returns distinct recipient ids that have at least one Pending,
     /// wake-eligible mail row. Used by the scheduler's mail-wake branch.
     pub fn list_recipients_with_pending_wake_eligible_mail(&self) -> Result<Vec<AgentId>> {
-        let conn = self.conn.lock();
-        let mut stmt = conn.prepare(
+        self.query_vec(
             "SELECT recipient_id, MIN(seq) FROM mail \
              WHERE state = 'Pending' AND wake_eligible = 1 \
              GROUP BY recipient_id ORDER BY MIN(seq) ASC",
-        )?;
-        let mut rows = stmt.query([])?;
-        let mut out = Vec::new();
-        while let Some(row) = rows.next()? {
-            out.push(row.get(0)?);
-        }
-        Ok(out)
+            [],
+            |row| Ok(row.get(0)?),
+        )
     }
-
-    // --- Subscription methods ---
 
     /// Insert a subscription. On UNIQUE conflict (subscriber_id, topic),
     /// returns the existing subscription's id. Sets `sub.id` to whatever id
@@ -1704,67 +1594,35 @@ impl Database {
     }
 
     pub fn delete_subscription(&self, id: &str) -> Result<bool> {
-        let conn = self.conn.lock();
-        let n = conn.execute("DELETE FROM subscriptions WHERE id = ?1", params![id])?;
-        Ok(n > 0)
+        Ok(self.exec("DELETE FROM subscriptions WHERE id = ?1", params![id])? > 0)
     }
 
     pub fn list_subscribers_for_topic(&self, topic: &str) -> Result<Vec<Subscription>> {
-        let conn = self.conn.lock();
-        let mut stmt = conn.prepare(
+        self.query_vec(
             "SELECT id, subscriber_id, topic, created_at FROM subscriptions WHERE topic = ?1 ORDER BY created_at ASC, id ASC",
-        )?;
-        let mut rows = stmt.query(params![topic])?;
-        let mut out = Vec::new();
-        while let Some(row) = rows.next()? {
-            out.push(Subscription {
-                id: row.get(0)?,
-                subscriber_id: row.get(1)?,
-                topic: row.get(2)?,
-                created_at: row.get(3)?,
-            });
-        }
-        Ok(out)
+            params![topic],
+            row_to_subscription,
+        )
     }
 
     pub fn list_subscriptions_by_subscriber(&self, agent_id: &str) -> Result<Vec<Subscription>> {
-        let conn = self.conn.lock();
-        let mut stmt = conn.prepare(
+        self.query_vec(
             "SELECT id, subscriber_id, topic, created_at FROM subscriptions WHERE subscriber_id = ?1 ORDER BY topic ASC",
-        )?;
-        let mut rows = stmt.query(params![agent_id])?;
-        let mut out = Vec::new();
-        while let Some(row) = rows.next()? {
-            out.push(Subscription {
-                id: row.get(0)?,
-                subscriber_id: row.get(1)?,
-                topic: row.get(2)?,
-                created_at: row.get(3)?,
-            });
-        }
-        Ok(out)
+            params![agent_id],
+            row_to_subscription,
+        )
     }
 
     pub fn list_topics_with_counts(&self) -> Result<Vec<(String, u32)>> {
-        let conn = self.conn.lock();
-        let mut stmt = conn.prepare(
+        self.query_vec(
             "SELECT topic, COUNT(*) FROM subscriptions GROUP BY topic ORDER BY topic ASC",
-        )?;
-        let mut rows = stmt.query([])?;
-        let mut out = Vec::new();
-        while let Some(row) = rows.next()? {
-            let topic: String = row.get(0)?;
-            let n: i64 = row.get(1)?;
-            out.push((topic, n as u32));
-        }
-        Ok(out)
+            [],
+            |row| Ok((row.get(0)?, row.get::<_, i64>(1)? as u32)),
+        )
     }
 
-    // --- Supervision methods ---
-
     pub fn set_supervision(&self, agent_id: &str, cfg: &SupervisionConfig) -> Result<()> {
-        let conn = self.conn.lock();
-        conn.execute(
+        self.exec(
             "UPDATE agents SET restart_policy = ?1, max_restarts = ?2, \
              restart_window_secs = ?3, escalate_to = ?4 WHERE id = ?5",
             params![
@@ -1798,8 +1656,7 @@ impl Database {
     }
 
     pub fn clear_supervision(&self, agent_id: &str) -> Result<()> {
-        let conn = self.conn.lock();
-        conn.execute(
+        self.exec(
             "UPDATE agents SET restart_policy = 'never', max_restarts = NULL, \
              restart_window_secs = NULL, escalate_to = NULL WHERE id = ?1",
             params![agent_id],
@@ -1808,8 +1665,7 @@ impl Database {
     }
 
     pub fn bump_restart_count(&self, agent_id: &str) -> Result<()> {
-        let conn = self.conn.lock();
-        conn.execute(
+        self.exec(
             "UPDATE agents SET restart_count = restart_count + 1 WHERE id = ?1",
             params![agent_id],
         )?;
@@ -1829,8 +1685,7 @@ impl Database {
     }
 
     pub fn set_escalation_depth(&self, agent_id: &str, depth: u32) -> Result<()> {
-        let conn = self.conn.lock();
-        conn.execute(
+        self.exec(
             "UPDATE agents SET escalation_depth = ?1 WHERE id = ?2",
             params![i64::from(depth), agent_id],
         )?;
@@ -1872,15 +1727,13 @@ impl Database {
         agent_id: &str,
         new_outcome: RestartHistoryOutcome,
     ) -> Result<usize> {
-        let conn = self.conn.lock();
-        let n = conn.execute(
+        self.exec(
             "UPDATE restart_history SET outcome = ?1 \
              WHERE id = (SELECT id FROM restart_history \
                          WHERE agent_id = ?2 AND outcome = 'scheduled' \
                          ORDER BY attempted_at DESC, id DESC LIMIT 1)",
             params![new_outcome.as_str(), agent_id],
-        )?;
-        Ok(n)
+        )
     }
 
     /// Time of the most recent `restart_history` row for `agent_id`, or `None`.
@@ -1898,17 +1751,12 @@ impl Database {
     }
 
     pub fn list_failed_with_active_policy(&self) -> Result<Vec<AgentId>> {
-        let conn = self.conn.lock();
-        let mut stmt = conn.prepare(
+        self.query_vec(
             "SELECT id FROM agents \
              WHERE state = 'failed' AND restart_policy != 'never'",
-        )?;
-        let mut rows = stmt.query([])?;
-        let mut out = Vec::new();
-        while let Some(row) = rows.next()? {
-            out.push(row.get::<_, String>(0)?);
-        }
-        Ok(out)
+            [],
+            |row| Ok(row.get(0)?),
+        )
     }
 
     pub fn mark_torn_restarting_as_failed(&self) -> Result<Vec<AgentId>> {
@@ -1977,26 +1825,18 @@ impl Database {
         &self,
         scroll_id: &str,
     ) -> Result<Vec<(TaskId, TaskId)>> {
-        let conn = self.conn.lock();
-        let mut stmt = conn.prepare(
+        self.query_vec(
             "SELECT rd.task_id, rd.depends_on_id
              FROM task_dependencies rd
              JOIN tasks r ON r.id = rd.task_id
              WHERE r.scroll_id = ?1",
-        )?;
-        let mut rows = stmt.query(params![scroll_id])?;
-        let mut edges = Vec::new();
-        while let Some(row) = rows.next()? {
-            edges.push((row.get(0)?, row.get(1)?));
-        }
-        Ok(edges)
+            params![scroll_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
     }
 
-    // --- Federation peer DAO (Tasks 3, 7-12) ---
-
     pub fn insert_peer(&self, peer: &crate::shared::types::Peer) -> Result<()> {
-        let conn = self.conn.lock();
-        conn.execute(
+        self.exec(
             "INSERT INTO peers (id, daemon_id, name, url, bearer_token_hash, bearer_token, public_key, state, last_seen, registered_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
             params![
@@ -2016,80 +1856,53 @@ impl Database {
     }
 
     pub fn delete_peer(&self, peer_id: &str) -> Result<bool> {
-        let conn = self.conn.lock();
-        let n = conn.execute("DELETE FROM peers WHERE id = ?1", params![peer_id])?;
-        Ok(n > 0)
+        Ok(self.exec("DELETE FROM peers WHERE id = ?1", params![peer_id])? > 0)
     }
 
     pub fn get_peer_by_name(&self, name: &str) -> Result<Option<crate::shared::types::Peer>> {
-        let conn = self.conn.lock();
-        let mut stmt = conn.prepare(
+        self.query_opt(
             "SELECT id, daemon_id, name, url, bearer_token_hash, bearer_token, public_key, state, last_seen, registered_at FROM peers WHERE name = ?1",
-        )?;
-        let mut rows = stmt.query(params![name])?;
-        if let Some(row) = rows.next()? {
-            Ok(Some(row_to_peer(row)?))
-        } else {
-            Ok(None)
-        }
+            params![name],
+            row_to_peer,
+        )
     }
 
     pub fn get_peer_by_daemon_id(
         &self,
         daemon_id: &str,
     ) -> Result<Option<crate::shared::types::Peer>> {
-        let conn = self.conn.lock();
-        let mut stmt = conn.prepare(
+        self.query_opt(
             "SELECT id, daemon_id, name, url, bearer_token_hash, bearer_token, public_key, state, last_seen, registered_at FROM peers WHERE daemon_id = ?1",
-        )?;
-        let mut rows = stmt.query(params![daemon_id])?;
-        if let Some(row) = rows.next()? {
-            Ok(Some(row_to_peer(row)?))
-        } else {
-            Ok(None)
-        }
+            params![daemon_id],
+            row_to_peer,
+        )
     }
 
     pub fn get_peer(&self, peer_id: &str) -> Result<Option<crate::shared::types::Peer>> {
-        let conn = self.conn.lock();
-        let mut stmt = conn.prepare(
+        self.query_opt(
             "SELECT id, daemon_id, name, url, bearer_token_hash, bearer_token, public_key, state, last_seen, registered_at FROM peers WHERE id = ?1",
-        )?;
-        let mut rows = stmt.query(params![peer_id])?;
-        if let Some(row) = rows.next()? {
-            Ok(Some(row_to_peer(row)?))
-        } else {
-            Ok(None)
-        }
+            params![peer_id],
+            row_to_peer,
+        )
     }
 
     pub fn lookup_peer_by_token_hash(
         &self,
         hash: &[u8],
     ) -> Result<Option<crate::shared::types::Peer>> {
-        let conn = self.conn.lock();
-        let mut stmt = conn.prepare(
+        self.query_opt(
             "SELECT id, daemon_id, name, url, bearer_token_hash, bearer_token, public_key, state, last_seen, registered_at FROM peers WHERE bearer_token_hash = ?1",
-        )?;
-        let mut rows = stmt.query(params![hash])?;
-        if let Some(row) = rows.next()? {
-            Ok(Some(row_to_peer(row)?))
-        } else {
-            Ok(None)
-        }
+            params![hash],
+            row_to_peer,
+        )
     }
 
     pub fn list_peers(&self) -> Result<Vec<crate::shared::types::Peer>> {
-        let conn = self.conn.lock();
-        let mut stmt = conn.prepare(
+        self.query_vec(
             "SELECT id, daemon_id, name, url, bearer_token_hash, bearer_token, public_key, state, last_seen, registered_at FROM peers ORDER BY registered_at",
-        )?;
-        let mut rows = stmt.query([])?;
-        let mut out = Vec::new();
-        while let Some(row) = rows.next()? {
-            out.push(row_to_peer(row)?);
-        }
-        Ok(out)
+            [],
+            row_to_peer,
+        )
     }
 
     pub fn set_peer_state(
@@ -2097,8 +1910,7 @@ impl Database {
         peer_id: &str,
         state: crate::shared::types::PeerState,
     ) -> Result<()> {
-        let conn = self.conn.lock();
-        conn.execute(
+        self.exec(
             "UPDATE peers SET state = ?1 WHERE id = ?2",
             params![state.as_str(), peer_id],
         )?;
@@ -2106,8 +1918,7 @@ impl Database {
     }
 
     pub fn set_peer_last_seen(&self, peer_id: &str, ts: i64) -> Result<()> {
-        let conn = self.conn.lock();
-        conn.execute(
+        self.exec(
             "UPDATE peers SET last_seen = ?1 WHERE id = ?2",
             params![ts, peer_id],
         )?;
@@ -2115,8 +1926,7 @@ impl Database {
     }
 
     pub fn update_peer_daemon_id(&self, peer_id: &str, daemon_id: &str) -> Result<()> {
-        let conn = self.conn.lock();
-        conn.execute(
+        self.exec(
             "UPDATE peers SET daemon_id = ?1 WHERE id = ?2",
             params![daemon_id, peer_id],
         )?;
@@ -2184,23 +1994,17 @@ impl Database {
         peer_id: &str,
         now: i64,
     ) -> Result<Option<crate::shared::types::PeerOutboxRow>> {
-        let conn = self.conn.lock();
-        let mut stmt = conn.prepare(
+        self.query_opt(
             "SELECT id, peer_id, mail_id, sender_seq, recipient, sender, topic, body, created_at, attempts, next_attempt_at, state \
              FROM peer_outbox WHERE peer_id = ?1 AND state = 'pending' AND next_attempt_at <= ?2 \
              ORDER BY sender_seq ASC LIMIT 1",
-        )?;
-        let mut rows = stmt.query(params![peer_id, now])?;
-        if let Some(row) = rows.next()? {
-            Ok(Some(row_to_outbox(row)?))
-        } else {
-            Ok(None)
-        }
+            params![peer_id, now],
+            row_to_outbox,
+        )
     }
 
     pub fn mark_outbox_in_flight(&self, id: &str) -> Result<()> {
-        let conn = self.conn.lock();
-        conn.execute(
+        self.exec(
             "UPDATE peer_outbox SET state = 'in_flight' WHERE id = ?1",
             params![id],
         )?;
@@ -2208,8 +2012,7 @@ impl Database {
     }
 
     pub fn mark_outbox_delivered(&self, id: &str) -> Result<()> {
-        let conn = self.conn.lock();
-        conn.execute(
+        self.exec(
             "UPDATE peer_outbox SET state = 'delivered', attempts = attempts + 1 WHERE id = ?1",
             params![id],
         )?;
@@ -2217,8 +2020,7 @@ impl Database {
     }
 
     pub fn mark_outbox_failed_retry(&self, id: &str, next_attempt_at: i64) -> Result<()> {
-        let conn = self.conn.lock();
-        conn.execute(
+        self.exec(
             "UPDATE peer_outbox SET state = 'pending', attempts = attempts + 1, next_attempt_at = ?2 WHERE id = ?1",
             params![id, next_attempt_at],
         )?;
@@ -2264,8 +2066,7 @@ impl Database {
         direction: crate::shared::types::FederationDirection,
         created_at: i64,
     ) -> Result<()> {
-        let conn = self.conn.lock();
-        conn.execute(
+        self.exec(
             "INSERT INTO topic_federations (id, peer_id, topic, direction, created_at)
              VALUES (?1, ?2, ?3, ?4, ?5)",
             params![id, peer_id, topic, direction.as_str(), created_at],
@@ -2308,28 +2109,21 @@ impl Database {
     }
 
     pub fn delete_topic_federation(&self, peer_id: &str, topic: &str) -> Result<bool> {
-        let conn = self.conn.lock();
-        let n = conn.execute(
+        Ok(self.exec(
             "DELETE FROM topic_federations WHERE peer_id = ?1 AND topic = ?2",
             params![peer_id, topic],
-        )?;
-        Ok(n > 0)
+        )? > 0)
     }
 
     pub fn list_outbound_federations_for_topic(
         &self,
         topic: &str,
     ) -> Result<Vec<crate::shared::types::TopicFederation>> {
-        let conn = self.conn.lock();
-        let mut stmt = conn.prepare(
+        self.query_vec(
             "SELECT id, peer_id, topic, direction, created_at FROM topic_federations WHERE topic = ?1 AND direction IN ('outbound','both')",
-        )?;
-        let mut rows = stmt.query(params![topic])?;
-        let mut out = Vec::new();
-        while let Some(row) = rows.next()? {
-            out.push(row_to_topic_federation(row)?);
-        }
-        Ok(out)
+            params![topic],
+            row_to_topic_federation,
+        )
     }
 
     pub fn topic_federation_inbound_authorized(&self, peer_id: &str, topic: &str) -> Result<bool> {
@@ -2343,6 +2137,15 @@ impl Database {
             .ok();
         Ok(matches!(dir.as_deref(), Some("inbound" | "both")))
     }
+}
+
+fn row_to_subscription(row: &rusqlite::Row) -> Result<Subscription> {
+    Ok(Subscription {
+        id: row.get(0)?,
+        subscriber_id: row.get(1)?,
+        topic: row.get(2)?,
+        created_at: row.get(3)?,
+    })
 }
 
 fn row_to_peer(row: &rusqlite::Row) -> Result<crate::shared::types::Peer> {

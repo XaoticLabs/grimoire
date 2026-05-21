@@ -128,7 +128,9 @@ pub fn is_valid_topic_name(s: &str) -> bool {
         return false;
     }
     let mut bytes = s.bytes();
-    let first = bytes.next().unwrap();
+    let Some(first) = bytes.next() else {
+        return false;
+    };
     if !(first.is_ascii_alphanumeric()) {
         return false;
     }

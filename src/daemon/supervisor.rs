@@ -469,12 +469,9 @@ impl Supervisor {
     pub async fn drain_due(self: &Arc<Self>, now: DateTime<Utc>) -> Vec<PendingRestart> {
         let mut out = Vec::new();
         let mut pending = self.pending.lock().await;
-        while let Some(top) = pending.peek() {
-            if top.0.fire_at <= now {
-                let Reverse(p) = pending.pop().unwrap();
+        while pending.peek().is_some_and(|top| top.0.fire_at <= now) {
+            if let Some(Reverse(p)) = pending.pop() {
                 out.push(p);
-            } else {
-                break;
             }
         }
         out

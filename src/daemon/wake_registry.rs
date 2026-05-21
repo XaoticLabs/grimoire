@@ -47,8 +47,8 @@ pub trait WakeMailSender: Send + Sync {
 /// `sender_id = wake://<wake_id>` so the scheduler's mail-wake path can pick
 /// it up unchanged.
 pub struct DbWakeMailSender {
-    pub db: Arc<Database>,
-    pub bus: EventBus,
+    db: Arc<Database>,
+    bus: EventBus,
 }
 
 #[async_trait]

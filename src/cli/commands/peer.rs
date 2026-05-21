@@ -27,14 +27,14 @@ pub enum PeerCommand {
 
 pub async fn run(cmd: PeerCommand) -> Result<()> {
     match cmd {
-        PeerCommand::Add { name, url, token } => run_add(name, url, token).await,
+        PeerCommand::Add { name, url, token } => run_add(&name, &url, &token).await,
         PeerCommand::List => run_list().await,
-        PeerCommand::Remove { name } => run_remove(name).await,
-        PeerCommand::Ping { name } => run_ping(name).await,
+        PeerCommand::Remove { name } => run_remove(&name).await,
+        PeerCommand::Ping { name } => run_ping(&name).await,
     }
 }
 
-async fn run_add(name: String, url: String, token: String) -> Result<()> {
+async fn run_add(name: &str, url: &str, token: &str) -> Result<()> {
     let mut client = DaemonClient::connect().await?;
     let resp = client
         .call(
@@ -85,7 +85,7 @@ async fn run_list() -> Result<()> {
     Ok(())
 }
 
-async fn run_remove(name: String) -> Result<()> {
+async fn run_remove(name: &str) -> Result<()> {
     let mut client = DaemonClient::connect().await?;
     let resp = client
         .call("peer.remove", serde_json::json!({ "name": name }))
@@ -102,7 +102,7 @@ async fn run_remove(name: String) -> Result<()> {
     Ok(())
 }
 
-async fn run_ping(name: String) -> Result<()> {
+async fn run_ping(name: &str) -> Result<()> {
     let mut client = DaemonClient::connect().await?;
     let resp = client
         .call("peer.ping", serde_json::json!({ "name": name }))

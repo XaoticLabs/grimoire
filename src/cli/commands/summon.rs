@@ -23,12 +23,12 @@ fn parse_max_restarts(s: &str) -> Result<(u32, u32)> {
 
 #[allow(clippy::too_many_arguments)]
 pub async fn run(
-    task: String,
+    task: &str,
     name: Option<String>,
     model: Option<String>,
     provider: Option<String>,
     keep_alive: bool,
-    restart: String,
+    restart: &str,
     max_restarts: Option<String>,
     escalate_to: Option<String>,
     workspace: Option<String>,

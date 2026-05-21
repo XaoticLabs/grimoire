@@ -5,7 +5,7 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
 use crate::cli::stream_formatter;
 use crate::shared::protocol::StreamEvent;
 
-pub async fn run(id: String, tail: Option<usize>) -> Result<()> {
+pub async fn run(id: &str, tail: Option<usize>) -> Result<()> {
     println!("{} Binding to agent {}...", "⊛".cyan(), id.bold());
 
     let params = serde_json::json!({ "id": id, "tail": tail });

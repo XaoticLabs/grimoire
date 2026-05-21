@@ -184,7 +184,9 @@ async fn run_uds_server(state: AppState) -> Result<()> {
                     if let Ok(events) = state.manager.get_events(&params.id, params.tail) {
                         for event in events {
                             let stream_event = StreamEvent::AgentEvent { event };
-                            let json = serde_json::to_string(&stream_event).unwrap();
+                            let Ok(json) = serde_json::to_string(&stream_event) else {
+                                continue;
+                            };
                             if writer.write_all(json.as_bytes()).await.is_err() {
                                 return;
                             }
@@ -201,7 +203,9 @@ async fn run_uds_server(state: AppState) -> Result<()> {
                             Ok(event) => {
                                 // Filter to this agent
                                 if event.agent_id() == Some(params.id.as_str()) {
-                                    let json = serde_json::to_string(&event).unwrap();
+                                    let Ok(json) = serde_json::to_string(&event) else {
+                                        continue;
+                                    };
                                     if writer.write_all(json.as_bytes()).await.is_err() {
                                         return;
                                     }
@@ -343,9 +347,19 @@ async fn run_http_server(state: AppState) -> Result<()> {
     Ok(())
 }
 
+/// Serialize a result payload into an `axum::Json` response. On the (for plain
+/// `derive(Serialize)` payloads, unreachable) serialization error, returns an
+/// error envelope rather than panicking.
+fn json_ok<T: serde::Serialize>(value: T) -> axum::Json<serde_json::Value> {
+    match serde_json::to_value(&value) {
+        Ok(v) => axum::Json(v),
+        Err(e) => axum::Json(serde_json::json!({"error": format!("serialize: {e}")})),
+    }
+}
+
 async fn http_list_agents(State(state): State<AppState>) -> axum::Json<serde_json::Value> {
     match state.manager.circle(None).await {
-        Ok(agents) => axum::Json(serde_json::to_value(CircleResult { agents }).unwrap()),
+        Ok(agents) => json_ok(CircleResult { agents }),
         Err(e) => axum::Json(serde_json::json!({"error": e.to_string()})),
     }
 }
@@ -371,14 +385,11 @@ async fn http_summon_agent(
         )
         .await
     {
-        Ok(agent) => axum::Json(
-            serde_json::to_value(SummonResult {
-                id: agent.id,
-                name: agent.name,
-                state: agent.state.as_str().to_string(),
-            })
-            .unwrap(),
-        ),
+        Ok(agent) => json_ok(SummonResult {
+            id: agent.id,
+            name: agent.name,
+            state: agent.state.as_str().to_string(),
+        }),
         Err(e) => axum::Json(serde_json::json!({"error": e.to_string()})),
     }
 }
@@ -388,7 +399,7 @@ async fn http_get_agent(
     axum::extract::Path(id): axum::extract::Path<String>,
 ) -> axum::Json<serde_json::Value> {
     match state.manager.get_agent(&id).await {
-        Ok(Some(agent)) => axum::Json(serde_json::to_value(agent).unwrap()),
+        Ok(Some(agent)) => json_ok(agent),
         Ok(None) => axum::Json(serde_json::json!({"error": "Agent not found"})),
         Err(e) => axum::Json(serde_json::json!({"error": e.to_string()})),
     }
@@ -399,7 +410,7 @@ async fn http_banish_agent(
     axum::extract::Path(id): axum::extract::Path<String>,
 ) -> axum::Json<serde_json::Value> {
     match state.manager.banish(&id).await {
-        Ok(success) => axum::Json(serde_json::to_value(BanishResult { success }).unwrap()),
+        Ok(success) => json_ok(BanishResult { success }),
         Err(e) => axum::Json(serde_json::json!({"error": e.to_string()})),
     }
 }
@@ -434,8 +445,9 @@ async fn http_agent_events_sse(
         loop {
             match rx.recv().await {
                 Ok(event) => {
-                    if event.agent_id() == Some(id.as_str()) {
-                        let json = serde_json::to_string(&event).unwrap();
+                    if event.agent_id() == Some(id.as_str())
+                        && let Ok(json) = serde_json::to_string(&event)
+                    {
                         yield Ok(Event::default().data(json));
                     }
                 }
@@ -456,8 +468,9 @@ async fn http_all_events_sse(
         loop {
             match rx.recv().await {
                 Ok(event) => {
-                    let json = serde_json::to_string(&event).unwrap();
-                    yield Ok(Event::default().data(json));
+                    if let Ok(json) = serde_json::to_string(&event) {
+                        yield Ok(Event::default().data(json));
+                    }
                 }
                 Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
                 Err(_) => break,
@@ -473,7 +486,7 @@ async fn http_agent_history(
     axum::extract::Path(id): axum::extract::Path<String>,
 ) -> axum::Json<serde_json::Value> {
     match state.manager.get_events(&id, None) {
-        Ok(events) => axum::Json(serde_json::to_value(events).unwrap()),
+        Ok(events) => json_ok(events),
         Err(e) => axum::Json(serde_json::json!({"error": e.to_string()})),
     }
 }
@@ -529,7 +542,7 @@ async fn http_scroll_status(
     axum::extract::Path(id): axum::extract::Path<String>,
 ) -> axum::Json<serde_json::Value> {
     match state.scroll_keeper.status(&id) {
-        Ok(status) => axum::Json(serde_json::to_value(status).unwrap()),
+        Ok(status) => json_ok(status),
         Err(e) => axum::Json(serde_json::json!({"error": e.to_string()})),
     }
 }

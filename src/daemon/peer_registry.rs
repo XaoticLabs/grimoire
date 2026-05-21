@@ -131,16 +131,16 @@ impl PeerRegistry {
     /// wait up to `timeout_secs` for handshake to flip state to Active.
     pub async fn register_peer(
         self: &Arc<Self>,
-        name: String,
-        url: String,
-        bearer_token: String,
+        name: &str,
+        url: &str,
+        bearer_token: &str,
         timeout_secs: u64,
     ) -> Result<Peer> {
         // Validate name + token shapes.
-        if !is_valid_peer_name(&name) {
+        if !is_valid_peer_name(name) {
             return Err(anyhow!("invalid_peer_name"));
         }
-        if !is_valid_bearer_token(&bearer_token) {
+        if !is_valid_bearer_token(bearer_token) {
             return Err(anyhow!("invalid_bearer_token"));
         }
         if url.starts_with("https://") {
@@ -149,7 +149,7 @@ impl PeerRegistry {
         if !url.starts_with("http://") {
             return Err(anyhow!("invalid_peer_url"));
         }
-        if self.db.get_peer_by_name(&name)?.is_some() {
+        if self.db.get_peer_by_name(name)?.is_some() {
             return Err(anyhow!("peer_name_exists"));
         }
 
@@ -157,10 +157,10 @@ impl PeerRegistry {
         let peer = Peer {
             id: generate_short_id(),
             daemon_id: String::new(),
-            name: name.clone(),
-            url: url.clone(),
+            name: name.to_string(),
+            url: url.to_string(),
             bearer_token_hash: token_hash,
-            bearer_token: bearer_token.clone(),
+            bearer_token: bearer_token.to_string(),
             public_key: None,
             state: PeerState::Pending,
             last_seen: None,
@@ -172,7 +172,7 @@ impl PeerRegistry {
         // Wait for handshake to complete (Active) or timeout.
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(timeout_secs);
         loop {
-            match self.db.get_peer_by_name(&name)? {
+            match self.db.get_peer_by_name(name)? {
                 Some(p) if p.state == PeerState::Active => return Ok(p),
                 Some(p) if p.state == PeerState::Down => {
                     // Handshake explicitly rejected — surface to caller and
@@ -185,7 +185,7 @@ impl PeerRegistry {
             }
             if std::time::Instant::now() >= deadline {
                 // Timeout: roll back the row so operator can `peer add` cleanly.
-                if let Some(p) = self.db.get_peer_by_name(&name)? {
+                if let Some(p) = self.db.get_peer_by_name(name)? {
                     let _ = self.db.delete_peer(&p.id);
                     self.handles.lock().await.remove(&p.id);
                 }

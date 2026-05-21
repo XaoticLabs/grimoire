@@ -51,7 +51,12 @@ impl ProviderRegistry {
         self.providers
             .get(&self.default)
             .cloned()
-            .unwrap_or_else(|| self.providers.get("claude").cloned().unwrap())
+            .unwrap_or_else(|| {
+                self.providers
+                    .get("claude")
+                    .cloned()
+                    .expect("'claude' provider is always registered")
+            })
     }
 
     pub fn default_name(&self) -> &str {

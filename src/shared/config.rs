@@ -38,7 +38,8 @@ pub struct WorkerConfig {
 }
 
 fn default_worker_listen_addr() -> std::net::SocketAddr {
-    "127.0.0.1:7878".parse().unwrap()
+    use std::net::{Ipv4Addr, SocketAddr};
+    SocketAddr::from((Ipv4Addr::LOCALHOST, 7878))
 }
 
 const fn default_heartbeat_timeout() -> u64 {

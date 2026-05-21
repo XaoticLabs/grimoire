@@ -146,10 +146,7 @@ async fn handle_wake_add(
         Err(e) => return RpcResponse::error(req.id, -32000, format!("config: {e}")),
     };
     match reg.register(&params.agent_id, kind, &config_json).await {
-        Ok(wake_id) => RpcResponse::success(
-            req.id,
-            serde_json::to_value(WakeAddResult { wake_id }).unwrap(),
-        ),
+        Ok(wake_id) => RpcResponse::success_json(req.id, &WakeAddResult { wake_id }),
         Err(e) => rpc_err(req.id, &e.to_string()),
     }
 }
@@ -161,10 +158,7 @@ async fn handle_wake_list(reg: &Arc<WakeRegistry>, req: RpcRequest) -> RpcRespon
         None => reg.list_all().await,
     };
     match result {
-        Ok(sources) => RpcResponse::success(
-            req.id,
-            serde_json::to_value(WakeListResult { sources }).unwrap(),
-        ),
+        Ok(sources) => RpcResponse::success_json(req.id, &WakeListResult { sources }),
         Err(e) => RpcResponse::error(req.id, -32000, format!("list: {e}")),
     }
 }
@@ -175,10 +169,7 @@ async fn handle_wake_remove(reg: &Arc<WakeRegistry>, req: RpcRequest) -> RpcResp
         Err(e) => return e,
     };
     match reg.remove(&params.wake_id).await {
-        Ok(true) => RpcResponse::success(
-            req.id,
-            serde_json::to_value(WakeRemoveResult { success: true }).unwrap(),
-        ),
+        Ok(true) => RpcResponse::success_json(req.id, &WakeRemoveResult { success: true }),
         Ok(false) => rpc_err(req.id, "wake_not_found"),
         Err(e) => RpcResponse::error(req.id, -32000, format!("remove: {e}")),
     }
@@ -190,13 +181,12 @@ async fn handle_wake_test(reg: &Arc<WakeRegistry>, req: RpcRequest) -> RpcRespon
         Err(e) => return e,
     };
     match reg.test_fire(&params.wake_id).await {
-        Ok(mail_id) => RpcResponse::success(
+        Ok(mail_id) => RpcResponse::success_json(
             req.id,
-            serde_json::to_value(WakeTestResult {
+            &WakeTestResult {
                 success: true,
                 mail_id,
-            })
-            .unwrap(),
+            },
         ),
         Err(e) => {
             let msg = e.to_string();
@@ -337,7 +327,7 @@ async fn handle_summon(
         name: result.name,
         state: result.state.to_string(),
     };
-    RpcResponse::success(req.id, serde_json::to_value(resp).unwrap())
+    RpcResponse::success_json(req.id, &resp)
 }
 
 async fn handle_circle(manager: &Arc<AgentManager>, req: RpcRequest) -> RpcResponse {
@@ -346,7 +336,7 @@ async fn handle_circle(manager: &Arc<AgentManager>, req: RpcRequest) -> RpcRespo
     match manager.circle(params.state.as_deref()).await {
         Ok(agents) => {
             let result = CircleResult { agents };
-            RpcResponse::success(req.id, serde_json::to_value(result).unwrap())
+            RpcResponse::success_json(req.id, &result)
         }
         Err(e) => RpcResponse::error(req.id, -32000, format!("Failed to list: {e}")),
     }
@@ -361,7 +351,7 @@ async fn handle_banish(manager: &Arc<AgentManager>, req: RpcRequest) -> RpcRespo
     match manager.banish(&params.id).await {
         Ok(success) => {
             let result = BanishResult { success };
-            RpcResponse::success(req.id, serde_json::to_value(result).unwrap())
+            RpcResponse::success_json(req.id, &result)
         }
         Err(e) => RpcResponse::error(req.id, -32000, format!("Failed to banish: {e}")),
     }
@@ -403,7 +393,7 @@ fn handle_pact_create(db: &Arc<Database>, req: RpcRequest) -> RpcResponse {
                 id: pact_id,
                 source_id: params.source_id,
             };
-            RpcResponse::success(req.id, serde_json::to_value(result).unwrap())
+            RpcResponse::success_json(req.id, &result)
         }
         Err(e) => RpcResponse::error(req.id, -32000, format!("Failed to create pact: {e}")),
     }
@@ -415,7 +405,7 @@ fn handle_pact_list(db: &Arc<Database>, req: RpcRequest) -> RpcResponse {
     match db.list_pacts(params.source_id.as_deref()) {
         Ok(pacts) => {
             let result = PactListResult { pacts };
-            RpcResponse::success(req.id, serde_json::to_value(result).unwrap())
+            RpcResponse::success_json(req.id, &result)
         }
         Err(e) => RpcResponse::error(req.id, -32000, format!("Failed to list pacts: {e}")),
     }
@@ -455,7 +445,7 @@ fn handle_scroll_inscribe(keeper: &Arc<ScrollKeeper>, req: RpcRequest) -> RpcRes
                 task_count: result.task_count,
                 conflicts: result.conflicts,
             };
-            RpcResponse::success(req.id, serde_json::to_value(resp).unwrap())
+            RpcResponse::success_json(req.id, &resp)
         }
         Err(e) => RpcResponse::error(req.id, -32000, format!("Failed to inscribe: {e}")),
     }
@@ -480,7 +470,7 @@ fn handle_scroll_status(keeper: &Arc<ScrollKeeper>, req: RpcRequest) -> RpcRespo
     };
 
     match keeper.status(&params.id) {
-        Ok(status) => RpcResponse::success(req.id, serde_json::to_value(status).unwrap()),
+        Ok(status) => RpcResponse::success_json(req.id, &status),
         Err(e) => RpcResponse::error(req.id, -32000, format!("Failed to get status: {e}")),
     }
 }
@@ -525,7 +515,7 @@ fn handle_queue_list(db: &Arc<Database>, req: RpcRequest) -> RpcResponse {
                 })
                 .collect();
             let resp = QueueListResponse { entries };
-            RpcResponse::success(req.id, serde_json::to_value(resp).unwrap())
+            RpcResponse::success_json(req.id, &resp)
         }
         Err(e) => RpcResponse::error(req.id, -32000, format!("Failed to list queue: {e}")),
     }
@@ -668,7 +658,7 @@ fn handle_direct_send(
                 delivered: 0,
                 mail_ids: vec![mail_id],
             };
-            RpcResponse::success(req.id, serde_json::to_value(result).unwrap())
+            RpcResponse::success_json(req.id, &result)
         }
         MailState::Pending => {
             bus.publish(StreamEvent::MailSent {
@@ -690,7 +680,7 @@ fn handle_direct_send(
                 delivered: 1,
                 mail_ids: vec![mail_id],
             };
-            RpcResponse::success(req.id, serde_json::to_value(result).unwrap())
+            RpcResponse::success_json(req.id, &result)
         }
         MailState::Delivered => unreachable!(),
     }
@@ -721,7 +711,7 @@ async fn handle_topic_send(
             delivered: 0,
             mail_ids: vec![],
         };
-        return RpcResponse::success(req.id, serde_json::to_value(result).unwrap());
+        return RpcResponse::success_json(req.id, &result);
     }
 
     let preview = body_preview(&params.body, PREVIEW_CHARS);
@@ -873,7 +863,7 @@ async fn handle_topic_send(
         delivered,
         mail_ids: mails.into_iter().map(|m| m.id).collect(),
     };
-    RpcResponse::success(req.id, serde_json::to_value(result).unwrap())
+    RpcResponse::success_json(req.id, &result)
 }
 
 fn handle_mail_list(db: &Arc<Database>, req: RpcRequest) -> RpcResponse {
@@ -888,7 +878,7 @@ fn handle_mail_list(db: &Arc<Database>, req: RpcRequest) -> RpcResponse {
     match db.list_mail_by_recipient(&params.agent_id, params.after_seq, params.state, limit) {
         Ok(mails) => {
             let result = MailListResult { mails };
-            RpcResponse::success(req.id, serde_json::to_value(result).unwrap())
+            RpcResponse::success_json(req.id, &result)
         }
         Err(e) => RpcResponse::error(req.id, -32000, format!("Failed to list mail: {e}")),
     }
@@ -909,7 +899,7 @@ fn handle_mail_ack(db: &Arc<Database>, bus: &EventBus, req: RpcRequest) -> RpcRe
     match mail.state {
         MailState::Delivered => {
             let r = MailAckResult { acked: false };
-            RpcResponse::success(req.id, serde_json::to_value(r).unwrap())
+            RpcResponse::success_json(req.id, &r)
         }
         MailState::Failed => rpc_err(req.id, "cannot_ack_failed"),
         MailState::Pending => {
@@ -922,7 +912,7 @@ fn handle_mail_ack(db: &Arc<Database>, bus: &EventBus, req: RpcRequest) -> RpcRe
                 origin_daemon_id: None,
             });
             let r = MailAckResult { acked: true };
-            RpcResponse::success(req.id, serde_json::to_value(r).unwrap())
+            RpcResponse::success_json(req.id, &r)
         }
     }
 }
@@ -955,7 +945,7 @@ fn handle_mail_subscribe(db: &Arc<Database>, req: RpcRequest) -> RpcResponse {
             let r = MailSubscribeResult {
                 subscription_id: id,
             };
-            RpcResponse::success(req.id, serde_json::to_value(r).unwrap())
+            RpcResponse::success_json(req.id, &r)
         }
         Err(e) => RpcResponse::error(req.id, -32000, format!("insert_subscription: {e}")),
     }
@@ -967,10 +957,7 @@ fn handle_mail_unsubscribe(db: &Arc<Database>, req: RpcRequest) -> RpcResponse {
         Err(e) => return e,
     };
     match db.delete_subscription(&params.subscription_id) {
-        Ok(true) => RpcResponse::success(
-            req.id,
-            serde_json::to_value(MailUnsubscribeResult::default()).unwrap(),
-        ),
+        Ok(true) => RpcResponse::success_json(req.id, &MailUnsubscribeResult::default()),
         Ok(false) => rpc_err(req.id, "subscription_not_found"),
         Err(e) => RpcResponse::error(req.id, -32000, format!("delete_subscription: {e}")),
     }
@@ -987,7 +974,7 @@ fn handle_mail_topics(db: &Arc<Database>, req: RpcRequest) -> RpcResponse {
                 })
                 .collect();
             let r = MailTopicsResult { topics };
-            RpcResponse::success(req.id, serde_json::to_value(r).unwrap())
+            RpcResponse::success_json(req.id, &r)
         }
         Err(e) => RpcResponse::error(req.id, -32000, format!("list_topics: {e}")),
     }
@@ -1017,7 +1004,7 @@ async fn handle_status(
                 max_concurrent_agents: manager.max_concurrent_agents(),
                 daemon_id: Some(daemon_id.to_string()),
             };
-            RpcResponse::success(req.id, serde_json::to_value(result).unwrap())
+            RpcResponse::success_json(req.id, &result)
         }
         Err(e) => RpcResponse::error(req.id, -32000, format!("Failed: {e}")),
     }
@@ -1047,7 +1034,7 @@ async fn handle_workspace_create(reg: &Arc<WorkspaceRegistry>, req: RpcRequest) 
                 id: ws.id,
                 path: ws.path,
             };
-            RpcResponse::success(req.id, serde_json::to_value(result).unwrap())
+            RpcResponse::success_json(req.id, &result)
         }
         Err(e) => {
             let msg = e.to_string();
@@ -1065,7 +1052,7 @@ fn handle_workspace_list(reg: &Arc<WorkspaceRegistry>, req: RpcRequest) -> RpcRe
                 workspaces: entries,
                 orphans,
             };
-            RpcResponse::success(req.id, serde_json::to_value(result).unwrap())
+            RpcResponse::success_json(req.id, &result)
         }
         Err(e) => RpcResponse::error(req.id, -32000, format!("list: {e}")),
     }
@@ -1077,10 +1064,7 @@ async fn handle_workspace_destroy(reg: &Arc<WorkspaceRegistry>, req: RpcRequest)
         Err(e) => return e,
     };
     match reg.destroy(&params.id).await {
-        Ok(()) => RpcResponse::success(
-            req.id,
-            serde_json::to_value(WorkspaceDestroyResult::default()).unwrap(),
-        ),
+        Ok(()) => RpcResponse::success_json(req.id, &WorkspaceDestroyResult::default()),
         Err(e) => {
             let msg = e.to_string();
             let code = msg.split(':').next().unwrap_or("workspace_error");
@@ -1095,10 +1079,7 @@ async fn handle_workspace_assign(reg: &Arc<WorkspaceRegistry>, req: RpcRequest) 
         Err(e) => return e,
     };
     match reg.assign(&params.workspace_id, &params.agent_id).await {
-        Ok(()) => RpcResponse::success(
-            req.id,
-            serde_json::to_value(WorkspaceAssignResult::default()).unwrap(),
-        ),
+        Ok(()) => RpcResponse::success_json(req.id, &WorkspaceAssignResult::default()),
         Err(e) => {
             let msg = e.to_string();
             let code = msg.split(':').next().unwrap_or("workspace_error");
@@ -1185,10 +1166,7 @@ fn handle_memory_put(db: &Arc<Database>, bus: &EventBus, req: RpcRequest) -> Rpc
                 "put",
                 params.sender.as_deref(),
             );
-            RpcResponse::success(
-                req.id,
-                serde_json::to_value(MemoryPutResult { version }).unwrap(),
-            )
+            RpcResponse::success_json(req.id, &MemoryPutResult { version })
         }
     }
 }
@@ -1207,7 +1185,7 @@ fn handle_memory_get(db: &Arc<Database>, req: RpcRequest) -> RpcResponse {
                 value: entry.value,
                 version: entry.version,
             };
-            RpcResponse::success(req.id, serde_json::to_value(result).unwrap())
+            RpcResponse::success_json(req.id, &result)
         }
         Ok(None) => rpc_err(req.id, "memory_not_found"),
         Err(e) => RpcResponse::error(req.id, -32000, format!("get: {e}")),
@@ -1221,10 +1199,7 @@ fn handle_memory_list(db: &Arc<Database>, req: RpcRequest) -> RpcResponse {
     };
     let prefix = params.prefix.as_deref();
     match db.memory_list_prefix(&params.workspace_id, prefix) {
-        Ok(entries) => RpcResponse::success(
-            req.id,
-            serde_json::to_value(MemoryListResult { entries }).unwrap(),
-        ),
+        Ok(entries) => RpcResponse::success_json(req.id, &MemoryListResult { entries }),
         Err(e) => RpcResponse::error(req.id, -32000, format!("list: {e}")),
     }
 }
@@ -1266,10 +1241,7 @@ fn handle_memory_delete(db: &Arc<Database>, bus: &EventBus, req: RpcRequest) -> 
                     params.sender.as_deref(),
                 );
             }
-            RpcResponse::success(
-                req.id,
-                serde_json::to_value(MemoryDeleteResult::default()).unwrap(),
-            )
+            RpcResponse::success_json(req.id, &MemoryDeleteResult::default())
         }
     }
 }
@@ -1345,7 +1317,7 @@ async fn handle_federated_direct_send(
         delivered: 1,
         mail_ids: vec![mail_id],
     };
-    RpcResponse::success(req.id, serde_json::to_value(result).unwrap())
+    RpcResponse::success_json(req.id, &result)
 }
 
 async fn handle_peer_add(peer_registry: &Arc<PeerRegistry>, req: RpcRequest) -> RpcResponse {
@@ -1354,16 +1326,15 @@ async fn handle_peer_add(peer_registry: &Arc<PeerRegistry>, req: RpcRequest) -> 
         Err(e) => return e,
     };
     match peer_registry
-        .register_peer(params.name, params.url, params.bearer_token, 10)
+        .register_peer(&params.name, &params.url, &params.bearer_token, 10)
         .await
     {
-        Ok(peer) => RpcResponse::success(
+        Ok(peer) => RpcResponse::success_json(
             req.id,
-            serde_json::to_value(PeerAddResult {
+            &PeerAddResult {
                 peer_id: peer.id,
                 daemon_id: peer.daemon_id,
-            })
-            .unwrap(),
+            },
         ),
         Err(e) => rpc_err(req.id, &e.to_string()),
     }
@@ -1371,10 +1342,7 @@ async fn handle_peer_add(peer_registry: &Arc<PeerRegistry>, req: RpcRequest) -> 
 
 async fn handle_peer_list(peer_registry: &Arc<PeerRegistry>, req: RpcRequest) -> RpcResponse {
     match peer_registry.list_with_outbox_depth().await {
-        Ok(peers) => RpcResponse::success(
-            req.id,
-            serde_json::to_value(PeerListResult { peers }).unwrap(),
-        ),
+        Ok(peers) => RpcResponse::success_json(req.id, &PeerListResult { peers }),
         Err(e) => RpcResponse::error(req.id, -32000, format!("list_peers: {e}")),
     }
 }
@@ -1385,10 +1353,7 @@ async fn handle_peer_remove(peer_registry: &Arc<PeerRegistry>, req: RpcRequest) 
         Err(e) => return e,
     };
     match peer_registry.remove_peer(&params.name).await {
-        Ok(removed) => RpcResponse::success(
-            req.id,
-            serde_json::to_value(PeerRemoveResult { removed }).unwrap(),
-        ),
+        Ok(removed) => RpcResponse::success_json(req.id, &PeerRemoveResult { removed }),
         Err(e) => rpc_err(req.id, &e.to_string()),
     }
 }
@@ -1399,10 +1364,9 @@ async fn handle_peer_ping(peer_registry: &Arc<PeerRegistry>, req: RpcRequest) ->
         Err(e) => return e,
     };
     match peer_registry.ping_peer(&params.name).await {
-        Ok((rtt, state)) => RpcResponse::success(
-            req.id,
-            serde_json::to_value(PeerPingResult { rtt_ms: rtt, state }).unwrap(),
-        ),
+        Ok((rtt, state)) => {
+            RpcResponse::success_json(req.id, &PeerPingResult { rtt_ms: rtt, state })
+        }
         Err(e) => rpc_err(req.id, &e.to_string()),
     }
 }
@@ -1448,13 +1412,12 @@ async fn handle_topic_federate(peer_registry: &Arc<PeerRegistry>, req: RpcReques
             topic: params.topic.clone(),
             direction: final_dir.as_str().to_string(),
         });
-    RpcResponse::success(
+    RpcResponse::success_json(
         req.id,
-        serde_json::to_value(TopicFederateResult {
+        &TopicFederateResult {
             topic: params.topic,
             direction: final_dir.as_str().to_string(),
-        })
-        .unwrap(),
+        },
     )
 }
 
@@ -1484,10 +1447,7 @@ async fn handle_topic_unfederate(
                         topic: params.topic.clone(),
                     });
             }
-            RpcResponse::success(
-                req.id,
-                serde_json::to_value(TopicUnfederateResult { removed }).unwrap(),
-            )
+            RpcResponse::success_json(req.id, &TopicUnfederateResult { removed })
         }
         Err(e) => RpcResponse::error(req.id, -32000, format!("unfederate: {e}")),
     }

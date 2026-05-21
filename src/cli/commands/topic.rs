@@ -30,12 +30,12 @@ pub async fn run(cmd: TopicCommand) -> Result<()> {
             topic,
             peer,
             direction,
-        } => run_federate(topic, peer, direction).await,
-        TopicCommand::Unfederate { topic, peer } => run_unfederate(topic, peer).await,
+        } => run_federate(&topic, &peer, &direction).await,
+        TopicCommand::Unfederate { topic, peer } => run_unfederate(&topic, &peer).await,
     }
 }
 
-async fn run_federate(topic: String, peer: String, direction: String) -> Result<()> {
+async fn run_federate(topic: &str, peer: &str, direction: &str) -> Result<()> {
     let mut client = DaemonClient::connect().await?;
     let resp = client
         .call(
@@ -54,7 +54,7 @@ async fn run_federate(topic: String, peer: String, direction: String) -> Result<
     Ok(())
 }
 
-async fn run_unfederate(topic: String, peer: String) -> Result<()> {
+async fn run_unfederate(topic: &str, peer: &str) -> Result<()> {
     let mut client = DaemonClient::connect().await?;
     let resp = client
         .call(

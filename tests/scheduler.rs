@@ -241,7 +241,6 @@ async fn scheduler_unblocks_on_worker_registered() {
     sched.tick_now().await.unwrap();
     assert_eq!(dispatcher.calls().await.len(), 0);
 
-    // Register matching worker.
     register_worker(&workers, "w2", "absent");
 
     // Second tick: dispatched.

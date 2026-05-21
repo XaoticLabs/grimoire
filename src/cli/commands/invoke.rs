@@ -6,7 +6,7 @@ use crate::cli::client::DaemonClient;
 /// `grim invoke` is now a thin wrapper over `mail.send --wake-eligible`. The
 /// scheduler's mail-wake path (T1) picks the message up and resumes any
 /// Dormant agent at the recipient address.
-pub async fn run(id: String, message: String) -> Result<()> {
+pub async fn run(id: &str, message: &str) -> Result<()> {
     let mut client = DaemonClient::connect().await?;
 
     let to = format!("agent://{id}");

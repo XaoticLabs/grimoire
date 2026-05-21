@@ -9,7 +9,7 @@ A consolidated brain-dump of gap analysis and feature direction for evolving Gri
 > **Agents are processes, not function calls.**
 > Grimoire is the `systemd` + `kubelet` + `nats` for AI workers.
 
-Most orchestrators (LangGraph, CrewAI, AutoGen, even Temporal) treat agents as function invocations inside a parent program. Grimoire treats them as **long-lived, addressable processes with identity**. That unlocks a different product entirely.
+Most orchestrators (LangGraph, CrewAI, AutoGen, even Temporal) treat agents as function invocations inside a parent program. Grimoire treats them as **long-lived, addressable processes with identity**. That makes for a different product entirely.
 
 Every feature below should ladder up to this thesis. If a feature only makes sense because agents are daemonized (stable IDs, outlive callers, addressable, observable, restartable), it belongs. If it could live in a Python library just as well, it's not the differentiator.
 
@@ -232,8 +232,8 @@ Six-month spine:
 
 1. ~~**Durable event log** — foundation for everything else. Replace `broadcast` first.~~ ✅
 2. ~~**Work queue + admission control** — cheap once the log exists.~~ ✅ *single-node stage; see Part 2 §2.*
-3. ~~**Agent-to-agent messaging bus** — tiny delta over the log, huge product unlock.~~ ✅ *v1 shipped — see `.claude/specs/agent-messaging-bus-spec.md`.*
-4. ~~**Worker pool protocol** — unlocks scale story and "laptop grid" demo.~~ ✅
+3. ~~**Agent-to-agent messaging bus** — tiny delta over the log, huge product win.~~ ✅ *v1 shipped — see `.claude/specs/agent-messaging-bus-spec.md`.*
+4. ~~**Worker pool protocol** — enables the scale story and "laptop grid" demo.~~ ✅
 5. ~~**Dormant agents with wake triggers** — THE differentiator. This is what being a daemon is _for_.~~ ✅ *v1 shipped — see Part 3 §5 / `.claude/specs/dormant-agents-wake-triggers-spec.md`.*
 6. ~~**Supervision trees** — layers on top of above; makes scrolls self-healing.~~ ✅ *v1 shipped — see Part 3 §8 / `.claude/specs/supervision-trees-spec.md`.*
 7. ~~**Shared memory store + workspaces** — enables real multi-agent collaboration.~~ ✅ *v1 shipped — see Part 3 §6 + §7 / `.claude/specs/shared-memory-workspaces-spec.md`.*
@@ -245,7 +245,7 @@ The six-month spine is complete. The through-line: **every feature above is impo
 
 ## Part 6 — Now / Next (post-spine)
 
-With items 1–8 of Part 5 shipped, the next axis of work is **trust & operability** — the things that turn the fabric from "demo-grade" into something a team can actually point at shared infra. Two parallel tracks, ordered by leverage:
+With items 1–8 of Part 5 shipped, the next axis of work is **trust & operability** — the things that turn the fabric from "demo-grade" into something a team can actually point at shared infra. Two parallel tracks, ordered by impact:
 
 ### Track A — Enterprise hardening (the gate to multi-user)
 

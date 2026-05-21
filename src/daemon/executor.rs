@@ -1,6 +1,7 @@
+use parking_lot::Mutex;
 use std::path::PathBuf;
 use std::process::Stdio;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
@@ -225,7 +226,6 @@ impl Executor for RemoteExecutor {
         let inbound_rx = self
             .inbound_rx
             .lock()
-            .unwrap()
             .take()
             .ok_or_else(|| anyhow!("RemoteExecutor inbound already consumed"))?;
 
@@ -318,7 +318,7 @@ impl LeastLoadedPlacement {
 
 impl Placement for LeastLoadedPlacement {
     fn pick(&self, req: &ExecuteRequest) -> Arc<dyn Executor> {
-        let constraint = VersionReq::parse("*").unwrap();
+        let constraint = VersionReq::STAR;
         match self
             .registry
             .pick_least_loaded(&req.provider_name, &constraint)

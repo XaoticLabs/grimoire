@@ -1,57 +1,22 @@
 //! Task 2 contract tests: Supervisor::evaluate decision tree.
 
-use std::path::PathBuf;
 use std::sync::Arc;
 
-use anyhow::Result;
-use async_trait::async_trait;
 use chrono::{TimeZone, Utc};
 
 use grimoire::daemon::clock::TestClock;
 use grimoire::daemon::event_bus::EventBus;
 use grimoire::daemon::persistence::Database;
-use grimoire::daemon::supervisor::{
-    EscalationMailSender, EscalationOutcome, RestartDecision, Supervisor,
-};
+use grimoire::daemon::supervisor::{EscalationMailSender, RestartDecision, Supervisor};
 use grimoire::shared::types::{
-    Agent, AgentState, RestartHistoryOutcome, RestartPolicy, SupervisionConfig,
+    AgentState, RestartHistoryOutcome, RestartPolicy, SupervisionConfig,
 };
 
-#[derive(Default)]
-struct NoopMail;
-
-#[async_trait]
-impl EscalationMailSender for NoopMail {
-    async fn send_escalation(
-        &self,
-        _sender_id: &str,
-        _target: &str,
-        _body: &str,
-    ) -> Result<EscalationOutcome> {
-        Ok(EscalationOutcome::default())
-    }
-}
+mod common;
+use common::{NoopMail, seed};
 
 fn seed_failed(db: &Database, id: &str) {
-    let agent = Agent {
-        id: id.to_string(),
-        name: None,
-        state: AgentState::Failed,
-        task: Some("seed".into()),
-        model: None,
-        provider: Some("claude".into()),
-        cwd: PathBuf::from("/tmp"),
-        pid: None,
-        session_id: None,
-        exit_code: Some(1),
-        created_at: Utc::now(),
-        updated_at: Utc::now(),
-        worker_id: None,
-        restart_policy: RestartPolicy::Never,
-        restart_count: 0,
-        workspace_id: None,
-    };
-    db.insert_agent(&agent).unwrap();
+    seed(db, id, AgentState::Failed);
 }
 
 fn build_supervisor(
