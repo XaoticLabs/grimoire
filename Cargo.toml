@@ -8,17 +8,9 @@ description = "Agent orchestration daemon: summon, chain, schedule, federate, an
 repository = "https://github.com/XaoticLabs/grimoire"
 homepage = "https://github.com/XaoticLabs/grimoire"
 readme = "README.md"
-keywords = ["agent", "orchestration", "daemon", "llm", "scheduler"]
-categories = ["command-line-utilities", "concurrency", "development-tools"]
-
-# docs.rs build configuration. `all-features` ensures every feature-gated
-# item appears in the rendered docs; `rustdoc-args` enables the
-# `--cfg docsrs` flag so `#[cfg(docsrs)]` annotations (e.g. nightly
-# `doc_auto_cfg`) take effect. Both are the docs.rs-recommended defaults.
-[package.metadata.docs.rs]
-all-features = true
-rustdoc-args = ["--cfg", "docsrs"]
-targets = ["x86_64-unknown-linux-gnu"]
+# Not published to crates.io (the `grimoire` name is taken by an unrelated
+# crate). Install from source; see the README.
+publish = false
 
 # `tonic-prost` is consumed indirectly by the tonic-prost-build generated
 # code (it provides the `ProstCodec` impl). cargo-machete can't see this

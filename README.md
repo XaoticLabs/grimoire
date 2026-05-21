@@ -1,10 +1,8 @@
 # Grimoire
 
 [![CI](https://github.com/XaoticLabs/grimoire/actions/workflows/ci.yml/badge.svg)](https://github.com/XaoticLabs/grimoire/actions/workflows/ci.yml)
-[![crates.io](https://img.shields.io/crates/v/grimoire.svg)](https://crates.io/crates/grimoire)
-[![docs.rs](https://img.shields.io/docsrs/grimoire)](https://docs.rs/grimoire)
 [![MSRV](https://img.shields.io/badge/MSRV-1.95-blue.svg)](#msrv)
-[![license](https://img.shields.io/crates/l/grimoire.svg)](#license)
+[![license](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#license)
 
 It's cron and systemd for AI agents, and you bring your own CLI.
 
