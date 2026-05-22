@@ -206,6 +206,32 @@ pub struct QueueListResponse {
     pub entries: Vec<QueueEntry>,
 }
 
+// --- Replay / chronicle params/results ---
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReplayParams {
+    pub id: AgentId,
+}
+
+/// One entry of an agent's reconstructed life: the durable per-agent `seq`,
+/// the event `kind` tag, the stored timestamp, and the full event payload.
+/// The daemon returns the whole timeline; windowing (`--from`/`--until`),
+/// kind filtering, and state-at-point reconstruction happen client-side so
+/// the RPC stays a dumb read and the reconstruction logic stays testable.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReplayEntry {
+    pub seq: i64,
+    pub kind: String,
+    pub ts: String,
+    pub event: StreamEvent,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReplayResponse {
+    pub agent_id: AgentId,
+    pub entries: Vec<ReplayEntry>,
+}
+
 // --- Pact params/results ---
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

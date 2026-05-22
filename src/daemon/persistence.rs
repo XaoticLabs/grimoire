@@ -27,6 +27,19 @@ pub struct QueueRow {
     pub block_reason: Option<String>,
 }
 
+/// One row of the durable `events` stream log, with its payload already
+/// deserialized back into a `StreamEvent`. Returned by `read_stream_events`
+/// and consumed by the replay/chronicle path.
+#[derive(Debug, Clone)]
+pub struct StoredEvent {
+    pub seq: i64,
+    pub kind: String,
+    /// RFC 3339 timestamp string as stored (kept as text so callers can parse
+    /// it relative to the first event without a chrono dependency here).
+    pub ts: String,
+    pub event: StreamEvent,
+}
+
 /// Summary of daemon restart-recovery: which mid-flight agents were flipped
 /// to `Failed` (with their prior state, so callers can publish accurate
 /// `StateChange` events) and how many `Queued` agents survived for the
@@ -703,6 +716,38 @@ impl Database {
             events.reverse();
         }
         Ok(events)
+    }
+
+    /// Read the full durable stream-event log for one agent, oldest first.
+    /// This is the rich `events` table (every `StreamEvent` variant), not the
+    /// legacy `agent_events` stdout/stderr stream that `get_events` serves.
+    /// Rows whose payload fails to deserialize (a schema that predates a
+    /// variant rename, say) are skipped rather than failing the whole read —
+    /// a partial timeline beats no timeline.
+    pub fn read_stream_events(&self, agent_id: &str) -> Result<Vec<StoredEvent>> {
+        let conn = self.conn.lock();
+        let mut stmt = conn.prepare(
+            "SELECT seq, kind, payload, ts FROM events \
+             WHERE agent_id = ?1 ORDER BY seq ASC",
+        )?;
+        let mut rows = stmt.query(params![agent_id])?;
+        let mut out = Vec::new();
+        while let Some(row) = rows.next()? {
+            let seq: i64 = row.get(0)?;
+            let kind: String = row.get(1)?;
+            let payload: String = row.get(2)?;
+            let ts: String = row.get(3)?;
+            let Ok(event) = serde_json::from_str::<StreamEvent>(&payload) else {
+                continue;
+            };
+            out.push(StoredEvent {
+                seq,
+                kind,
+                ts,
+                event,
+            });
+        }
+        Ok(out)
     }
 
     #[allow(dead_code)]
@@ -2583,6 +2628,51 @@ mod tests {
         assert_eq!(tail.len(), 2);
         assert_eq!(tail[0].payload, "line 3");
         assert_eq!(tail[1].payload, "line 4");
+    }
+
+    #[test]
+    fn read_stream_events_roundtrip_and_ordering() {
+        let db = test_db();
+        db.insert_agent(&make_agent("rse11111")).unwrap();
+
+        // A small mix: a state change, two stdout lines, a notification.
+        let events = [
+            StreamEvent::StateChange {
+                agent_id: "rse11111".into(),
+                old_state: AgentState::Summoning,
+                new_state: AgentState::Active,
+            },
+            StreamEvent::Output {
+                agent_id: "rse11111".into(),
+                stream: "stdout".into(),
+                line: "hello".into(),
+            },
+            StreamEvent::Output {
+                agent_id: "rse11111".into(),
+                stream: "stdout".into(),
+                line: "world".into(),
+            },
+            StreamEvent::Notification {
+                agent_id: Some("rse11111".into()),
+                message: "ping".into(),
+                level: "info".into(),
+                source: "agent".into(),
+            },
+        ];
+        for e in &events {
+            db.append_event(e).unwrap();
+        }
+
+        let stored = db.read_stream_events("rse11111").unwrap();
+        assert_eq!(stored.len(), 4);
+        // seq is per-agent and dense from 0.
+        for (i, s) in stored.iter().enumerate() {
+            assert_eq!(s.seq, i as i64);
+        }
+        assert_eq!(stored[0].kind, "state_change");
+        assert_eq!(stored[3].kind, "notification");
+        // Unknown agent reads empty, not error.
+        assert!(db.read_stream_events("nope0000").unwrap().is_empty());
     }
 
     #[test]

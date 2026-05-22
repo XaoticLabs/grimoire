@@ -125,6 +125,7 @@ pub async fn handle_rpc(
         "topic.federate" => handle_topic_federate(peer_registry, req).await,
         "topic.unfederate" => handle_topic_unfederate(peer_registry, req).await,
         "notify" => handle_notify(bus, req),
+        "agent.replay" => handle_replay(db, req),
         _ => RpcResponse::error(req.id, -32601, format!("Unknown method: {}", req.method)),
     }
 }
@@ -551,6 +552,53 @@ fn handle_queue_list(db: &Arc<Database>, req: RpcRequest) -> RpcResponse {
             RpcResponse::success_json(req.id, &resp)
         }
         Err(e) => RpcResponse::error(req.id, -32000, format!("Failed to list queue: {e}")),
+    }
+}
+
+/// Return an agent's full durable event timeline for `grim chronicle`. The
+/// agent must exist (so an unknown id is a clean error, not an empty reel);
+/// beyond that this is a straight read of the `events` table. All filtering
+/// and state reconstruction is the client's job.
+fn handle_replay(db: &Arc<Database>, req: RpcRequest) -> RpcResponse {
+    let params: ReplayParams = match parse_params(&req) {
+        Ok(p) => p,
+        Err(resp) => return resp,
+    };
+
+    match db.get_agent(&params.id) {
+        Ok(Some(_)) => {}
+        Ok(None) => {
+            return RpcResponse::error(
+                req.id,
+                -32000,
+                format!("no agent matching '{}'", params.id),
+            );
+        }
+        Err(e) => {
+            return RpcResponse::error(req.id, -32000, format!("Failed to load agent: {e}"));
+        }
+    }
+
+    match db.read_stream_events(&params.id) {
+        Ok(stored) => {
+            let entries: Vec<ReplayEntry> = stored
+                .into_iter()
+                .map(|s| ReplayEntry {
+                    seq: s.seq,
+                    kind: s.kind,
+                    ts: s.ts,
+                    event: s.event,
+                })
+                .collect();
+            RpcResponse::success_json(
+                req.id,
+                &ReplayResponse {
+                    agent_id: params.id,
+                    entries,
+                },
+            )
+        }
+        Err(e) => RpcResponse::error(req.id, -32000, format!("Failed to read event log: {e}")),
     }
 }
 

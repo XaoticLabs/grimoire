@@ -1,5 +1,6 @@
 pub mod banish;
 pub mod bind;
+pub mod chronicle;
 pub mod circle;
 pub mod demo;
 pub mod inscribe;

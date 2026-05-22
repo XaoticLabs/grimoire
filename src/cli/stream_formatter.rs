@@ -2,6 +2,167 @@ use std::fmt::Write as _;
 
 use colored::Colorize;
 
+use crate::shared::protocol::StreamEvent;
+
+/// Truncate a string to `max` chars, appending `…` if it was cut. Used to keep
+/// timeline detail lines (tasks, mail previews) to a single readable row.
+fn truncate(s: &str, max: usize) -> String {
+    let s = s.replace('\n', " ");
+    if s.chars().count() <= max {
+        s
+    } else {
+        let head: String = s.chars().take(max).collect();
+        format!("{head}…")
+    }
+}
+
+/// Format a non-`Output` lifecycle event as one compact, colored detail line
+/// (no seq/timestamp columns — the caller prepends those). Returns `None` for
+/// events that carry no agent-scoped signal worth a row (e.g. `MailDelivered`,
+/// which is implied by the preceding `MailReceived`). The catch-all renders
+/// the bare kind tag so a newly added variant is never silently invisible.
+pub fn format_lifecycle(event: &StreamEvent) -> Option<String> {
+    let line = match event {
+        StreamEvent::StateChange {
+            old_state,
+            new_state,
+            ..
+        } => format!(
+            "{} {} → {}",
+            "→".yellow(),
+            old_state.to_string().dimmed(),
+            new_state.to_string().bold()
+        ),
+        StreamEvent::AgentCreated { agent } => {
+            let provider = agent.provider.as_deref().unwrap_or("default");
+            let task = agent.task.as_deref().unwrap_or("");
+            format!(
+                "{} created  provider={} task=\"{}\"",
+                "✦".cyan(),
+                provider.dimmed(),
+                truncate(task, 60)
+            )
+        }
+        StreamEvent::AgentQueued {
+            lane, block_reason, ..
+        } => {
+            let mut s = format!("{} queued  lane={}", "⋯".dimmed(), lane.dimmed());
+            if let Some(reason) = block_reason {
+                let _ = write!(s, "  blocked: {}", reason.yellow());
+            }
+            s
+        }
+        StreamEvent::WakeSourceRegistered { kind, .. } => {
+            format!("{} wake source +{}", "+".green(), kind.bold())
+        }
+        StreamEvent::WakeSourceFired { via, .. } => {
+            let via = via
+                .as_deref()
+                .map(|v| format!(" via {v}"))
+                .unwrap_or_default();
+            format!("{} wake fired{}", "⏰".yellow(), via.dimmed())
+        }
+        StreamEvent::WakeSourceFailed { reason, .. } => {
+            format!("{} wake failed: {}", "⏰".red(), reason.red())
+        }
+        StreamEvent::WakeSourceRetired { reason, .. } => {
+            format!("{} wake retired: {}", "⏰".dimmed(), reason.dimmed())
+        }
+        StreamEvent::RestartScheduled {
+            attempt,
+            max,
+            rate_limited,
+            ..
+        } => {
+            let rl = if *rate_limited {
+                " (rate-limited)".red().to_string()
+            } else {
+                String::new()
+            };
+            format!("{} restart scheduled {attempt}/{max}{rl}", "↻".yellow())
+        }
+        StreamEvent::Restarted { attempt, .. } => {
+            format!("{} restarted (attempt {attempt})", "↻".yellow().bold())
+        }
+        StreamEvent::RestartBudgetExhausted { reason, .. } => {
+            format!("{} restart budget exhausted: {}", "✗".red(), reason.red())
+        }
+        StreamEvent::Escalated {
+            target,
+            fanout_count,
+            ..
+        } => format!(
+            "{} escalated → {} (fanout {fanout_count})",
+            "⚠".red().bold(),
+            target.bold()
+        ),
+        StreamEvent::MailSent {
+            topic,
+            recipient_id,
+            ..
+        } => {
+            let dest = topic
+                .as_deref()
+                .map(|t| format!("topic://{t}"))
+                .or_else(|| recipient_id.as_deref().map(|r| format!("agent://{r}")))
+                .unwrap_or_else(|| "?".to_string());
+            format!("{} mail → {}", "✉".blue(), dest.dimmed())
+        }
+        StreamEvent::MailReceived {
+            sender_id,
+            topic,
+            body_preview,
+            origin_daemon_id,
+            ..
+        } => {
+            let from = topic
+                .as_deref()
+                .map(|t| format!("topic://{t}"))
+                .or_else(|| sender_id.as_deref().map(|s| format!("agent://{s}")))
+                .unwrap_or_else(|| "?".to_string());
+            let peer = origin_daemon_id
+                .as_deref()
+                .map(|d| format!(" [peer {}]", &d[..8.min(d.len())]))
+                .unwrap_or_default();
+            format!(
+                "{} mail ← {} \"{}\"{}",
+                "✉".blue().bold(),
+                from.dimmed(),
+                truncate(body_preview, 50),
+                peer.dimmed()
+            )
+        }
+        StreamEvent::MailFailed { reason, .. } => {
+            format!("{} mail failed: {}", "✉".red(), reason.red())
+        }
+        StreamEvent::MemoryWritten { key, version, .. } => {
+            format!("{} mem put {} v{version}", "▪".magenta(), key.bold())
+        }
+        StreamEvent::MemoryDeleted { key, .. } => {
+            format!("{} mem del {}", "▪".magenta(), key.bold())
+        }
+        StreamEvent::Notification {
+            message,
+            level,
+            source,
+            ..
+        } => format!(
+            "{} [{}] {} {}",
+            "🔔".yellow(),
+            level.bold(),
+            truncate(message, 70),
+            format!("({source})").dimmed()
+        ),
+        // MailDelivered is implied by MailReceived; suppress to cut noise.
+        StreamEvent::MailDelivered { .. } => return None,
+        // Everything else (scroll/workspace/peer events that don't ride an
+        // agent stream, plus any future variant): show the bare kind tag so
+        // it is visible but unobtrusive.
+        other => other.kind().dimmed().to_string(),
+    };
+    Some(line)
+}
+
 /// Parse and format a Claude Code stream-json line into human-readable output.
 /// Returns None if the event should be suppressed (e.g. rate_limit_event).
 pub fn format_stream_json(line: &str) -> Option<String> {
@@ -246,6 +407,31 @@ mod tests {
     fn unknown_event_suppressed() {
         let line = r#"{"type":"unknown_thing"}"#;
         assert!(format_stream_json(line).is_none());
+    }
+
+    #[test]
+    fn lifecycle_state_change_renders() {
+        use crate::shared::types::AgentState;
+        let ev = StreamEvent::StateChange {
+            agent_id: "abc".into(),
+            old_state: AgentState::Active,
+            new_state: AgentState::Dormant,
+        };
+        let out = format_lifecycle(&ev).unwrap();
+        assert!(out.contains("active"));
+        assert!(out.contains("dormant"));
+    }
+
+    #[test]
+    fn lifecycle_mail_delivered_suppressed() {
+        // MailDelivered is implied by the preceding MailReceived; it must
+        // not produce a row so timelines aren't doubled up.
+        let ev = StreamEvent::MailDelivered {
+            mail_id: "m1".into(),
+            recipient_id: "abc".into(),
+            origin_daemon_id: None,
+        };
+        assert!(format_lifecycle(&ev).is_none());
     }
 
     #[test]

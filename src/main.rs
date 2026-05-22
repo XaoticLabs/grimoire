@@ -89,6 +89,35 @@ enum Commands {
         id: String,
     },
 
+    /// Replay an agent's full life from the durable event log
+    #[command(visible_alias = "replay")]
+    Chronicle {
+        /// Agent ID (or prefix)
+        id: String,
+
+        /// Stop at a point: an event seq (inclusive) or a kind name
+        /// (stops after its first occurrence), e.g. `--until escalated`.
+        #[arg(long)]
+        until: Option<String>,
+
+        /// Skip events below this seq in the printed timeline.
+        #[arg(long)]
+        from: Option<i64>,
+
+        /// Comma-separated event kinds to show, e.g.
+        /// `--kinds wake_source_fired,restarted,escalated`.
+        #[arg(long)]
+        kinds: Option<String>,
+
+        /// Hide stdout/stderr output lines; show only lifecycle events.
+        #[arg(long)]
+        no_output: bool,
+
+        /// Emit the raw durable event rows as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+
     /// Send a follow-up message to a completed agent
     Invoke {
         /// Agent ID (or prefix)
@@ -309,6 +338,17 @@ async fn main() {
                 Commands::Banish { id } => {
                     let id = resolve_id(&id).await;
                     cli::commands::banish::run(&id).await
+                }
+                Commands::Chronicle {
+                    id,
+                    until,
+                    from,
+                    kinds,
+                    no_output,
+                    json,
+                } => {
+                    let id = resolve_id(&id).await;
+                    cli::commands::chronicle::run(&id, until, from, kinds, no_output, json).await
                 }
                 Commands::Invoke { id, message } => {
                     let id = resolve_id(&id).await;
