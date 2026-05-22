@@ -27,6 +27,10 @@ pub struct AppState {
     pub peer_registry: Arc<super::peer_registry::PeerRegistry>,
     pub daemon_id: String,
     pub auth_token: Arc<AuthToken>,
+    /// Captured at server startup. Drives the `grimoire_uptime_seconds`
+    /// metric; an `Instant` (not a wall-clock time) so clock skew doesn't
+    /// confuse the value across daemon restarts on the same host.
+    pub started_at: std::time::Instant,
 }
 
 /// UID the daemon process is running as. Cached at boot; used by the UDS
@@ -67,6 +71,7 @@ pub async fn run(
         peer_registry,
         daemon_id,
         auth_token,
+        started_at: std::time::Instant::now(),
     };
 
     // Start UDS listener
@@ -321,6 +326,7 @@ async fn run_http_server(state: AppState) -> Result<()> {
         .route("/api/scrolls/{id}", get(http_scroll_status))
         .route("/api/scrolls/{id}/activate", post(http_activate_scroll))
         .route("/api/scrolls/{id}/abandon", post(http_abandon_scroll))
+        .route("/metrics", get(http_metrics))
         .route("/", get(http_dashboard))
         .route_layer(axum::middleware::from_fn_with_state(
             state.auth_token.clone(),
@@ -565,6 +571,25 @@ async fn http_abandon_scroll(
         Ok(()) => axum::Json(serde_json::json!({"success": true})),
         Err(e) => axum::Json(serde_json::json!({"error": e.to_string()})),
     }
+}
+
+/// Prometheus text-exposition endpoint. Behind the same bearer-auth wall as
+/// `/api/*` — within the daemon's trust boundary a scrape needs the token,
+/// which keeps the metrics surface out of the casual-browser attack surface
+/// without making metrics second-class.
+async fn http_metrics(State(state): State<AppState>) -> axum::response::Response {
+    let body = super::metrics::render(&state.db, state.started_at, env!("CARGO_PKG_VERSION"));
+    axum::response::Response::builder()
+        .status(axum::http::StatusCode::OK)
+        // Prometheus expects this exact content-type for parsers to attach.
+        .header(
+            axum::http::header::CONTENT_TYPE,
+            "text/plain; version=0.0.4; charset=utf-8",
+        )
+        .body(axum::body::Body::from(body))
+        .unwrap_or_else(|_| {
+            axum::response::Response::new(axum::body::Body::from("metrics encode failure"))
+        })
 }
 
 async fn http_dashboard() -> axum::response::Html<String> {

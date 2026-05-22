@@ -5,6 +5,7 @@ pub mod clock;
 pub mod daemon_id;
 pub mod event_bus;
 pub mod executor;
+pub mod metrics;
 pub mod namespace_db;
 pub mod notifier;
 pub mod orchestrator;

@@ -718,6 +718,60 @@ impl Database {
         Ok(events)
     }
 
+    /// Count agents grouped by state string (matches `AgentState::as_str`).
+    /// Returned in no particular order; the metrics renderer fans missing
+    /// states out to zero so the exposition is shape-stable across scrapes.
+    pub fn count_agents_by_state(&self) -> Result<Vec<(String, i64)>> {
+        let conn = self.conn.lock();
+        let mut stmt = conn.prepare("SELECT state, COUNT(*) FROM agents GROUP BY state")?;
+        let mut rows = stmt.query([])?;
+        let mut out = Vec::new();
+        while let Some(row) = rows.next()? {
+            out.push((row.get::<_, String>(0)?, row.get::<_, i64>(1)?));
+        }
+        Ok(out)
+    }
+
+    /// Total rows in the durable `events` stream log. Cheap (table has a
+    /// rowid index) but not O(1); fine at metrics-scrape rates.
+    pub fn count_events_total(&self) -> Result<i64> {
+        let conn = self.conn.lock();
+        let n: i64 = conn.query_row("SELECT COUNT(*) FROM events", [], |r| r.get(0))?;
+        Ok(n)
+    }
+
+    /// Count durable events of a single `kind` (the per-variant tag from
+    /// `StreamEvent::kind`). Backs the per-event-type counter metrics.
+    pub fn count_events_by_kind(&self, kind: &str) -> Result<i64> {
+        let conn = self.conn.lock();
+        let n: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM events WHERE kind = ?1",
+            params![kind],
+            |r| r.get(0),
+        )?;
+        Ok(n)
+    }
+
+    /// Count notification events grouped by their `level` payload field.
+    /// Used to label the operator-facing notifications counter so warn/error
+    /// rates show up distinctly in dashboards.
+    pub fn count_notifications_by_level(&self) -> Result<Vec<(String, i64)>> {
+        let conn = self.conn.lock();
+        let mut stmt = conn.prepare(
+            "SELECT json_extract(payload, '$.level') AS lvl, COUNT(*) \
+             FROM events WHERE kind = 'notification' GROUP BY lvl",
+        )?;
+        let mut rows = stmt.query([])?;
+        let mut out = Vec::new();
+        while let Some(row) = rows.next()? {
+            let level: String = row
+                .get::<_, Option<String>>(0)?
+                .unwrap_or_else(|| "unknown".to_string());
+            out.push((level, row.get::<_, i64>(1)?));
+        }
+        Ok(out)
+    }
+
     /// Read the full durable stream-event log for one agent, oldest first.
     /// This is the rich `events` table (every `StreamEvent` variant), not the
     /// legacy `agent_events` stdout/stderr stream that `get_events` serves.
