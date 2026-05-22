@@ -360,6 +360,64 @@ async fn invoke_complete_unchanged() {
     assert_eq!(calls[0].resume_session_id.as_deref(), Some("session-xyz"));
 }
 
+#[tokio::test]
+async fn invoke_context_replay_prepends_transcript_and_no_native_resume() {
+    use grimoire::shared::config::ProviderConfig;
+    use grimoire::shared::types::AgentEvent;
+    use std::collections::HashMap;
+
+    // A generic config provider → ContextReplay strategy (no native resume).
+    let mut config = Config::default();
+    config.providers.insert(
+        "aider".to_string(),
+        ProviderConfig {
+            binary: "true".to_string(),
+            args_template: vec!["{task}".to_string()],
+            env: HashMap::new(),
+        },
+    );
+
+    let db = Arc::new(Database::open_in_memory().unwrap());
+    let bus = EventBus::new(db.clone());
+    let log = Arc::new(ExecutorLog::default());
+    let executor: Arc<dyn Executor> = Arc::new(MockExecutor { log: log.clone() });
+    let manager = AgentManager::new_with_executor(db.clone(), bus, config, executor).await;
+
+    // Synthetic session id (as the keep-alive gate would mint for ContextReplay).
+    let agent_id = manager
+        .seed_agent_for_test_with_session_provider("daemon:abc123", Some("aider"))
+        .await
+        .unwrap();
+
+    // Prior output the daemon should replay back into the resume prompt.
+    for line in ["I reviewed auth.rs", "Found a missing null check"] {
+        db.insert_event(&AgentEvent {
+            id: None,
+            agent_id: agent_id.clone(),
+            event_type: "stdout".to_string(),
+            payload: line.to_string(),
+            created_at: chrono::Utc::now(),
+        })
+        .unwrap();
+    }
+
+    manager
+        .invoke(&agent_id, "re-check the diff", None)
+        .await
+        .unwrap();
+
+    let calls = log.calls.lock().unwrap();
+    assert_eq!(calls.len(), 1);
+    // ContextReplay must NOT use native session resume.
+    assert_eq!(calls[0].resume_session_id, None);
+    // The composed task carries the replayed transcript and the new request.
+    let task = &calls[0].task;
+    assert!(task.contains("## Prior context"), "task: {task}");
+    assert!(task.contains("Found a missing null check"), "task: {task}");
+    assert!(task.contains("## Current request"), "task: {task}");
+    assert!(task.contains("re-check the diff"), "task: {task}");
+}
+
 // --- summon symbol removal contract --------------------------------------
 
 // Compile-time guard: if `AgentManager::summon` is reintroduced, this test

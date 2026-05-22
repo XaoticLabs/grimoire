@@ -287,7 +287,7 @@ Do something.
 ## Task: Task A
 - files: src/a.rs, src/b.rs
 - depends: (none)
-- provider: codex
+- provider: aider
 - model: gpt-4
 - cwd: /home/user
 
@@ -295,7 +295,7 @@ Do task A with all metadata.
 ";
         let spec = parse_scroll(content).unwrap();
         let task = &spec.tasks[0];
-        assert_eq!(task.provider.as_deref(), Some("codex"));
+        assert_eq!(task.provider.as_deref(), Some("aider"));
         assert_eq!(task.model.as_deref(), Some("gpt-4"));
         assert_eq!(task.cwd.as_deref(), Some("/home/user"));
         assert_eq!(task.file_patterns, vec!["src/a.rs", "src/b.rs"]);

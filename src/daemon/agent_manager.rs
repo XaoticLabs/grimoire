@@ -17,10 +17,15 @@ use super::event_bus::EventBus;
 use super::executor::{ExecuteRequest, Executor, ExecutorHandle, LocalExecutor};
 use super::persistence::{Database, QueueRow};
 use super::process_manager;
+use super::provider::ResumeStrategy;
 use super::provider_registry::ProviderRegistry;
 use super::scheduler::{Dispatcher, MailWaker};
 use super::supervisor::{RestartDispatcher, Supervisor};
 use super::wake_registry::WakeRegistry;
+
+/// Byte budget for the `ContextReplay` transcript prepended on resume. Matches
+/// the scheduler's mail-fold cap; oldest output is truncated past this.
+const CONTEXT_REPLAY_BUDGET_BYTES: usize = 16 * 1024;
 
 /// Which queue lane an enqueued agent belongs to. Drives dispatch ordering:
 /// the scheduler drains `Adhoc` before `Scroll` on each tick.
@@ -198,6 +203,20 @@ impl AgentManager {
                 if keep_alive {
                     if result.session_id.is_some() {
                         result.state = AgentState::Dormant;
+                    } else if manager.provider_resume_strategy(&agent_id)
+                        == Some(ResumeStrategy::ContextReplay)
+                    {
+                        // No native session, but the provider supports
+                        // daemon-managed continuity: mint a synthetic session id
+                        // so the agent goes Dormant and the scheduler will wake it.
+                        // Continuity is reconstructed from the event log on resume.
+                        let sid = format!("daemon:{}", uuid::Uuid::new_v4());
+                        if let Err(e) = db.update_agent_session_id(&agent_id, &sid) {
+                            error!(agent_id = %agent_id, error = %e, "Failed to store synthetic session_id");
+                        } else {
+                            result.session_id = Some(sid);
+                            result.state = AgentState::Dormant;
+                        }
                     } else {
                         tracing::warn!(
                             agent_id = %agent_id,
@@ -517,6 +536,30 @@ impl AgentManager {
         Ok(())
     }
 
+    /// Look up an agent's provider and report its resume strategy, if both the
+    /// agent and its provider are known.
+    fn provider_resume_strategy(&self, agent_id: &str) -> Option<ResumeStrategy> {
+        let provider_name = self.db.get_agent(agent_id).ok().flatten()?.provider?;
+        Some(self.registry.get(&provider_name)?.resume_strategy())
+    }
+
+    /// The completed agent's result text, extracted the way its own provider
+    /// understands its output (Claude parses its `result` JSON; pi reads the
+    /// final assistant message; generic CLIs take the tail). Used for pact
+    /// `{output}` injection. Returns `None` if there's nothing usable.
+    pub fn agent_result(&self, agent_id: &str) -> Option<String> {
+        let provider_name = self
+            .db
+            .get_agent(agent_id)
+            .ok()
+            .flatten()
+            .and_then(|a| a.provider)
+            .unwrap_or_else(|| self.registry.default_name().to_string());
+        let provider = self.registry.get(&provider_name)?;
+        let lines = self.db.get_agent_stdout_lines(agent_id).ok()?;
+        provider.extract_result(&lines)
+    }
+
     pub async fn invoke(
         self: &Arc<Self>,
         id: &str,
@@ -559,11 +602,29 @@ impl AgentManager {
             .get(&provider_name)
             .ok_or_else(|| anyhow!("Unknown provider: {provider_name}"))?;
 
-        if !provider.capabilities().supports_resume {
-            return Err(anyhow!(
-                "Provider '{provider_name}' does not support session resume"
-            ));
-        }
+        // How we resume depends on the provider:
+        //   Native        → hand the message to the CLI's own session resume.
+        //   ContextReplay  → reconstruct prior output from the event log, prepend
+        //                    it to the message, and start a fresh process.
+        let (task, resume_session_id) = match provider.resume_strategy() {
+            ResumeStrategy::Native => (message.to_string(), Some(session_id)),
+            ResumeStrategy::ContextReplay => {
+                let transcript = self
+                    .db
+                    .get_agent_transcript(id, CONTEXT_REPLAY_BUDGET_BYTES)
+                    .unwrap_or_default();
+                let task = if transcript.trim().is_empty() {
+                    message.to_string()
+                } else {
+                    format!(
+                        "## Prior context\n\nYou are a standing agent resuming. This is your \
+                         earlier output in this working directory:\n\n{transcript}\n\n\
+                         ## Current request\n\n{message}"
+                    )
+                };
+                (task, None)
+            }
+        };
 
         self.db.update_agent_state(id, &AgentState::Active, None)?;
 
@@ -575,11 +636,11 @@ impl AgentManager {
 
         let req = ExecuteRequest {
             agent_id: id.to_string(),
-            task: message.to_string(),
+            task,
             provider_name,
             cwd,
             model,
-            resume_session_id: Some(session_id),
+            resume_session_id,
         };
 
         let handle = self.executor.start(req).await?;
@@ -777,15 +838,29 @@ impl AgentManager {
         self: &Arc<Self>,
         session_id: &str,
     ) -> Result<AgentId> {
+        self.seed_agent_for_test_with_session_provider(session_id, None)
+            .await
+    }
+
+    /// Like [`Self::seed_agent_for_test_with_session`] but pins the provider
+    /// (defaults to the registry default), so tests can exercise both `Native`
+    /// and `ContextReplay` resume strategies.
+    pub async fn seed_agent_for_test_with_session_provider(
+        self: &Arc<Self>,
+        session_id: &str,
+        provider: Option<&str>,
+    ) -> Result<AgentId> {
         let agent_id = crate::shared::constants::generate_short_id();
         let now = Utc::now();
+        let provider =
+            provider.map_or_else(|| self.registry.default_name().to_string(), str::to_string);
         let agent = Agent {
             id: agent_id.clone(),
             name: None,
             state: AgentState::Dormant,
             task: Some("seed".to_string()),
             model: None,
-            provider: Some(self.registry.default_name().to_string()),
+            provider: Some(provider),
             cwd: PathBuf::from("/tmp"),
             pid: None,
             session_id: Some(session_id.to_string()),

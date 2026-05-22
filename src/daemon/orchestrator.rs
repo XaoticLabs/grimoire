@@ -54,12 +54,9 @@ impl Orchestrator {
             return;
         }
 
-        // Extract the completed agent's result text
-        let output = self
-            .db
-            .get_agent_output(agent_id)
-            .unwrap_or(None)
-            .unwrap_or_default();
+        // Extract the completed agent's result text, the way its provider
+        // understands its own output format.
+        let output = self.manager.agent_result(agent_id).unwrap_or_default();
 
         for pact in pacts {
             let task = pact.task_tpl.replace("{output}", &output);

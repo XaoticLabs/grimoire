@@ -10,7 +10,7 @@ The experiment here is **agents are processes, not function calls.** Grimoire tr
 
 What we have here is a `grimd` running on a server anyone in an organization can call. Standing agents on standby, messaging each other, woken by events, supervised and observable. It started as a way to stop hoping six git worktrees would come back in sync, and the bigger idea fell out of that first quickly vibe coded thought into unix sysadmin habits, applied to agents.
 
-You bring your own CLI. Claude Code is the default, but `pi`, opencode, aider, codex, or anything that takes a prompt works just as well.
+You bring your own CLI. Claude Code is the default, but `pi`, opencode, aider, or anything that takes a prompt works just as well.
 
 ## How it works: two primitives
 

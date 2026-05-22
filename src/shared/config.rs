@@ -227,6 +227,8 @@ pub struct AgentConfig {
     #[serde(default)]
     pub claude_binary: Option<String>,
     #[serde(default)]
+    pub pi_binary: Option<String>,
+    #[serde(default)]
     pub default_provider: Option<String>,
 }
 
@@ -280,6 +282,13 @@ impl Config {
             .claude_binary
             .clone()
             .unwrap_or_else(|| "claude".to_string())
+    }
+
+    pub fn pi_binary(&self) -> String {
+        self.agent
+            .pi_binary
+            .clone()
+            .unwrap_or_else(|| "pi".to_string())
     }
 
     /// Build a fresh `Arc<AtomicU32>` initialized from the current

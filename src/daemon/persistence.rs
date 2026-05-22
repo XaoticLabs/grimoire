@@ -710,25 +710,40 @@ impl Database {
         Ok(())
     }
 
-    /// Extract the final result text from an agent's output events.
-    pub fn get_agent_output(&self, agent_id: &str) -> Result<Option<String>> {
+    /// An agent's stdout lines in emission order. The raw material for a
+    /// provider's `extract_result` (pact `{output}` injection) and the
+    /// `ContextReplay` transcript. Provider-neutral — no format assumed here.
+    pub fn get_agent_stdout_lines(&self, agent_id: &str) -> Result<Vec<String>> {
         let conn = self.conn.lock();
         let mut stmt = conn.prepare(
             "SELECT payload FROM agent_events
              WHERE agent_id = ?1 AND event_type = 'stdout'
-             ORDER BY id DESC",
+             ORDER BY id ASC",
         )?;
         let mut rows = stmt.query(params![agent_id])?;
+        let mut lines = Vec::new();
         while let Some(row) = rows.next()? {
-            let payload: String = row.get(0)?;
-            if let Ok(v) = serde_json::from_str::<serde_json::Value>(&payload)
-                && v.get("type").and_then(|t| t.as_str()) == Some("result")
-                && let Some(result) = v.get("result").and_then(|r| r.as_str())
-            {
-                return Ok(Some(result.to_string()));
-            }
+            lines.push(row.get(0)?);
         }
-        Ok(None)
+        Ok(lines)
+    }
+
+    /// Reconstruct an agent's prior stdout as a single string, for the
+    /// `ContextReplay` resume strategy (providers with no native session). Capped
+    /// to the last `budget_bytes` — oldest output truncated with a note — mirroring
+    /// the scheduler's mail-fold budgeting. Returns the empty string if the agent
+    /// produced no output.
+    pub fn get_agent_transcript(&self, agent_id: &str, budget_bytes: usize) -> Result<String> {
+        let full = self.get_agent_stdout_lines(agent_id)?.join("\n");
+        if full.len() <= budget_bytes {
+            return Ok(full);
+        }
+        // Keep the tail; align the cut to a UTF-8 char boundary.
+        let mut start = full.len() - budget_bytes;
+        while start < full.len() && !full.is_char_boundary(start) {
+            start += 1;
+        }
+        Ok(format!("[…earlier output truncated…]\n{}", &full[start..]))
     }
 
     pub fn insert_scroll(&self, scroll: &Scroll) -> Result<()> {
@@ -2508,30 +2523,61 @@ mod tests {
     }
 
     #[test]
-    fn agent_output_extraction() {
+    fn agent_stdout_lines_in_order() {
         let db = test_db();
         db.insert_agent(&make_agent("out11111")).unwrap();
-
+        for line in ["first", "second", "third"] {
+            db.insert_event(&AgentEvent {
+                id: None,
+                agent_id: "out11111".to_string(),
+                event_type: "stdout".to_string(),
+                payload: line.to_string(),
+                created_at: Utc::now(),
+            })
+            .unwrap();
+        }
+        // stderr must not leak into the transcript.
         db.insert_event(&AgentEvent {
             id: None,
             agent_id: "out11111".to_string(),
-            event_type: "stdout".to_string(),
-            payload: r#"{"type":"result","result":"the answer is 42"}"#.to_string(),
+            event_type: "stderr".to_string(),
+            payload: "noise".to_string(),
             created_at: Utc::now(),
         })
         .unwrap();
 
         assert_eq!(
-            db.get_agent_output("out11111").unwrap().as_deref(),
-            Some("the answer is 42")
+            db.get_agent_stdout_lines("out11111").unwrap(),
+            vec!["first", "second", "third"]
         );
     }
 
     #[test]
-    fn agent_output_missing() {
+    fn agent_transcript_budget_truncates_oldest() {
+        let db = test_db();
+        db.insert_agent(&make_agent("trunc111")).unwrap();
+        for i in 0..100 {
+            db.insert_event(&AgentEvent {
+                id: None,
+                agent_id: "trunc111".to_string(),
+                event_type: "stdout".to_string(),
+                payload: format!("line-{i:03}"),
+                created_at: Utc::now(),
+            })
+            .unwrap();
+        }
+        let t = db.get_agent_transcript("trunc111", 64).unwrap();
+        assert!(t.len() <= 64 + "[…earlier output truncated…]\n".len());
+        assert!(t.starts_with("[…earlier output truncated…]"));
+        assert!(t.ends_with("line-099")); // newest retained
+        assert!(!t.contains("line-000")); // oldest dropped
+    }
+
+    #[test]
+    fn agent_stdout_lines_missing() {
         let db = test_db();
         db.insert_agent(&make_agent("noout111")).unwrap();
-        assert!(db.get_agent_output("noout111").unwrap().is_none());
+        assert!(db.get_agent_stdout_lines("noout111").unwrap().is_empty());
     }
 
     #[test]

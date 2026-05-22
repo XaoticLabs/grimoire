@@ -38,11 +38,36 @@ pub struct ProviderCapabilities {
     pub output_format: OutputFormat,
 }
 
+/// How an agent's continuity is restored when a dormant agent is woken.
+///
+/// - `Native`: the underlying CLI owns the session; the daemon resumes it by id
+///   via [`Provider::spawn_resume`] (Claude `--resume`, pi `--session`).
+///   Full-fidelity — the CLI keeps the transcript and its own state.
+/// - `ContextReplay`: the CLI is stateless; the daemon reconstructs a context
+///   preamble from the durable event log and prepends it to a fresh
+///   [`Provider::spawn`]. The universal fallback for generic config providers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ResumeStrategy {
+    Native,
+    ContextReplay,
+}
+
 pub trait Provider: Send + Sync {
-    /// Unique identifier (e.g. "claude", "codex", "aider")
+    /// Unique identifier (e.g. "claude", "pi", "aider")
     fn name(&self) -> &str;
 
     fn capabilities(&self) -> ProviderCapabilities;
+
+    /// Continuity strategy used to wake a dormant agent. Defaults from
+    /// `supports_resume`; native-session adapters keep the default, generic
+    /// config providers fall through to `ContextReplay`.
+    fn resume_strategy(&self) -> ResumeStrategy {
+        if self.capabilities().supports_resume {
+            ResumeStrategy::Native
+        } else {
+            ResumeStrategy::ContextReplay
+        }
+    }
 
     /// Spawn a new agent process
     fn spawn(

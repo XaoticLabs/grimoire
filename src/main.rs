@@ -39,7 +39,7 @@ enum Commands {
         #[arg(short, long)]
         model: Option<String>,
 
-        /// Provider to use (e.g. claude, codex, aider)
+        /// Provider to use (e.g. claude, pi, aider)
         #[arg(short, long)]
         provider: Option<String>,
 

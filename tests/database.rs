@@ -684,46 +684,35 @@ fn scroll_state_transitions_and_active_count() {
 // Agent output extraction (JSON result events)
 // ---------------------------------------------------------------------------
 #[test]
-fn agent_output_extraction() {
+fn agent_stdout_lines_collected_in_order() {
     let db = test_db();
     let agent = make_agent("output-1");
     db.insert_agent(&agent).unwrap();
-    // Insert some non-result stdout events
-    let noise = AgentEvent {
-        id: None,
-        agent_id: "output-1".to_string(),
-        event_type: "stdout".to_string(),
-        payload: r#"{"type":"progress","message":"working..."}"#.to_string(),
-        created_at: Utc::now(),
-    };
-    db.insert_event(&noise).unwrap();
-    let result_event = AgentEvent {
-        id: None,
-        agent_id: "output-1".to_string(),
-        event_type: "stdout".to_string(),
-        payload: r#"{"type":"result","result":"All tasks completed successfully"}"#.to_string(),
-        created_at: Utc::now(),
-    };
-    db.insert_event(&result_event).unwrap();
-    // Should extract the result
-    let output = db.get_agent_output("output-1").unwrap();
-    assert_eq!(output.as_deref(), Some("All tasks completed successfully"));
+    for payload in [
+        r#"{"type":"progress","message":"working..."}"#,
+        r#"{"type":"result","result":"All tasks completed successfully"}"#,
+    ] {
+        db.insert_event(&AgentEvent {
+            id: None,
+            agent_id: "output-1".to_string(),
+            event_type: "stdout".to_string(),
+            payload: payload.to_string(),
+            created_at: Utc::now(),
+        })
+        .unwrap();
+    }
+    // The raw stdout lines are returned in order; result extraction is the
+    // provider's job (provider-neutral persistence).
+    let lines = db.get_agent_stdout_lines("output-1").unwrap();
+    assert_eq!(lines.len(), 2);
+    assert!(lines[1].contains("All tasks completed successfully"));
 }
 #[test]
-fn agent_output_returns_none_when_no_result() {
+fn agent_stdout_lines_empty_when_no_output() {
     let db = test_db();
     let agent = make_agent("output-2");
     db.insert_agent(&agent).unwrap();
-    let event = AgentEvent {
-        id: None,
-        agent_id: "output-2".to_string(),
-        event_type: "stdout".to_string(),
-        payload: "just plain text".to_string(),
-        created_at: Utc::now(),
-    };
-    db.insert_event(&event).unwrap();
-    let output = db.get_agent_output("output-2").unwrap();
-    assert!(output.is_none());
+    assert!(db.get_agent_stdout_lines("output-2").unwrap().is_empty());
 }
 // ---------------------------------------------------------------------------
 // Scroll listing
