@@ -451,6 +451,80 @@ pub struct MemoryDeleteParams {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct MemoryDeleteResult {}
 
+// --- F2: federated namespace memory params/results ---
+// Values are treated as UTF-8 strings at the RPC boundary (the store keeps
+// raw bytes). Versioning is the LWW tuple (lamport, origin_daemon_id).
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NsPutParams {
+    pub namespace: String,
+    pub key: String,
+    pub value: String,
+    #[serde(default)]
+    pub sender: Option<AgentId>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NsPutResult {
+    pub lamport: u64,
+    pub origin_daemon_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NsGetParams {
+    pub namespace: String,
+    pub key: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NsGetResult {
+    pub value: String,
+    pub lamport: u64,
+    pub origin_daemon_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NsListParams {
+    pub namespace: String,
+    #[serde(default)]
+    pub prefix: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct NsListResult {
+    pub entries: Vec<NsListItem>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NsListItem {
+    pub key: String,
+    pub lamport: u64,
+    pub origin_daemon_id: String,
+    pub updated_at: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NsDeleteParams {
+    pub namespace: String,
+    pub key: String,
+    #[serde(default)]
+    pub sender: Option<AgentId>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct NsDeleteResult {}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NsFederateParams {
+    pub namespace: String,
+    pub peer: String,
+    /// "inbound" | "outbound" | "both"
+    pub direction: String,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct NsFederateResult {}
+
 // --- Notify params/results ---
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

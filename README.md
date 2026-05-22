@@ -49,8 +49,9 @@ A short tour of what the daemon does.
 - **Supervision.** Restart policies borrowed from OTP (`always` / `on_failure` / `never`), with per-agent rate limits. When a child fails too often the parent agent wakes with the failure and decides what to do.
 - **Scrolls.** A markdown spec of tasks with dependencies and file ownership. Independent tasks run in parallel, the DAG is respected, and tasks that touch the same files get serialized.
 - **Workspaces & shared memory.** A managed git worktree several agents share, plus a per-workspace KV store with optimistic CAS and prefix subscriptions, so a write to `findings/auth` wakes whoever's watching.
-- **Federation.** Two `grimd` instances peer over gRPC. Direct mail and opt-in topics forward across daemons, deduped at the inbox by `(sender_daemon_id, seq)`.
-- **Worker pool.** Dispatch agents to remote machines through the `grimw` worker binary, with capability-aware placement. With no workers registered it runs everything locally.
+- **Federated memory.** A namespace KV (`grim ns`) decoupled from worktrees that replicates across daemons. Writes converge last-write-wins on a Lamport tuple; deletes propagate as tombstones. This is the org-wide shared-context piece.
+- **Federation.** Two `grimd` instances peer over mutually-authenticated gRPC. Direct mail, opt-in topics, and federated namespaces forward across daemons, deduped at the inbox by `(sender_daemon_id, seq)`.
+- **Worker pool.** Dispatch agents to remote machines through the `grimw` worker binary over mutual TLS, with capability-aware placement. With no workers registered it runs everything locally.
 - **Notifications.** The daemon reaches you, the missing half of "fire it and walk away." Any webhook (Slack, Discord, a relay) gets a JSON POST on completion, failure, wake, or when an agent decides it's worth a human.
 
 The command vocabulary is deliberately thematic. If you'd rather think in plain terms:
@@ -74,15 +75,15 @@ Peer grimd ──gRPC──▶   │
                        └── PeerClient/Server + Outbox/Inbox          ← federation
 ```
 
-The daemon owns agent lifecycles and persists everything in SQLite, over three transports: a JSON-RPC Unix socket for the CLI, an HTTP/SSE dashboard, and gRPC for peers and workers. Each transport is its own trust domain with its own auth, on by default. The scheduler handles admission control and capability-aware placement, and a provider registry hides each CLI tool behind one trait.
+The daemon owns agent lifecycles and persists everything in SQLite, over three transports: a JSON-RPC Unix socket for the CLI, an HTTP/SSE dashboard, and gRPC for peers and workers. Each transport is its own trust domain with its own auth, on by default — the gRPC transports are mutual TLS with pinned self-signed certs alongside the per-link bearer token. The scheduler handles admission control and capability-aware placement, and a provider registry hides each CLI tool behind one trait.
 
 ## Status & roadmap
 
 Here's where things actually stand.
 
-**Works today:** summon, standing agents, wake triggers (cron / file / completion / mail), pacts, scrolls, mail and topics, supervision trees, workspaces and shared memory, the `grimw` worker pool, outbound notifications, and a live SSE dashboard. The trust layer ships on by default across all three transports, with negotiated protocol versioning.
+**Works today:** summon, standing agents, wake triggers (cron / file / completion / mail), pacts, scrolls, mail and topics, supervision trees, workspaces and shared memory, federated namespace memory across daemons, the `grimw` worker pool, outbound notifications, and a live SSE dashboard. The trust layer ships on by default across all three transports — mutual TLS on the gRPC peer and worker links — with negotiated protocol versioning.
 
-**Partial:** Federation forwards mail and topics, but shared memory doesn't federate yet. That's the org-wide shared-context piece, and it's the next major piece. Agent identity injection (`GRIMOIRE_AGENT_ID`) covers local execution but not remote workers yet.
+**Partial:** Federated namespaces replicate writes made after `ns federate`, but there's no initial-state snapshot for a peer joining a populated namespace yet, and concurrent writes to one key resolve last-write-wins rather than surfacing the conflict. Agent identity injection (`GRIMOIRE_AGENT_ID`) covers local execution but not remote workers yet.
 
 **Not built yet:**
 - Observability. Prometheus `/metrics` and OTel tracing export. No good answer to "how do you operate this?" yet.

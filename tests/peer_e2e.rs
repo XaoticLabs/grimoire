@@ -162,6 +162,112 @@ async fn wrong_pinned_server_cert_rejected() {
 }
 
 #[tokio::test]
+async fn namespace_replicates_a_to_b() {
+    use grimoire::shared::types::FederationDirection;
+
+    // B trusts A's client cert; A is the connecting client.
+    let a_id = grimoire::shared::tls::generate("daemon").unwrap();
+    let b = boot_daemon("bbbbbbbb", &[a_id.cert_pem().to_string()]).await;
+    let a = boot_daemon_with("aaaaaaaa", a_id, &[]).await;
+
+    // B side: a peer row for A (so the bearer token is accepted) + an inbound
+    // federation authorizing the "shared" namespace from that peer.
+    let token = "0123456789abcdef0123456789abcdef0123456789abcdef".to_string();
+    let token_hash = blake3::hash(token.as_bytes()).as_bytes().to_vec();
+    let peer_a_on_b = grimoire::shared::types::Peer {
+        id: "a-on-b".into(),
+        daemon_id: "aaaaaaaa".into(),
+        name: "a".into(),
+        url: "https://0.0.0.0:0".into(),
+        bearer_token_hash: token_hash,
+        bearer_token: token.clone(),
+        public_key: None,
+        state: grimoire::shared::types::PeerState::Pending,
+        last_seen: None,
+        registered_at: grimoire::daemon::persistence::unix_now(),
+    };
+    b.db.insert_peer(&peer_a_on_b).unwrap();
+    b.db.namespace_upsert_federation(
+        "fb",
+        "a-on-b",
+        "shared",
+        FederationDirection::Inbound,
+        grimoire::daemon::persistence::unix_now(),
+    )
+    .unwrap();
+
+    // A side: register B as a peer (opens the mTLS client stream) + an
+    // outbound federation for "shared".
+    let url = format!("https://{}", b.addr);
+    let peer_b = a
+        .registry
+        .register_peer("b", &url, &token, b.identity.cert_pem(), 5)
+        .await
+        .expect("handshake should succeed");
+    a.db.namespace_upsert_federation(
+        "fa",
+        &peer_b.id,
+        "shared",
+        FederationDirection::Outbound,
+        grimoire::daemon::persistence::unix_now(),
+    )
+    .unwrap();
+
+    // A writes, then fans the write out to federated peers (the same steps the
+    // ns.put RPC handler performs).
+    let write =
+        a.db.namespace_put("shared", "k", b"hello", "aaaaaaaa", "u")
+            .unwrap();
+    for pid in a.db.namespace_outbound_peers("shared").unwrap() {
+        a.db.namespace_enqueue(&pid, "op1", &write).unwrap();
+        a.registry.notify_outbox(&pid).await;
+    }
+
+    // B should converge on the value.
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    loop {
+        if let Some(e) = b.db.namespace_get("shared", "k").unwrap() {
+            assert_eq!(e.value, b"hello");
+            assert_eq!(e.origin_daemon_id, "aaaaaaaa");
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "namespace write did not replicate to B in time"
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+
+    // A delete propagates as a tombstone → B hides the key.
+    let del =
+        a.db.namespace_delete("shared", "k", "aaaaaaaa", "u")
+            .unwrap();
+    for pid in a.db.namespace_outbound_peers("shared").unwrap() {
+        a.db.namespace_enqueue(&pid, "op2", &del).unwrap();
+        a.registry.notify_outbox(&pid).await;
+    }
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    loop {
+        if b.db.namespace_get("shared", "k").unwrap().is_none() {
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "tombstone did not replicate to B in time"
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+
+    // An inbound write into a namespace B hasn't federated must be rejected
+    // (no silent acceptance).
+    assert!(
+        !b.db
+            .namespace_inbound_authorized("a-on-b", "not-federated")
+            .unwrap()
+    );
+}
+
+#[tokio::test]
 async fn unfederated_address_rejected_with_clear_error() {
     use grimoire::shared::mail::{Address, parse_address};
     // Sanity: parse_address accepts the federated form.

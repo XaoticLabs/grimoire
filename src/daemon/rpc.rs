@@ -112,6 +112,11 @@ pub async fn handle_rpc(
         "memory.get" => handle_memory_get(db, req),
         "memory.list" => handle_memory_list(db, req),
         "memory.delete" => handle_memory_delete(db, bus, req),
+        "ns.put" => handle_ns_put(db, peer_registry, daemon_id, req).await,
+        "ns.get" => handle_ns_get(db, req),
+        "ns.list" => handle_ns_list(db, req),
+        "ns.delete" => handle_ns_delete(db, peer_registry, daemon_id, req).await,
+        "ns.federate" => handle_ns_federate(peer_registry, req).await,
         "peer.add" => handle_peer_add(peer_registry, req).await,
         "peer.local-cert" => handle_peer_local_cert(peer_registry, req),
         "peer.list" => handle_peer_list(peer_registry, req).await,
@@ -1282,6 +1287,170 @@ fn handle_memory_delete(db: &Arc<Database>, bus: &EventBus, req: RpcRequest) -> 
             }
             RpcResponse::success_json(req.id, &MemoryDeleteResult::default())
         }
+    }
+}
+
+// --- F2: federated namespace memory handlers ---
+
+/// Namespaces and keys: non-empty, printable, bounded. Keys may contain `/`
+/// for hierarchy; namespaces are flat labels.
+fn valid_ns_name(s: &str) -> bool {
+    !s.is_empty() && s.len() <= 128 && s.bytes().all(|b| (b'!'..=b'~').contains(&b))
+}
+
+/// Fan a just-applied local write out to every peer the namespace federates
+/// to: enqueue an outbox row and wake that peer's drainer. Best-effort —
+/// enqueue failures are logged, not surfaced to the writer (the write itself
+/// already succeeded locally; replication retries on its own schedule).
+async fn namespace_replicate(
+    peer_registry: &Arc<PeerRegistry>,
+    write: &crate::daemon::namespace_db::NamespaceWrite,
+) {
+    let peers = match peer_registry.db.namespace_outbound_peers(&write.namespace) {
+        Ok(p) => p,
+        Err(e) => {
+            tracing::warn!(error = %e, ns = %write.namespace, "ns outbound_peers lookup failed");
+            return;
+        }
+    };
+    for peer_id in peers {
+        let op_id = crate::shared::constants::generate_short_id();
+        if let Err(e) = peer_registry.db.namespace_enqueue(&peer_id, &op_id, write) {
+            tracing::warn!(error = %e, peer_id = %peer_id, "ns enqueue failed");
+            continue;
+        }
+        peer_registry.notify_outbox(&peer_id).await;
+    }
+}
+
+async fn handle_ns_put(
+    db: &Arc<Database>,
+    peer_registry: &Arc<PeerRegistry>,
+    daemon_id: &str,
+    req: RpcRequest,
+) -> RpcResponse {
+    let params: crate::shared::protocol::NsPutParams = match parse_params(&req) {
+        Ok(p) => p,
+        Err(e) => return e,
+    };
+    if !valid_ns_name(&params.namespace) || !valid_ns_name(&params.key) {
+        return rpc_err(req.id, "invalid_namespace_or_key");
+    }
+    let updated_by = params.sender.as_deref().unwrap_or("system");
+    let write = match db.namespace_put(
+        &params.namespace,
+        &params.key,
+        params.value.as_bytes(),
+        daemon_id,
+        updated_by,
+    ) {
+        Ok(w) => w,
+        Err(e) => return RpcResponse::error(req.id, -32000, format!("ns put: {e}")),
+    };
+    namespace_replicate(peer_registry, &write).await;
+    RpcResponse::success_json(
+        req.id,
+        &crate::shared::protocol::NsPutResult {
+            lamport: write.lamport,
+            origin_daemon_id: write.origin_daemon_id,
+        },
+    )
+}
+
+fn handle_ns_get(db: &Arc<Database>, req: RpcRequest) -> RpcResponse {
+    let params: crate::shared::protocol::NsGetParams = match parse_params(&req) {
+        Ok(p) => p,
+        Err(e) => return e,
+    };
+    match db.namespace_get(&params.namespace, &params.key) {
+        Ok(Some(e)) => RpcResponse::success_json(
+            req.id,
+            &crate::shared::protocol::NsGetResult {
+                value: String::from_utf8_lossy(&e.value).into_owned(),
+                lamport: e.lamport,
+                origin_daemon_id: e.origin_daemon_id,
+            },
+        ),
+        Ok(None) => rpc_err(req.id, "ns_key_not_found"),
+        Err(e) => RpcResponse::error(req.id, -32000, format!("ns get: {e}")),
+    }
+}
+
+fn handle_ns_list(db: &Arc<Database>, req: RpcRequest) -> RpcResponse {
+    let params: crate::shared::protocol::NsListParams = match parse_params(&req) {
+        Ok(p) => p,
+        Err(e) => return e,
+    };
+    match db.namespace_list(&params.namespace, params.prefix.as_deref()) {
+        Ok(entries) => {
+            let entries = entries
+                .into_iter()
+                .map(|e| crate::shared::protocol::NsListItem {
+                    key: e.key,
+                    lamport: e.lamport,
+                    origin_daemon_id: e.origin_daemon_id,
+                    updated_at: e.updated_at,
+                })
+                .collect();
+            RpcResponse::success_json(req.id, &crate::shared::protocol::NsListResult { entries })
+        }
+        Err(e) => RpcResponse::error(req.id, -32000, format!("ns list: {e}")),
+    }
+}
+
+async fn handle_ns_delete(
+    db: &Arc<Database>,
+    peer_registry: &Arc<PeerRegistry>,
+    daemon_id: &str,
+    req: RpcRequest,
+) -> RpcResponse {
+    let params: crate::shared::protocol::NsDeleteParams = match parse_params(&req) {
+        Ok(p) => p,
+        Err(e) => return e,
+    };
+    if !valid_ns_name(&params.namespace) || !valid_ns_name(&params.key) {
+        return rpc_err(req.id, "invalid_namespace_or_key");
+    }
+    let updated_by = params.sender.as_deref().unwrap_or("system");
+    let write = match db.namespace_delete(&params.namespace, &params.key, daemon_id, updated_by) {
+        Ok(w) => w,
+        Err(e) => return RpcResponse::error(req.id, -32000, format!("ns delete: {e}")),
+    };
+    namespace_replicate(peer_registry, &write).await;
+    RpcResponse::success_json(req.id, &crate::shared::protocol::NsDeleteResult::default())
+}
+
+async fn handle_ns_federate(peer_registry: &Arc<PeerRegistry>, req: RpcRequest) -> RpcResponse {
+    use crate::shared::types::FederationDirection;
+    let params: crate::shared::protocol::NsFederateParams = match parse_params(&req) {
+        Ok(p) => p,
+        Err(e) => return e,
+    };
+    if !valid_ns_name(&params.namespace) {
+        return rpc_err(req.id, "invalid_namespace");
+    }
+    let direction: FederationDirection = match params.direction.parse() {
+        Ok(d) => d,
+        Err(_) => return rpc_err(req.id, "invalid_direction"),
+    };
+    let peer = match peer_registry.db.get_peer_by_name(&params.peer) {
+        Ok(Some(p)) => p,
+        Ok(None) => return rpc_err(req.id, "peer_not_found"),
+        Err(e) => return RpcResponse::error(req.id, -32000, format!("db: {e}")),
+    };
+    let id = crate::shared::constants::generate_short_id();
+    match peer_registry.db.namespace_upsert_federation(
+        &id,
+        &peer.id,
+        &params.namespace,
+        direction,
+        unix_now(),
+    ) {
+        Ok(_) => RpcResponse::success_json(
+            req.id,
+            &crate::shared::protocol::NsFederateResult::default(),
+        ),
+        Err(e) => RpcResponse::error(req.id, -32000, format!("ns federate: {e}")),
     }
 }
 

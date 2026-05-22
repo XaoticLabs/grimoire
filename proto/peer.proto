@@ -67,6 +67,26 @@ message Goodbye {
   string reason = 1;
 }
 
+// F2: one federated namespace write (put or tombstone-delete). Applied on the
+// receiver by the last-write-wins rule on (lamport, origin_daemon_id), so
+// redelivery is idempotent and ordering-independent.
+message MemoryDeliver {
+  string op_id = 1;            // correlation handle for the ack
+  string namespace = 2;
+  string key = 3;
+  bytes value = 4;
+  uint64 lamport = 5;
+  string origin_daemon_id = 6;
+  bool deleted = 7;            // tombstone
+  string updated_by = 8;
+}
+
+message MemoryAck {
+  string op_id = 1;
+  bool ok = 2;
+  string reason = 3;
+}
+
 message PeerOutbound {
   oneof msg {
     Hello hello = 1;
@@ -78,6 +98,8 @@ message PeerOutbound {
     TopicUnsubscribe topic_unsubscribe = 7;
     Goodbye goodbye = 8;
     HelloAck hello_ack = 9;
+    MemoryDeliver memory_deliver = 10;
+    MemoryAck memory_ack = 11;
   }
 }
 
@@ -91,5 +113,7 @@ message PeerInbound {
     TopicSubscribe topic_subscribe = 6;
     TopicUnsubscribe topic_unsubscribe = 7;
     Goodbye goodbye = 8;
+    MemoryDeliver memory_deliver = 10;
+    MemoryAck memory_ack = 11;
   }
 }

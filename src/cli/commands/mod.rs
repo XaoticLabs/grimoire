@@ -7,6 +7,7 @@ pub mod invoke;
 pub mod mail;
 pub mod memory;
 pub mod notify;
+pub mod ns;
 pub mod pact;
 pub mod peer;
 pub mod queue;

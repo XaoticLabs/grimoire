@@ -194,6 +194,12 @@ enum Commands {
         cmd: cli::commands::memory::MemoryCommand,
     },
 
+    /// Federated namespace memory (cross-daemon shared KV).
+    Ns {
+        #[command(subcommand)]
+        cmd: cli::commands::ns::NsCommand,
+    },
+
     /// Manage federation peers (`add` / `list` / `remove` / `ping`).
     Peer {
         #[command(subcommand)]
@@ -338,6 +344,7 @@ async fn main() {
                 Commands::Wake { cmd } => cli::commands::wake::run(cmd).await,
                 Commands::Workspace { cmd } => cli::commands::workspace::run(cmd).await,
                 Commands::Memory { cmd } => cli::commands::memory::run(cmd).await,
+                Commands::Ns { cmd } => cli::commands::ns::run(cmd).await,
                 Commands::Peer { cmd } => cli::commands::peer::run(cmd).await,
                 Commands::Topic { cmd } => cli::commands::topic::run(cmd).await,
                 Commands::Notify { message, level } => {

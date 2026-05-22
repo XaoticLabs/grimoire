@@ -12,7 +12,8 @@ use tracing::debug;
 
 use crate::shared::peer_proto::peer_client::PeerClient as TonicPeerClient;
 use crate::shared::peer_proto::{
-    Hello, MailAck, MailDeliver, PeerInbound, PeerOutbound, peer_inbound, peer_outbound,
+    Hello, MailAck, MailDeliver, MemoryAck, MemoryDeliver, PeerInbound, PeerOutbound, peer_inbound,
+    peer_outbound,
 };
 use crate::shared::protocol::StreamEvent;
 use crate::shared::types::{Peer, PeerState};
@@ -168,6 +169,8 @@ async fn run_once(
     // retry backoff off the real attempt number.
     let mut in_flight_outbox_id: Option<(String, u32)> = None;
     let mut in_flight_mail_id: Option<String> = None;
+    // F2 replication: (namespace_outbox row id, prior attempts, op_id).
+    let mut in_flight_memory: Option<(String, u32, String)> = None;
 
     // Initial pump in case rows were queued while disconnected.
     pump_one(
@@ -178,6 +181,7 @@ async fn run_once(
         &mut in_flight_mail_id,
     )
     .await?;
+    pump_memory(registry, peer, &out_tx, &mut in_flight_memory).await?;
 
     loop {
         tokio::select! {
@@ -196,21 +200,28 @@ async fn run_once(
                     Ok(None) => return Err(anyhow::anyhow!("stream closed")),
                     Err(e) => return Err(e.into()),
                 };
-                handle_inbound(registry, peer, msg, &out_tx, &mut in_flight_outbox_id, &mut in_flight_mail_id).await?;
+                handle_inbound(registry, peer, msg, &out_tx, &mut in_flight_outbox_id, &mut in_flight_mail_id, &mut in_flight_memory).await?;
                 let _ = registry.db.set_peer_last_seen(&peer.id, unix_now());
                 if in_flight_outbox_id.is_none() {
                     pump_one(registry, peer, &out_tx, &mut in_flight_outbox_id, &mut in_flight_mail_id).await?;
+                }
+                if in_flight_memory.is_none() {
+                    pump_memory(registry, peer, &out_tx, &mut in_flight_memory).await?;
                 }
             }
             () = notify_outbox.notified() => {
                 if in_flight_outbox_id.is_none() {
                     pump_one(registry, peer, &out_tx, &mut in_flight_outbox_id, &mut in_flight_mail_id).await?;
                 }
+                if in_flight_memory.is_none() {
+                    pump_memory(registry, peer, &out_tx, &mut in_flight_memory).await?;
+                }
             }
         }
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn handle_inbound(
     registry: &Arc<PeerRegistry>,
     peer: &Peer,
@@ -218,6 +229,7 @@ async fn handle_inbound(
     out_tx: &mpsc::Sender<PeerOutbound>,
     in_flight_outbox_id: &mut Option<(String, u32)>,
     in_flight_mail_id: &mut Option<String>,
+    in_flight_memory: &mut Option<(String, u32, String)>,
 ) -> anyhow::Result<()> {
     // Each arm is enumerated explicitly so dispatch for a new variant is a
     // compile error rather than silently routed to a wildcard.
@@ -257,9 +269,146 @@ async fn handle_inbound(
         Some(peer_inbound::Msg::TopicSubscribe(_) | peer_inbound::Msg::TopicUnsubscribe(_)) => {
             Ok(())
         }
+        Some(peer_inbound::Msg::MemoryDeliver(d)) => {
+            // Server pushed a namespace write at us — apply via LWW and ack.
+            let ack = apply_memory_deliver(&registry.db, &peer.id, &d);
+            let _ = out_tx
+                .send(PeerOutbound {
+                    msg: Some(peer_outbound::Msg::MemoryAck(ack)),
+                })
+                .await;
+            Ok(())
+        }
+        Some(peer_inbound::Msg::MemoryAck(ack)) => {
+            if let Some((id, attempts, op_id)) = in_flight_memory.take() {
+                if op_id == ack.op_id {
+                    handle_memory_ack(registry, peer, &id, attempts, &ack);
+                } else {
+                    // Ack for a different op than tracked; restore and ignore.
+                    *in_flight_memory = Some((id, attempts, op_id));
+                }
+            }
+            Ok(())
+        }
         Some(peer_inbound::Msg::Goodbye(_)) => Err(anyhow::anyhow!("peer goodbye")),
         None => Ok(()),
     }
+}
+
+/// Apply an inbound namespace write if the peer is authorized to replicate
+/// into that namespace, then build the ack. Authorization failures ack with
+/// `ok=false` so the sender stops retrying a namespace we don't accept.
+/// Shared by the outbound client and the inbound server.
+pub fn apply_memory_deliver(
+    db: &crate::daemon::persistence::Database,
+    peer_id: &str,
+    d: &MemoryDeliver,
+) -> MemoryAck {
+    use crate::daemon::namespace_db::NamespaceWrite;
+    match db.namespace_inbound_authorized(peer_id, &d.namespace) {
+        Ok(true) => {}
+        Ok(false) => {
+            return MemoryAck {
+                op_id: d.op_id.clone(),
+                ok: false,
+                reason: "namespace_not_federated_inbound".into(),
+            };
+        }
+        Err(e) => {
+            return MemoryAck {
+                op_id: d.op_id.clone(),
+                ok: false,
+                reason: format!("authz_error: {e}"),
+            };
+        }
+    }
+    let write = NamespaceWrite {
+        namespace: d.namespace.clone(),
+        key: d.key.clone(),
+        value: d.value.clone(),
+        lamport: d.lamport,
+        origin_daemon_id: d.origin_daemon_id.clone(),
+        deleted: d.deleted,
+        updated_by: d.updated_by.clone(),
+    };
+    match db.namespace_apply_write(&write) {
+        Ok(_) => MemoryAck {
+            op_id: d.op_id.clone(),
+            ok: true,
+            reason: String::new(),
+        },
+        Err(e) => MemoryAck {
+            op_id: d.op_id.clone(),
+            ok: false,
+            reason: format!("apply_error: {e}"),
+        },
+    }
+}
+
+fn handle_memory_ack(
+    registry: &Arc<PeerRegistry>,
+    peer: &Peer,
+    outbox_id: &str,
+    attempts: u32,
+    ack: &MemoryAck,
+) {
+    let now = unix_now();
+    if ack.ok {
+        let _ = registry.db.namespace_mark_outbox_delivered(outbox_id);
+    } else {
+        let backoff = backoff_secs(attempts + 1);
+        let _ = registry
+            .db
+            .namespace_mark_outbox_failed_retry(outbox_id, now + backoff as i64);
+        tracing::warn!(peer = %peer.name, op = %ack.op_id, reason = %ack.reason,
+            "namespace replication rejected");
+    }
+}
+
+/// Drain one namespace replication row for this peer, mirroring `pump_one`.
+async fn pump_memory(
+    registry: &Arc<PeerRegistry>,
+    peer: &Peer,
+    out_tx: &mpsc::Sender<PeerOutbound>,
+    in_flight_memory: &mut Option<(String, u32, String)>,
+) -> anyhow::Result<()> {
+    if in_flight_memory.is_some() {
+        return Ok(());
+    }
+    if let Ok(Some(p)) = registry.db.get_peer(&peer.id)
+        && p.state == PeerState::Removing
+    {
+        return Ok(());
+    }
+    let now = unix_now();
+    let Some(row) = registry.db.namespace_next_outbox(&peer.id, now)? else {
+        return Ok(());
+    };
+    registry.db.namespace_mark_outbox_in_flight(&row.id)?;
+    let deliver = MemoryDeliver {
+        op_id: row.op_id.clone(),
+        namespace: row.namespace.clone(),
+        key: row.key.clone(),
+        value: row.value.clone(),
+        lamport: row.lamport,
+        origin_daemon_id: row.origin_daemon_id.clone(),
+        deleted: row.deleted,
+        updated_by: row.updated_by.clone(),
+    };
+    if let Err(e) = out_tx
+        .send(PeerOutbound {
+            msg: Some(peer_outbound::Msg::MemoryDeliver(deliver)),
+        })
+        .await
+    {
+        let backoff = backoff_secs(row.attempts + 1);
+        let _ = registry
+            .db
+            .namespace_mark_outbox_failed_retry(&row.id, now + backoff as i64);
+        return Err(anyhow::anyhow!("send: {e}"));
+    }
+    *in_flight_memory = Some((row.id, row.attempts, row.op_id));
+    Ok(())
 }
 
 fn handle_outbox_ack(

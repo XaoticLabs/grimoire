@@ -418,6 +418,69 @@ impl Database {
             );
             CREATE INDEX IF NOT EXISTS topic_federations_by_topic
                 ON topic_federations(topic);
+
+            -- F2: federated namespace memory. A namespace is a string-named KV
+            -- store decoupled from git workspaces; it can replicate to peers.
+            -- Conflict resolution is last-write-wins on the (lamport,
+            -- origin_daemon_id) tuple. Deletes are tombstones (deleted=1) so
+            -- they propagate by the same LWW rule. See docs/specs for the v2
+            -- vector-clock design.
+            CREATE TABLE IF NOT EXISTS namespace_memory (
+                namespace        TEXT NOT NULL,
+                key              TEXT NOT NULL,
+                value            BLOB NOT NULL,
+                lamport          INTEGER NOT NULL,
+                origin_daemon_id TEXT NOT NULL,
+                deleted          INTEGER NOT NULL DEFAULT 0,
+                updated_at       INTEGER NOT NULL,
+                updated_by       TEXT NOT NULL,
+                PRIMARY KEY (namespace, key)
+            );
+            CREATE INDEX IF NOT EXISTS namespace_memory_by_key
+                ON namespace_memory(namespace, key);
+
+            -- Per-daemon Lamport clock (single row). Advances on every local
+            -- write and on observing a remote write's timestamp.
+            CREATE TABLE IF NOT EXISTS namespace_lamport (
+                node    INTEGER PRIMARY KEY CHECK (node = 0),
+                counter INTEGER NOT NULL
+            );
+            INSERT OR IGNORE INTO namespace_lamport (node, counter) VALUES (0, 0);
+
+            -- Which peers a namespace replicates to, and in which direction.
+            -- Mirrors topic_federations.
+            CREATE TABLE IF NOT EXISTS namespace_federations (
+                id          TEXT PRIMARY KEY,
+                peer_id     TEXT NOT NULL REFERENCES peers(id) ON DELETE CASCADE,
+                namespace   TEXT NOT NULL,
+                direction   TEXT NOT NULL,
+                created_at  INTEGER NOT NULL,
+                UNIQUE (peer_id, namespace)
+            );
+            CREATE INDEX IF NOT EXISTS namespace_federations_by_ns
+                ON namespace_federations(namespace);
+
+            -- Durable per-peer queue of namespace writes awaiting replication.
+            -- Same Pending/InFlight/Delivered backoff state machine as
+            -- peer_outbox; redelivery is safe because LWW apply is idempotent.
+            CREATE TABLE IF NOT EXISTS namespace_outbox (
+                id               TEXT PRIMARY KEY,
+                peer_id          TEXT NOT NULL REFERENCES peers(id) ON DELETE CASCADE,
+                op_id            TEXT NOT NULL,
+                namespace        TEXT NOT NULL,
+                key              TEXT NOT NULL,
+                value            BLOB NOT NULL,
+                lamport          INTEGER NOT NULL,
+                origin_daemon_id TEXT NOT NULL,
+                deleted          INTEGER NOT NULL,
+                updated_by       TEXT NOT NULL,
+                created_at       INTEGER NOT NULL,
+                attempts         INTEGER NOT NULL DEFAULT 0,
+                next_attempt_at  INTEGER NOT NULL,
+                state            TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS namespace_outbox_drain
+                ON namespace_outbox(peer_id, state, next_attempt_at);
             ",
         )?;
 

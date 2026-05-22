@@ -74,6 +74,7 @@ impl PeerRegistry {
     /// flip `Active` peer rows to `Down` until the client task reconnects.
     pub async fn reconcile_on_boot(&self) -> Result<()> {
         let _ = self.db.reset_outbox_in_flight()?;
+        let _ = self.db.namespace_reset_outbox_in_flight()?;
         for p in self.db.list_peers()? {
             if p.state == PeerState::Active {
                 self.db.set_peer_state(&p.id, PeerState::Down)?;
