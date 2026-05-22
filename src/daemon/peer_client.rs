@@ -154,8 +154,10 @@ async fn run_once(
         peer_id: peer.id.clone(),
     });
 
-    // Track currently-in-flight mail to match against MailAcks.
-    let mut in_flight_outbox_id: Option<String> = None;
+    // Track currently-in-flight mail to match against MailAcks. The u32 is the
+    // outbox row's prior-failure count, carried so a failed ack can grow the
+    // retry backoff off the real attempt number.
+    let mut in_flight_outbox_id: Option<(String, u32)> = None;
     let mut in_flight_mail_id: Option<String> = None;
 
     // Initial pump in case rows were queued while disconnected.
@@ -205,7 +207,7 @@ async fn handle_inbound(
     peer: &Peer,
     msg: PeerInbound,
     out_tx: &mpsc::Sender<PeerOutbound>,
-    in_flight_outbox_id: &mut Option<String>,
+    in_flight_outbox_id: &mut Option<(String, u32)>,
     in_flight_mail_id: &mut Option<String>,
 ) -> anyhow::Result<()> {
     // Each arm is enumerated explicitly so dispatch for a new variant is a
@@ -236,8 +238,8 @@ async fn handle_inbound(
         }
         Some(peer_inbound::Msg::MailAck(ack)) => {
             if Some(&ack.mail_id) == in_flight_mail_id.as_ref() {
-                if let Some(id) = in_flight_outbox_id.take() {
-                    handle_outbox_ack(registry, peer, &id, &ack);
+                if let Some((id, attempts)) = in_flight_outbox_id.take() {
+                    handle_outbox_ack(registry, peer, &id, attempts, &ack);
                 }
                 *in_flight_mail_id = None;
             }
@@ -251,7 +253,13 @@ async fn handle_inbound(
     }
 }
 
-fn handle_outbox_ack(registry: &Arc<PeerRegistry>, peer: &Peer, outbox_id: &str, ack: &MailAck) {
+fn handle_outbox_ack(
+    registry: &Arc<PeerRegistry>,
+    peer: &Peer,
+    outbox_id: &str,
+    attempts: u32,
+    ack: &MailAck,
+) {
     let now = unix_now();
     if ack.ok {
         let _ = registry.db.mark_outbox_delivered(outbox_id);
@@ -261,12 +269,11 @@ fn handle_outbox_ack(registry: &Arc<PeerRegistry>, peer: &Peer, outbox_id: &str,
             sender_seq: 0,
         });
     } else {
-        // TODO: thread the real `attempts` count from `peer_outbox` so the
-        // backoff curve actually escalates. Until then, treat every failed
-        // ack as the first retry — see `peer_outbox::OutboxRow.attempts`.
-        let attempts = 1u32;
-        let _ = registry.db.get_peer(&peer.id); // keep the DB touch for parity
-        let backoff = backoff_secs(attempts);
+        // `attempts` is the row's prior-failure count, so this delivery was
+        // attempt `attempts + 1`. Grow the backoff off that real number, the
+        // same way the local-send-failure path in `pump_one` does, so a
+        // persistently-unreachable peer is retried progressively less often.
+        let backoff = backoff_secs(attempts + 1);
         let _ = registry
             .db
             .mark_outbox_failed_retry(outbox_id, now + backoff as i64);
@@ -282,7 +289,7 @@ async fn pump_one(
     registry: &Arc<PeerRegistry>,
     peer: &Peer,
     out_tx: &mpsc::Sender<PeerOutbound>,
-    in_flight_outbox_id: &mut Option<String>,
+    in_flight_outbox_id: &mut Option<(String, u32)>,
     in_flight_mail_id: &mut Option<String>,
 ) -> anyhow::Result<()> {
     if in_flight_outbox_id.is_some() {
@@ -318,7 +325,7 @@ async fn pump_one(
             .mark_outbox_failed_retry(&row.id, now + backoff as i64);
         return Err(anyhow::anyhow!("send: {e}"));
     }
-    *in_flight_outbox_id = Some(row.id);
+    *in_flight_outbox_id = Some((row.id, row.attempts));
     *in_flight_mail_id = Some(row.mail_id);
     Ok(())
 }

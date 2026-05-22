@@ -348,7 +348,9 @@ async fn main() {
                     repo,
                     provider,
                 } => cli::commands::demo::run(&name, repo, provider).await,
-                Commands::Daemon => unreachable!(),
+                // `Daemon` is dispatched by the outer match arm above and never
+                // reaches this client-command dispatch.
+                Commands::Daemon => unreachable!("Daemon handled by outer match arm"),
             };
 
             if let Err(e) = result {

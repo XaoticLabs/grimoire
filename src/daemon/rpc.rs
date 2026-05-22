@@ -707,7 +707,18 @@ fn handle_direct_send(
             };
             RpcResponse::success_json(req.id, &result)
         }
-        MailState::Delivered => unreachable!(),
+        MailState::Delivered => {
+            // Direct send only ever computes Failed or Pending above; Delivered
+            // is set later, on ack. This arm exists for exhaustiveness — don't
+            // panic in an RPC handler if that invariant ever changes. Treat it
+            // as a successful enqueue and log the surprise.
+            tracing::warn!(%mail_id, "unexpected Delivered state at send time");
+            let result = MailSendResult {
+                delivered: 1,
+                mail_ids: vec![mail_id],
+            };
+            RpcResponse::success_json(req.id, &result)
+        }
     }
 }
 
