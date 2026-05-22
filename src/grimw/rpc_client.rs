@@ -5,10 +5,55 @@ use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
 use tracing::{info, warn};
 
+use tonic::transport::{Certificate, Channel, ClientTlsConfig, Endpoint};
+
 use crate::shared::worker_proto::{
     Heartbeat, ProviderCap, Register, WorkerMessage, daemon_message,
     worker_control_client::WorkerControlClient, worker_message,
 };
+
+/// Build the mTLS channel to the daemon's worker listener: present this
+/// worker's identity as the client cert and pin the daemon's cert as the sole
+/// trust anchor. The `domain_name` matches the constant SAN in every grimoire
+/// identity cert.
+async fn connect_daemon(config: &GrimwConfig) -> Result<Channel> {
+    if !config.daemon_url.starts_with("https://") {
+        return Err(anyhow::anyhow!(
+            "daemon_url must be https:// (worker link is mTLS); got {}",
+            config.daemon_url
+        ));
+    }
+
+    let daemon_cert = std::fs::read_to_string(&config.daemon_cert_path)
+        .with_context(|| format!("reading daemon cert {}", config.daemon_cert_path.display()))?;
+    if !config.daemon_cert_sha256.is_empty() {
+        let actual = crate::shared::tls::cert_fingerprint(&daemon_cert);
+        if actual != config.daemon_cert_sha256.to_lowercase() {
+            return Err(anyhow::anyhow!(
+                "pinned daemon cert fingerprint mismatch: config has {}, file is {actual}",
+                config.daemon_cert_sha256
+            ));
+        }
+    }
+
+    let identity = crate::shared::tls::load_or_init(
+        "worker",
+        config.tls_cert_path.as_deref(),
+        config.tls_key_path.as_deref(),
+    )?;
+
+    let tls = ClientTlsConfig::new()
+        .identity(identity.to_tonic())
+        .ca_certificate(Certificate::from_pem(daemon_cert.as_bytes()))
+        .domain_name(crate::shared::tls::TLS_SAN);
+
+    let channel = Endpoint::from_shared(config.daemon_url.clone())?
+        .tls_config(tls)?
+        .connect()
+        .await
+        .with_context(|| format!("connect daemon at {}", config.daemon_url))?;
+    Ok(channel)
+}
 
 /// How long the worker waits for its inbound stream to wake before
 /// declaring the daemon link broken and entering reconnect.
@@ -43,9 +88,8 @@ pub async fn run(
 
     let dispatcher = TaskDispatcher::new(config.providers.clone(), config.max_concurrent);
 
-    let mut client = WorkerControlClient::connect(config.daemon_url.clone())
-        .await
-        .with_context(|| format!("connect daemon at {}", config.daemon_url))?;
+    let channel = connect_daemon(&config).await?;
+    let mut client = WorkerControlClient::new(channel);
 
     let (tx, rx) = mpsc::channel::<WorkerMessage>(64);
 

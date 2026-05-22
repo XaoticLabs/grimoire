@@ -827,10 +827,24 @@ pub struct Peer {
     /// for hash-only storage; v1 keeps plaintext for ergonomics until
     /// a token-rotation UX lands.
     pub bearer_token: String,
+    /// PEM-encoded certificate of the remote daemon, pinned out-of-band at
+    /// `peer add` time and used as the sole TLS trust anchor for both the
+    /// outbound client (server-cert verification) and the inbound listener
+    /// (client-cert verification). The `peers.public_key` column carries it.
     pub public_key: Option<Vec<u8>>,
     pub state: PeerState,
     pub last_seen: Option<i64>,
     pub registered_at: i64,
+}
+
+impl Peer {
+    /// The pinned remote certificate as a PEM string, if present.
+    #[must_use]
+    pub fn pinned_cert_pem(&self) -> Option<String> {
+        self.public_key
+            .as_ref()
+            .and_then(|b| String::from_utf8(b.clone()).ok())
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

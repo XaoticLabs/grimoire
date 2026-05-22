@@ -58,11 +58,15 @@ nix = { version = "0.29", features = ["signal", "process", "user"] }
 async-stream = "0.3"
 async-trait = "0.1"
 toml = "1.1.2"
-tonic = { version = "0.14", features = ["tls-native-roots", "router"] }
+tonic = { version = "0.14", features = ["tls-ring", "router"] }
 tonic-prost = "0.14"
 prost = "0.14"
 semver = "1"
 blake3 = "1"
+# Self-signed identity certs for peer/worker mTLS. `ring` (transitive via
+# tonic/hyper-rustls) supplies SHA-256 for cert fingerprint pinning.
+rcgen = "0.13"
+ring = "0.17"
 subtle = "2"
 tempfile = "3"
 # `parking_lot::Mutex` is faster, smaller, and never poisons compared to

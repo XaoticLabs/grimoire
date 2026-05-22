@@ -149,6 +149,20 @@ pub async fn start() -> Result<()> {
         tracing::warn!(error = %e, "workspace registry reconcile failed");
     }
 
+    // Federation mTLS transport identity. Auto-generated + pinned on first
+    // boot under <grimoire_dir>/tls/daemon.{crt,key}, or loaded from explicit
+    // config paths. Shared by the outbound peer clients (client cert) and the
+    // inbound listener (server cert).
+    let tls_identity = Arc::new(crate::shared::tls::load_or_init(
+        "daemon",
+        config.daemon.tls_cert_path.as_deref(),
+        config.daemon.tls_key_path.as_deref(),
+    )?);
+    info!(
+        fingerprint = %tls_identity.fingerprint(),
+        "federation transport identity resolved"
+    );
+
     // Federation peer registry. Per spec Slice 2: this hosts outbound peer
     // clients + outbox drainers + dispatch into the inbox handler.
     let peer_registry = peer_registry::PeerRegistry::new(
@@ -156,6 +170,7 @@ pub async fn start() -> Result<()> {
         event_bus.clone(),
         clock.clone(),
         daemon_id.clone(),
+        tls_identity.clone(),
     );
     if let Err(e) = peer_registry.reconcile_on_boot().await {
         tracing::warn!(error = %e, "peer registry reconcile_on_boot failed");
@@ -163,7 +178,14 @@ pub async fn start() -> Result<()> {
     peer_registry.spawn_all_active().await;
 
     if let Some(addr) = config.daemon.peer_listen_addr.clone() {
-        spawn_peer_listener(addr, peer_registry.clone());
+        spawn_peer_listener(addr, peer_registry.clone(), tls_identity.clone());
+    }
+
+    // Worker-pool control plane. Bound only when `[worker]` is configured.
+    // mTLS: the daemon presents a dedicated "worker" identity cert and trusts
+    // only the worker certs pinned in `trusted_worker_certs`.
+    if let Some(worker_cfg) = config.worker.clone() {
+        spawn_worker_listener(worker_cfg, workers.clone());
     }
 
     // Resolve (and on first boot mint) the CLI/HTTP bearer token. Workers
@@ -255,22 +277,99 @@ fn replay_dormant_migration(db: &Arc<persistence::Database>, event_bus: &event_b
 /// Spawn the peer-federation gRPC listener as a background task. Errors in
 /// address parsing or the server loop are logged and the daemon continues
 /// without federation rather than failing boot.
-fn spawn_peer_listener(addr: String, peer_registry: Arc<peer_registry::PeerRegistry>) {
+fn spawn_peer_listener(
+    addr: String,
+    peer_registry: Arc<peer_registry::PeerRegistry>,
+    tls_identity: Arc<crate::shared::tls::Identity>,
+) {
     tokio::spawn(async move {
-        match addr.parse::<std::net::SocketAddr>() {
-            Ok(sa) => {
-                let svc = peer_rpc_server::PeerSvc::new(peer_registry);
-                if let Err(e) = tonic::transport::Server::builder()
-                    .add_service(svc)
-                    .serve(sa)
-                    .await
-                {
-                    tracing::error!(error = %e, "peer gRPC listener exited");
-                }
+        let Ok(sa) = addr.parse::<std::net::SocketAddr>() else {
+            tracing::warn!(addr = %addr, "invalid peer_listen_addr");
+            return;
+        };
+
+        // mTLS: present our identity as the server cert, and require inbound
+        // peers to present a client cert signed by — i.e. equal to, since each
+        // is self-signed — one of the certs we pinned at `peer add`. With no
+        // peers pinned yet the listener still binds, but every client cert is
+        // untrusted, so no inbound stream completes (the bearer-token check
+        // would reject unknown peers regardless). Newly-added inbound peers
+        // require a daemon restart to enter the trust bundle.
+        let mut tls = tonic::transport::ServerTlsConfig::new().identity(tls_identity.to_tonic());
+        let bundle = peer_registry
+            .db
+            .list_peers()
+            .unwrap_or_default()
+            .iter()
+            .filter_map(crate::shared::types::Peer::pinned_cert_pem)
+            .collect::<Vec<_>>()
+            .join("\n");
+        if bundle.is_empty() {
+            tracing::info!(
+                "peer listener: no pinned peer certs yet; inbound federation \
+                 stays closed until a peer is added and the daemon restarts"
+            );
+        } else {
+            tls = tls.client_ca_root(tonic::transport::Certificate::from_pem(bundle.as_bytes()));
+        }
+
+        let svc = peer_rpc_server::PeerSvc::new(peer_registry);
+        let mut server = match tonic::transport::Server::builder().tls_config(tls) {
+            Ok(s) => s,
+            Err(e) => {
+                tracing::error!(error = %e, "peer listener TLS config invalid");
+                return;
             }
-            Err(e) => tracing::warn!(addr = %addr, error = %e, "invalid peer_listen_addr"),
+        };
+        if let Err(e) = server.add_service(svc).serve(sa).await {
+            tracing::error!(error = %e, "peer gRPC listener exited");
         }
     });
+}
+
+/// Load the daemon's worker-listener identity and the pinned-worker-cert
+/// bundle, then spawn the mTLS worker control listener. Cert/load failures are
+/// logged and the worker pool stays down rather than failing daemon boot.
+fn spawn_worker_listener(
+    cfg: crate::shared::config::WorkerConfig,
+    workers: Arc<worker_registry::WorkerRegistry>,
+) {
+    let identity = match crate::shared::tls::load_or_init(
+        "worker",
+        cfg.tls_cert_path.as_deref(),
+        cfg.tls_key_path.as_deref(),
+    ) {
+        Ok(id) => Arc::new(id),
+        Err(e) => {
+            tracing::error!(error = %e, "worker listener disabled: identity load failed");
+            return;
+        }
+    };
+
+    // Concatenate pinned worker certs into a single client-CA bundle. A path
+    // that can't be read is skipped with a warning rather than aborting.
+    let mut certs = Vec::new();
+    for path in &cfg.trusted_worker_certs {
+        match std::fs::read_to_string(path) {
+            Ok(pem) => certs.push(pem),
+            Err(e) => tracing::warn!(path = %path.display(), error = %e,
+                "skipping unreadable trusted_worker_cert"),
+        }
+    }
+
+    info!(
+        addr = %cfg.listen_addr,
+        fingerprint = %identity.fingerprint(),
+        trusted_workers = certs.len(),
+        "worker control listener starting (mTLS)"
+    );
+    worker_rpc_server::spawn(
+        cfg.listen_addr,
+        workers,
+        cfg.secret,
+        identity,
+        certs.join("\n"),
+    );
 }
 
 /// Remove the socket + pid files. Best-effort: failures here mean the next

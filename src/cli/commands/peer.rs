@@ -5,18 +5,29 @@ use clap::Subcommand;
 use colored::Colorize;
 
 use crate::cli::client::DaemonClient;
-use crate::shared::protocol::{PeerAddResult, PeerListResult, PeerPingResult, PeerRemoveResult};
+use crate::shared::protocol::{
+    PeerAddResult, PeerListResult, PeerLocalCertResult, PeerPingResult, PeerRemoveResult,
+};
 
 #[derive(Debug, Subcommand)]
 pub enum PeerCommand {
-    /// Register a peer and attempt the initial handshake.
+    /// Register a peer and attempt the initial handshake. Requires the peer's
+    /// TLS cert (from `grim peer cert` on the remote daemon) for mTLS pinning.
     Add {
         name: String,
+        /// `https://host:port` of the peer's federation listener.
         #[arg(long)]
         url: String,
         #[arg(long)]
         token: String,
+        /// Path to the remote daemon's PEM cert (`grim peer cert > peer.crt`
+        /// on the other side), pinned as the TLS trust anchor.
+        #[arg(long)]
+        cert: std::path::PathBuf,
     },
+    /// Print this daemon's federation cert (PEM) + fingerprint, to hand to a
+    /// remote operator for pinning when they add us as a peer.
+    Cert,
     /// List configured peers.
     List,
     /// Remove a peer (cascades outbox/topic_federations; mail rows retained).
@@ -27,19 +38,32 @@ pub enum PeerCommand {
 
 pub async fn run(cmd: PeerCommand) -> Result<()> {
     match cmd {
-        PeerCommand::Add { name, url, token } => run_add(&name, &url, &token).await,
+        PeerCommand::Add {
+            name,
+            url,
+            token,
+            cert,
+        } => run_add(&name, &url, &token, &cert).await,
+        PeerCommand::Cert => run_cert().await,
         PeerCommand::List => run_list().await,
         PeerCommand::Remove { name } => run_remove(&name).await,
         PeerCommand::Ping { name } => run_ping(&name).await,
     }
 }
 
-async fn run_add(name: &str, url: &str, token: &str) -> Result<()> {
+async fn run_add(name: &str, url: &str, token: &str, cert: &std::path::Path) -> Result<()> {
+    let cert_pem = std::fs::read_to_string(cert)
+        .map_err(|e| anyhow!("reading peer cert {}: {e}", cert.display()))?;
     let mut client = DaemonClient::connect().await?;
     let resp = client
         .call(
             "peer.add",
-            serde_json::json!({ "name": name, "url": url, "bearer_token": token }),
+            serde_json::json!({
+                "name": name,
+                "url": url,
+                "bearer_token": token,
+                "cert_pem": cert_pem,
+            }),
         )
         .await?;
     if let Some(err) = resp.error {
@@ -53,6 +77,26 @@ async fn run_add(name: &str, url: &str, token: &str) -> Result<()> {
         result.peer_id,
         result.daemon_id
     );
+    Ok(())
+}
+
+async fn run_cert() -> Result<()> {
+    let mut client = DaemonClient::connect().await?;
+    let resp = client
+        .call("peer.local-cert", serde_json::json!({}))
+        .await?;
+    if let Some(err) = resp.error {
+        return Err(anyhow!("peer cert failed: {}", err.message));
+    }
+    let result: PeerLocalCertResult = serde_json::from_value(resp.result.unwrap_or_default())?;
+    // PEM to stdout (pipeable to a file); fingerprint to stderr so it doesn't
+    // pollute a redirected cert file.
+    eprintln!(
+        "{} {}",
+        "fingerprint (sha256):".green(),
+        result.fingerprint_sha256
+    );
+    print!("{}", result.cert_pem);
     Ok(())
 }
 

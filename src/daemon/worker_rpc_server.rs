@@ -133,12 +133,74 @@ impl WorkerControl for WorkerControlService {
 }
 
 impl WorkerControlService {
+    /// Construct the service. `routing` is shared with the (future)
+    /// `RemoteExecutor` so task events reach the originating agent; the
+    /// register/heartbeat/eviction path that makes the transport live does
+    /// not depend on it.
+    pub const fn new(
+        registry: Arc<WorkerRegistry>,
+        bearer_secret: String,
+        routing: RoutingMap,
+    ) -> Self {
+        Self {
+            registry,
+            bearer_secret,
+            routing,
+        }
+    }
+
     async fn route(routing: &RoutingMap, agent_id: &str, msg: WorkerMessage) {
         let map = routing.lock().await;
         if let Some(tx) = map.get(agent_id) {
             let _ = tx.send(msg).await;
         }
     }
+}
+
+/// Spawn the production worker-control gRPC listener with mTLS. The daemon
+/// presents `identity` as its server cert; only workers presenting a client
+/// cert in `trusted_certs_bundle` (concatenated PEM) complete the handshake.
+/// With an empty bundle the listener binds but no worker can register.
+pub fn spawn(
+    addr: std::net::SocketAddr,
+    registry: Arc<WorkerRegistry>,
+    bearer_secret: String,
+    identity: Arc<crate::shared::tls::Identity>,
+    trusted_certs_bundle: String,
+) {
+    use tonic::transport::{Certificate, Server, ServerTlsConfig};
+
+    let routing: RoutingMap = Arc::new(Mutex::new(std::collections::HashMap::default()));
+    let svc = WorkerControlService::new(registry, bearer_secret, routing);
+
+    let mut tls = ServerTlsConfig::new().identity(identity.to_tonic());
+    if trusted_certs_bundle.is_empty() {
+        warn!(
+            "worker listener: no trusted_worker_certs configured; no worker can \
+             register until one is pinned and the daemon restarts"
+        );
+    } else {
+        tls = tls.client_ca_root(Certificate::from_pem(trusted_certs_bundle.as_bytes()));
+    }
+
+    tokio::spawn(async move {
+        let mut server = match Server::builder().tls_config(tls) {
+            Ok(s) => s,
+            Err(e) => {
+                warn!(error = %e, "worker listener TLS config invalid");
+                return;
+            }
+        };
+        if let Err(e) = server
+            .add_service(
+                crate::shared::worker_proto::worker_control_server::WorkerControlServer::new(svc),
+            )
+            .serve(addr)
+            .await
+        {
+            warn!(error = %e, "worker gRPC listener exited");
+        }
+    });
 }
 
 pub mod test_helpers {

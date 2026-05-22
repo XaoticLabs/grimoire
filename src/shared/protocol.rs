@@ -836,12 +836,23 @@ pub struct PeerAddParams {
     pub name: String,
     pub url: String,
     pub bearer_token: String,
+    /// PEM-encoded certificate of the remote daemon, exchanged out-of-band
+    /// alongside the token. Pinned as the sole TLS trust anchor for this peer.
+    pub cert_pem: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PeerAddResult {
     pub peer_id: String,
     pub daemon_id: DaemonId,
+}
+
+/// Result of `peer.local-cert`: this daemon's own transport identity, to be
+/// handed to a remote operator so they can pin it when adding us as a peer.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PeerLocalCertResult {
+    pub cert_pem: String,
+    pub fingerprint_sha256: String,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]

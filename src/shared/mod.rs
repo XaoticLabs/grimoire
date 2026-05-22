@@ -4,5 +4,6 @@ pub mod constants;
 pub mod mail;
 pub mod peer_proto;
 pub mod protocol;
+pub mod tls;
 pub mod types;
 pub mod worker_proto;

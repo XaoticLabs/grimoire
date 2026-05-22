@@ -150,6 +150,7 @@ fn grimw_config_parses_minimum_example() {
     let toml = r#"
 daemon_url = "https://daemon.tailnet.ts.net:7878"
 secret = "shared-bearer-token-here"
+daemon_cert_path = "/etc/grimoire/daemon.crt"
 daemon_cert_sha256 = "abcd1234"
 max_concurrent = 4
 tags = ["beefy"]
@@ -160,6 +161,10 @@ binary = "/usr/local/bin/claude"
     let cfg: GrimwConfig = toml::from_str(toml).expect("grimw.toml parses");
     assert_eq!(cfg.daemon_url, "https://daemon.tailnet.ts.net:7878");
     assert_eq!(cfg.secret, "shared-bearer-token-here");
+    assert_eq!(
+        cfg.daemon_cert_path,
+        std::path::PathBuf::from("/etc/grimoire/daemon.crt")
+    );
     assert_eq!(cfg.daemon_cert_sha256, "abcd1234");
     assert_eq!(cfg.max_concurrent, 4);
     assert_eq!(cfg.tags, vec!["beefy".to_string()]);

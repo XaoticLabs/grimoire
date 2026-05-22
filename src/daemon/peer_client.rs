@@ -7,7 +7,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{Notify, mpsc, oneshot};
 use tonic::Request;
-use tonic::transport::Endpoint;
+use tonic::transport::{Certificate, ClientTlsConfig, Endpoint};
 use tracing::debug;
 
 use crate::shared::peer_proto::peer_client::PeerClient as TonicPeerClient;
@@ -91,10 +91,19 @@ async fn run_once(
     notify_outbox: &Arc<Notify>,
     shutdown_rx: &mut oneshot::Receiver<()>,
 ) -> anyhow::Result<()> {
-    if peer.url.starts_with("https://") {
-        return Err(anyhow::anyhow!("peer_tls_not_supported_yet"));
-    }
-    let endpoint = Endpoint::from_shared(peer.url.clone())?.connect_timeout(PEER_CONNECT_TIMEOUT);
+    // mTLS: present our identity as the client cert and pin the peer's cert
+    // as the sole trust anchor for the server side. `domain_name` matches the
+    // constant SAN minted into every grimoire identity cert.
+    let Some(peer_cert) = peer.pinned_cert_pem() else {
+        return Err(anyhow::anyhow!("peer_missing_pinned_cert"));
+    };
+    let tls = ClientTlsConfig::new()
+        .identity(registry.tls_identity.to_tonic())
+        .ca_certificate(Certificate::from_pem(peer_cert.as_bytes()))
+        .domain_name(crate::shared::tls::TLS_SAN);
+    let endpoint = Endpoint::from_shared(peer.url.clone())?
+        .tls_config(tls)?
+        .connect_timeout(PEER_CONNECT_TIMEOUT);
     let channel = endpoint.connect().await?;
     let mut client = TonicPeerClient::new(channel);
 

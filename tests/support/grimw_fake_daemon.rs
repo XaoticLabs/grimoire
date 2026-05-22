@@ -13,6 +13,7 @@ use grimoire::shared::worker_proto::{
 };
 use tokio::sync::{Mutex, mpsc};
 use tokio_stream::wrappers::ReceiverStream;
+use tonic::transport::{Certificate, ServerTlsConfig};
 use tonic::{Request, Response, Status, Streaming, transport::Server};
 
 pub struct FakeDaemon {
@@ -70,7 +71,21 @@ impl FakeDaemon {
     pub async fn start_with_provider(provider: &str, version: &str) -> Self {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let local_addr = listener.local_addr().unwrap();
-        let addr_str = format!("http://{local_addr}");
+        let addr_str = format!("https://{local_addr}");
+
+        // mTLS identities: the daemon presents `daemon_id` and trusts the
+        // worker's client cert; the worker pins `daemon_id` and presents
+        // `worker_id`. Both are written to the tempdir so the grimw.toml can
+        // point at them.
+        let tempdir = tempfile::tempdir().unwrap();
+        let daemon_id = grimoire::shared::tls::generate("daemon").unwrap();
+        let worker_id = grimoire::shared::tls::generate("worker").unwrap();
+        let daemon_cert_path = tempdir.path().join("daemon.crt");
+        let worker_cert_path = tempdir.path().join("worker.crt");
+        let worker_key_path = tempdir.path().join("worker.key");
+        std::fs::write(&daemon_cert_path, daemon_id.cert_pem()).unwrap();
+        std::fs::write(&worker_cert_path, worker_id.cert_pem()).unwrap();
+        std::fs::write(&worker_key_path, worker_id.key_pem()).unwrap();
 
         let received = Arc::new(Mutex::new(Vec::new()));
         let (to_worker, to_worker_rx) = mpsc::channel::<DaemonMessage>(64);
@@ -83,9 +98,14 @@ impl FakeDaemon {
 
         let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
 
+        let tls = ServerTlsConfig::new()
+            .identity(daemon_id.to_tonic())
+            .client_ca_root(Certificate::from_pem(worker_id.cert_pem().as_bytes()));
         let incoming = tokio_stream::wrappers::TcpListenerStream::new(listener);
         tokio::spawn(async move {
             let _ = Server::builder()
+                .tls_config(tls)
+                .unwrap()
                 .add_service(WorkerControlServer::new(svc))
                 .serve_with_incoming_shutdown(incoming, async {
                     let _ = shutdown_rx.await;
@@ -93,13 +113,15 @@ impl FakeDaemon {
                 .await;
         });
 
-        // Write a temp grimw.toml.
-        let tempdir = tempfile::tempdir().unwrap();
+        // Write a temp grimw.toml pinning the daemon cert + worker identity.
         let config_path = tempdir.path().join("grimw.toml");
         let toml = format!(
             r#"
 daemon_url = "{addr_str}"
 secret = "test-secret"
+daemon_cert_path = "{daemon_cert}"
+tls_cert_path = "{worker_cert}"
+tls_key_path = "{worker_key}"
 worker_id = "w-test"
 max_concurrent = 4
 tags = []
@@ -109,6 +131,9 @@ binary = "sh"
 args_template = ["-c", "{{task}}"]
 version = "{version}"
 "#,
+            daemon_cert = daemon_cert_path.display(),
+            worker_cert = worker_cert_path.display(),
+            worker_key = worker_key_path.display(),
         );
         std::fs::write(&config_path, toml).unwrap();
 

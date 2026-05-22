@@ -15,6 +15,7 @@ use tokio::sync::Notify;
 
 use crate::shared::constants::generate_short_id;
 use crate::shared::protocol::PeerSummary;
+use crate::shared::tls::Identity;
 use crate::shared::types::{DaemonId, Peer, PeerState};
 
 use super::clock::Clock;
@@ -40,6 +41,9 @@ pub struct PeerRegistry {
     pub daemon_id: DaemonId,
     pub handles: Mutex<HashMap<String, PeerHandle>>,
     pub inbox: Arc<InboxHandler>,
+    /// This daemon's transport identity, presented as the client certificate
+    /// on outbound peer links (mTLS).
+    pub tls_identity: Arc<Identity>,
 }
 
 impl PeerRegistry {
@@ -48,6 +52,7 @@ impl PeerRegistry {
         bus: EventBus,
         clock: Arc<dyn Clock>,
         daemon_id: DaemonId,
+        tls_identity: Arc<Identity>,
     ) -> Arc<Self> {
         let inbox = Arc::new(InboxHandler::new(
             db.clone(),
@@ -61,6 +66,7 @@ impl PeerRegistry {
             daemon_id,
             handles: Mutex::new(HashMap::new()),
             inbox,
+            tls_identity,
         })
     }
 
@@ -134,6 +140,7 @@ impl PeerRegistry {
         name: &str,
         url: &str,
         bearer_token: &str,
+        cert_pem: &str,
         timeout_secs: u64,
     ) -> Result<Peer> {
         // Validate name + token shapes.
@@ -143,11 +150,13 @@ impl PeerRegistry {
         if !is_valid_bearer_token(bearer_token) {
             return Err(anyhow!("invalid_bearer_token"));
         }
-        if url.starts_with("https://") {
-            return Err(anyhow!("peer_tls_not_supported_yet"));
+        // mTLS is mandatory: peers speak gRPC-over-TLS and we pin the remote
+        // cert. Reject plaintext URLs and missing/garbage certs up front.
+        if !url.starts_with("https://") {
+            return Err(anyhow!("peer_url_must_be_https"));
         }
-        if !url.starts_with("http://") {
-            return Err(anyhow!("invalid_peer_url"));
+        if !cert_pem.contains("BEGIN CERTIFICATE") {
+            return Err(anyhow!("invalid_peer_cert"));
         }
         if self.db.get_peer_by_name(name)?.is_some() {
             return Err(anyhow!("peer_name_exists"));
@@ -161,7 +170,7 @@ impl PeerRegistry {
             url: url.to_string(),
             bearer_token_hash: token_hash,
             bearer_token: bearer_token.to_string(),
-            public_key: None,
+            public_key: Some(cert_pem.as_bytes().to_vec()),
             state: PeerState::Pending,
             last_seen: None,
             registered_at: unix_now(),

@@ -40,11 +40,13 @@ pub async fn handle_rpc_test(
 ) -> RpcResponse {
     use super::clock::SystemClock;
     let clock: Arc<dyn super::clock::Clock> = Arc::new(SystemClock);
+    let tls_identity = Arc::new(crate::shared::tls::generate("daemon").expect("gen test identity"));
     let peer_registry = super::peer_registry::PeerRegistry::new(
         db.clone(),
         bus.clone(),
         clock,
         "00000000".to_string(),
+        tls_identity,
     );
     handle_rpc(
         manager,
@@ -111,6 +113,7 @@ pub async fn handle_rpc(
         "memory.list" => handle_memory_list(db, req),
         "memory.delete" => handle_memory_delete(db, bus, req),
         "peer.add" => handle_peer_add(peer_registry, req).await,
+        "peer.local-cert" => handle_peer_local_cert(peer_registry, req),
         "peer.list" => handle_peer_list(peer_registry, req).await,
         "peer.remove" => handle_peer_remove(peer_registry, req).await,
         "peer.ping" => handle_peer_ping(peer_registry, req).await,
@@ -1362,7 +1365,13 @@ async fn handle_peer_add(peer_registry: &Arc<PeerRegistry>, req: RpcRequest) -> 
         Err(e) => return e,
     };
     match peer_registry
-        .register_peer(&params.name, &params.url, &params.bearer_token, 10)
+        .register_peer(
+            &params.name,
+            &params.url,
+            &params.bearer_token,
+            &params.cert_pem,
+            10,
+        )
         .await
     {
         Ok(peer) => RpcResponse::success_json(
@@ -1374,6 +1383,19 @@ async fn handle_peer_add(peer_registry: &Arc<PeerRegistry>, req: RpcRequest) -> 
         ),
         Err(e) => rpc_err(req.id, &e.to_string()),
     }
+}
+
+/// Return this daemon's transport identity (cert PEM + SHA-256 fingerprint) so
+/// an operator can hand it to a remote daemon for pinning at `peer add`.
+fn handle_peer_local_cert(peer_registry: &Arc<PeerRegistry>, req: RpcRequest) -> RpcResponse {
+    let id = &peer_registry.tls_identity;
+    RpcResponse::success_json(
+        req.id,
+        &crate::shared::protocol::PeerLocalCertResult {
+            cert_pem: id.cert_pem().to_string(),
+            fingerprint_sha256: id.fingerprint(),
+        },
+    )
 }
 
 async fn handle_peer_list(peer_registry: &Arc<PeerRegistry>, req: RpcRequest) -> RpcResponse {

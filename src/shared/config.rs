@@ -83,10 +83,18 @@ pub struct WorkerConfig {
     pub heartbeat_timeout_secs: u64,
     #[serde(default = "default_heartbeat_interval_hint")]
     pub heartbeat_interval_hint_secs: u64,
+    /// The daemon's worker-listener transport identity (server cert/key).
+    /// Unset → auto-generated + pinned under `<grimoire_dir>/tls/worker.{crt,key}`.
     #[serde(default)]
     pub tls_cert_path: Option<PathBuf>,
     #[serde(default)]
     pub tls_key_path: Option<PathBuf>,
+    /// Paths to the PEM certs of workers allowed to connect (mTLS client-cert
+    /// pinning). Each worker exposes its cert at `<grimoire_dir>/tls/worker.crt`.
+    /// Empty → the listener binds but trusts no client cert, so no worker can
+    /// register (the bearer secret alone is not accepted without a pinned cert).
+    #[serde(default)]
+    pub trusted_worker_certs: Vec<PathBuf>,
 }
 
 fn default_worker_listen_addr() -> std::net::SocketAddr {
@@ -148,6 +156,13 @@ pub struct DaemonConfig {
     /// arrive but `mail.send` still routes locally.
     #[serde(default)]
     pub peer_listen_addr: Option<String>,
+    /// Federation mTLS: explicit transport-identity cert/key. When unset
+    /// (default) the daemon auto-generates and pins a self-signed pair under
+    /// `<grimoire_dir>/tls/daemon.{crt,key}`. Set both for org PKI.
+    #[serde(default)]
+    pub tls_cert_path: Option<PathBuf>,
+    #[serde(default)]
+    pub tls_key_path: Option<PathBuf>,
     /// Authentication for the local UDS RPC and HTTP dashboard. Workers
     /// and peers carry their own per-link tokens (see `WorkerConfig.secret`
     /// and `peer add --token`); this section only controls the CLI/HTTP
@@ -181,6 +196,8 @@ impl Default for DaemonConfig {
             peer_handshake_timeout_secs: default_peer_handshake_timeout_secs(),
             peer_heartbeat_interval_secs: default_peer_heartbeat_interval_secs(),
             peer_listen_addr: None,
+            tls_cert_path: None,
+            tls_key_path: None,
             auth: AuthConfig::default(),
         }
     }
