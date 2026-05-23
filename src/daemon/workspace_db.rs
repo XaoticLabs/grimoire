@@ -11,7 +11,8 @@ use rusqlite::params;
 use std::path::PathBuf;
 
 use crate::shared::types::{
-    MemoryEntry, MemoryListItem, Workspace, WorkspaceListEntry, WorkspaceState,
+    FederationDirection, MemoryEntry, MemoryListItem, Workspace, WorkspaceFederation,
+    WorkspaceKind, WorkspaceListEntry, WorkspaceState,
 };
 
 use super::persistence::Database;
@@ -32,8 +33,10 @@ impl Database {
     pub fn insert_workspace(&self, ws: &Workspace) -> Result<()> {
         let conn = self.workspace_conn_lock();
         conn.execute(
-            "INSERT INTO workspaces (id, path, repo_path, branch, state, created_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            "INSERT INTO workspaces
+                (id, path, repo_path, branch, state, created_at,
+                 kind, home_daemon_id, home_workspace_id)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
             params![
                 ws.id,
                 ws.path.to_string_lossy(),
@@ -41,6 +44,9 @@ impl Database {
                 ws.branch,
                 ws.state.as_str(),
                 ws.created_at.timestamp(),
+                ws.kind.as_str(),
+                ws.home_daemon_id,
+                ws.home_workspace_id,
             ],
         )?;
         Ok(())
@@ -49,7 +55,8 @@ impl Database {
     pub fn get_workspace(&self, id: &str) -> Result<Option<Workspace>> {
         let conn = self.workspace_conn_lock();
         let mut stmt = conn.prepare(
-            "SELECT id, path, repo_path, branch, state, created_at
+            "SELECT id, path, repo_path, branch, state, created_at,
+                    kind, home_daemon_id, home_workspace_id
              FROM workspaces WHERE id = ?1",
         )?;
         let mut rows = stmt.query(params![id])?;
@@ -63,7 +70,8 @@ impl Database {
         let conn = self.workspace_conn_lock();
         let mut stmt = conn.prepare(
             "SELECT w.id, w.path, w.branch, w.state, w.created_at,
-                    COALESCE(c.cnt, 0) AS agent_count
+                    COALESCE(c.cnt, 0) AS agent_count,
+                    w.kind, w.home_daemon_id, w.home_workspace_id
              FROM workspaces w
              LEFT JOIN (
                  SELECT workspace_id, COUNT(*) AS cnt
@@ -79,6 +87,7 @@ impl Database {
             let state_str: String = row.get(3)?;
             let created_at: i64 = row.get(4)?;
             let count: i64 = row.get(5)?;
+            let kind_str: String = row.get(6)?;
             out.push(WorkspaceListEntry {
                 id: row.get(0)?,
                 path: PathBuf::from(path_str),
@@ -89,6 +98,9 @@ impl Database {
                     .timestamp_opt(created_at, 0)
                     .single()
                     .unwrap_or_else(Utc::now),
+                kind: kind_str.parse().unwrap_or(WorkspaceKind::Local),
+                home_daemon_id: row.get(7)?,
+                home_workspace_id: row.get(8)?,
             });
         }
         Ok(out)
@@ -382,6 +394,159 @@ impl Database {
         }
         Ok(out)
     }
+
+    // --- F3a: workspace federation ---
+
+    /// Upsert a `workspace_federations` row, merging the existing
+    /// direction with the requested one the same way `topic_federations`
+    /// does (Inbound + Outbound → Both). Returns the post-merge direction
+    /// so the caller can echo the effective state back.
+    pub fn upsert_workspace_federation(
+        &self,
+        id: &str,
+        peer_id: &str,
+        workspace_id: &str,
+        direction: FederationDirection,
+        created_at: i64,
+    ) -> Result<FederationDirection> {
+        let conn = self.workspace_conn_lock();
+        let existing: Option<String> = conn
+            .query_row(
+                "SELECT direction FROM workspace_federations
+                 WHERE peer_id = ?1 AND workspace_id = ?2",
+                params![peer_id, workspace_id],
+                |r| r.get::<_, String>(0),
+            )
+            .ok();
+        let final_dir = if let Some(s) = existing {
+            let cur: FederationDirection = s.parse().unwrap_or(FederationDirection::Both);
+            cur.merge(direction)
+        } else {
+            direction
+        };
+        conn.execute(
+            "INSERT INTO workspace_federations
+                (id, peer_id, workspace_id, direction, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5)
+             ON CONFLICT(peer_id, workspace_id) DO UPDATE SET direction = excluded.direction",
+            params![id, peer_id, workspace_id, final_dir.as_str(), created_at],
+        )?;
+        Ok(final_dir)
+    }
+
+    /// Delete a `workspace_federations` row. Returns the row count so the
+    /// caller can distinguish "removed" from "no-op". Symmetric to
+    /// `delete_topic_federation`.
+    pub fn delete_workspace_federation(&self, peer_id: &str, workspace_id: &str) -> Result<usize> {
+        let conn = self.workspace_conn_lock();
+        Ok(conn.execute(
+            "DELETE FROM workspace_federations WHERE peer_id = ?1 AND workspace_id = ?2",
+            params![peer_id, workspace_id],
+        )?)
+    }
+
+    /// All federation rows for `workspace_id` regardless of direction —
+    /// used by `workspace show` and (in F3b) by the producer-side fanout.
+    pub fn list_workspace_federations_for(
+        &self,
+        workspace_id: &str,
+    ) -> Result<Vec<WorkspaceFederation>> {
+        let conn = self.workspace_conn_lock();
+        let mut stmt = conn.prepare(
+            "SELECT id, peer_id, workspace_id, direction, created_at
+             FROM workspace_federations
+             WHERE workspace_id = ?1
+             ORDER BY created_at ASC",
+        )?;
+        let mut rows = stmt.query(params![workspace_id])?;
+        let mut out = Vec::new();
+        while let Some(row) = rows.next()? {
+            let dir_str: String = row.get(3)?;
+            let created: i64 = row.get(4)?;
+            out.push(WorkspaceFederation {
+                id: row.get(0)?,
+                peer_id: row.get(1)?,
+                workspace_id: row.get(2)?,
+                direction: dir_str.parse().unwrap_or(FederationDirection::Both),
+                created_at: Utc
+                    .timestamp_opt(created, 0)
+                    .single()
+                    .unwrap_or_else(Utc::now),
+            });
+        }
+        Ok(out)
+    }
+
+    /// Peer ids on the home daemon whose subscription includes outbound
+    /// fanout for this workspace. F3b reads this to decide who gets a
+    /// `workspace_event_outbox` row on each `WorkspaceWatcher` emit.
+    pub fn workspace_outbound_peers(&self, workspace_id: &str) -> Result<Vec<String>> {
+        let conn = self.workspace_conn_lock();
+        let mut stmt = conn.prepare(
+            "SELECT peer_id FROM workspace_federations
+             WHERE workspace_id = ?1 AND direction IN ('outbound', 'both')",
+        )?;
+        let rows = stmt.query_map(params![workspace_id], |r| r.get::<_, String>(0))?;
+        Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+    }
+
+    /// True iff `peer_id` is allowed to push workspace events at us for
+    /// the local shadow `workspace_id`. Mirrors
+    /// `topic_federation_inbound_authorized`. Used by F3c.
+    pub fn workspace_federation_inbound_authorized(
+        &self,
+        peer_id: &str,
+        workspace_id: &str,
+    ) -> Result<bool> {
+        let conn = self.workspace_conn_lock();
+        let dir: Option<String> = conn
+            .query_row(
+                "SELECT direction FROM workspace_federations
+                 WHERE peer_id = ?1 AND workspace_id = ?2",
+                params![peer_id, workspace_id],
+                |r| r.get::<_, String>(0),
+            )
+            .ok();
+        let Some(d) = dir else { return Ok(false) };
+        let parsed: FederationDirection = d.parse().unwrap_or(FederationDirection::Both);
+        Ok(matches!(
+            parsed,
+            FederationDirection::Inbound | FederationDirection::Both
+        ))
+    }
+
+    /// Insert a shadow workspace row pointing at a remote home. The
+    /// shadow has no on-disk worktree; `path` is filled with the sentinel
+    /// `shadow://<home-daemon>/<home-ws>` so the existing `UNIQUE(path)`
+    /// constraint still holds and accidental `list_workspace_paths`
+    /// callers don't confuse it for a real directory.
+    pub fn insert_shadow_workspace(
+        &self,
+        local_id: &str,
+        home_daemon_id: &str,
+        home_workspace_id: &str,
+        branch: &str,
+        now: DateTime<Utc>,
+    ) -> Result<()> {
+        let sentinel = format!("shadow://{home_daemon_id}/{home_workspace_id}");
+        let conn = self.workspace_conn_lock();
+        conn.execute(
+            "INSERT INTO workspaces
+                (id, path, repo_path, branch, state, created_at,
+                 kind, home_daemon_id, home_workspace_id)
+             VALUES (?1, ?2, '', ?3, ?4, ?5, 'Shadow', ?6, ?7)",
+            params![
+                local_id,
+                sentinel,
+                branch,
+                WorkspaceState::Active.as_str(),
+                now.timestamp(),
+                home_daemon_id,
+                home_workspace_id,
+            ],
+        )?;
+        Ok(())
+    }
 }
 
 fn row_to_workspace(row: &rusqlite::Row) -> Result<Workspace> {
@@ -389,6 +554,7 @@ fn row_to_workspace(row: &rusqlite::Row) -> Result<Workspace> {
     let repo_str: String = row.get(2)?;
     let state_str: String = row.get(4)?;
     let created_at: i64 = row.get(5)?;
+    let kind_str: String = row.get(6)?;
     let dt: DateTime<Utc> = Utc
         .timestamp_opt(created_at, 0)
         .single()
@@ -400,5 +566,8 @@ fn row_to_workspace(row: &rusqlite::Row) -> Result<Workspace> {
         branch: row.get(3)?,
         state: state_str.parse().unwrap_or(WorkspaceState::Active),
         created_at: dt,
+        kind: kind_str.parse().unwrap_or(WorkspaceKind::Local),
+        home_daemon_id: row.get(7)?,
+        home_workspace_id: row.get(8)?,
     })
 }

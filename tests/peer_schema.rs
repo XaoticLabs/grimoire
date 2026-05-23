@@ -117,3 +117,94 @@ fn topic_federation_direction_merge_idempotent() {
         .unwrap();
     assert_eq!(dir2, FederationDirection::Both);
 }
+
+/// F3a — `workspace_federations` mirrors `topic_federations`: Outbound +
+/// Inbound merges to Both, and the row is keyed UNIQUE on
+/// (peer_id, workspace_id) so a re-federate is an upsert, not a duplicate.
+#[test]
+fn workspace_federation_merges_and_lists() {
+    use chrono::Utc;
+    use grimoire::shared::types::FederationDirection;
+    let db = fresh_db();
+    let peer = fake_peer("delta", "abcdef0123456789abcdef0123456789");
+    db.insert_peer(&peer).unwrap();
+
+    // Home-side: a local workspace gets opted into outbound federation.
+    let ws = grimoire::shared::types::Workspace {
+        id: "frontend".into(),
+        path: "/tmp/frontend".into(),
+        repo_path: "/tmp/repo".into(),
+        branch: "main".into(),
+        state: grimoire::shared::types::WorkspaceState::Active,
+        created_at: Utc::now(),
+        kind: grimoire::shared::types::WorkspaceKind::Local,
+        home_daemon_id: None,
+        home_workspace_id: None,
+    };
+    db.insert_workspace(&ws).unwrap();
+
+    let d1 = db
+        .upsert_workspace_federation(
+            "wf1",
+            &peer.id,
+            "frontend",
+            FederationDirection::Outbound,
+            unix_now(),
+        )
+        .unwrap();
+    assert_eq!(d1, FederationDirection::Outbound);
+    let d2 = db
+        .upsert_workspace_federation(
+            "wf2",
+            &peer.id,
+            "frontend",
+            FederationDirection::Inbound,
+            unix_now(),
+        )
+        .unwrap();
+    assert_eq!(d2, FederationDirection::Both);
+
+    let rows = db.list_workspace_federations_for("frontend").unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].direction, FederationDirection::Both);
+
+    // Outbound-peers query honors direction.
+    let peers = db.workspace_outbound_peers("frontend").unwrap();
+    assert_eq!(peers, vec![peer.id.clone()]);
+    // Inbound-authz mirror.
+    assert!(
+        db.workspace_federation_inbound_authorized(&peer.id, "frontend")
+            .unwrap()
+    );
+
+    // Unfederate is idempotent.
+    assert_eq!(
+        db.delete_workspace_federation(&peer.id, "frontend").unwrap(),
+        1
+    );
+    assert_eq!(
+        db.delete_workspace_federation(&peer.id, "frontend").unwrap(),
+        0
+    );
+}
+
+/// F3a — a Shadow workspace row carries `home_daemon_id` +
+/// `home_workspace_id`, lives at the `shadow://…` sentinel path, and
+/// roundtrips through `get_workspace`. `kind=Local` is the default for
+/// every pre-F3a row per the migration.
+#[test]
+fn shadow_workspace_roundtrips() {
+    use chrono::Utc;
+    let db = fresh_db();
+    db.insert_shadow_workspace("frontend-shadow", "abcdef01", "frontend", "main", Utc::now())
+        .unwrap();
+    let got = db.get_workspace("frontend-shadow").unwrap().unwrap();
+    assert_eq!(got.kind, grimoire::shared::types::WorkspaceKind::Shadow);
+    assert_eq!(got.home_daemon_id.as_deref(), Some("abcdef01"));
+    assert_eq!(got.home_workspace_id.as_deref(), Some("frontend"));
+    assert_eq!(
+        got.path.to_string_lossy(),
+        "shadow://abcdef01/frontend",
+        "shadow path uses sentinel scheme to preserve UNIQUE(path)"
+    );
+}

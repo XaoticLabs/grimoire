@@ -504,6 +504,38 @@ impl Database {
             conn.execute_batch("ALTER TABLE agents ADD COLUMN workspace_id TEXT;")?;
         }
 
+        // F3a: workspaces gain `kind` (Local | Shadow) + home pointers so a
+        // peer daemon can store a thin "shadow" row pointing at a workspace
+        // homed on another daemon. Shadows have no on-disk worktree — the
+        // path column is filled with a sentinel `shadow://<home-id>/<ws-id>`
+        // so the existing UNIQUE constraint still holds.
+        let has_kind: bool = conn
+            .prepare("SELECT kind FROM workspaces LIMIT 0")
+            .is_ok();
+        if !has_kind {
+            conn.execute_batch(
+                "ALTER TABLE workspaces ADD COLUMN kind TEXT NOT NULL DEFAULT 'Local';
+                 ALTER TABLE workspaces ADD COLUMN home_daemon_id TEXT;
+                 ALTER TABLE workspaces ADD COLUMN home_workspace_id TEXT;",
+            )?;
+        }
+        // F3a: per-peer federation rows. The home daemon owns the
+        // `Outbound`-direction rows (it ships events out); a peer with an
+        // `Inbound` row is allowed to apply incoming events to its local
+        // shadow. Direction follows the topic_federations precedent.
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS workspace_federations (
+                id           TEXT PRIMARY KEY,
+                peer_id      TEXT NOT NULL REFERENCES peers(id) ON DELETE CASCADE,
+                workspace_id TEXT NOT NULL,
+                direction    TEXT NOT NULL,
+                created_at   INTEGER NOT NULL,
+                UNIQUE (peer_id, workspace_id)
+             );
+             CREATE INDEX IF NOT EXISTS workspace_federations_by_ws
+                ON workspace_federations(workspace_id);",
+        )?;
+
         Ok(())
     }
 

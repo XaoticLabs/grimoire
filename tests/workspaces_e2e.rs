@@ -277,6 +277,9 @@ async fn boot_reconcile_orphan_row_deletes_and_cascades() {
         branch: "wip".into(),
         state: WorkspaceState::Active,
         created_at: Utc::now(),
+        kind: grimoire::shared::types::WorkspaceKind::Local,
+        home_daemon_id: None,
+        home_workspace_id: None,
     };
     db.insert_workspace(&ws).unwrap();
 

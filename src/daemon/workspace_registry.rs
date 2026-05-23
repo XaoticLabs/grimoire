@@ -208,6 +208,9 @@ impl WorkspaceRegistry {
             branch: branch.to_string(),
             state: WorkspaceState::Active,
             created_at: Utc::now(),
+            kind: crate::shared::types::WorkspaceKind::Local,
+            home_daemon_id: None,
+            home_workspace_id: None,
         };
 
         if let Err(e) = self.db.insert_workspace(&ws) {
