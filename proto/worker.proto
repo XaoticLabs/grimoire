@@ -32,9 +32,6 @@ message Register {
   uint32 max_concurrent = 4;
   repeated ProviderCap providers = 5;
   repeated string tags = 6;
-  // Wire-format version of the worker control protocol. Bumped on
-  // wire-incompatible changes to this file. Defaults to 0 for older
-  // workers, which the daemon rejects.
   uint32 protocol_version = 7;
 }
 
@@ -56,15 +53,7 @@ message AssignTask {
   string cwd = 5;
   optional string model = 6;
   map<string, string> env = 7;
-
-  // Wrapped as a oneof so callers can distinguish "absent" from "empty
-  // string" via the `assign_task::OptionalResumeSessionId` enum.
-  oneof optional_resume_session_id {
-    string resume_session_id = 8;
-  }
-
-  // Nested marker type so callers can refer to `assign_task::OptionalModel`
-  // for sanity-checking namespace generation. Not used at runtime.
+  oneof optional_resume_session_id { string resume_session_id = 8; }
   message OptionalModel {}
 }
 

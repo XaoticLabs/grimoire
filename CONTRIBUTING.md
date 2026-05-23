@@ -1,8 +1,6 @@
 # Contributing to Grimoire
 
-Thanks for your interest. Grimoire is a solo project at the moment, so the
-process is light — this document is here so contributors and future-me both
-have a single place to look.
+Thanks for your interest. Grimoire is a solo project at the moment. I'll try to keep the process is light. This should be the only place you need to look in order to contribute.
 
 ## Prerequisites
 
@@ -38,8 +36,7 @@ Pre-commit hooks are configured in `.pre-commit-config.yaml`; run
   with `cargo fmt-unstable` (requires a nightly toolchain).
 - Lints are declared in the `[lints]` table of `Cargo.toml`. Pedantic and
   nursery are warn-by-default; each `allow` has a comment explaining why.
-- Comments document **why**, not **what**. Don't reference the current task,
-  PR, or the call sites of a function — that information rots.
+- Comments document why, not what.
 
 ## Commits and PRs
 
@@ -53,5 +50,4 @@ Pre-commit hooks are configured in `.pre-commit-config.yaml`; run
 
 ## Reporting bugs
 
-Open a normal GitHub issue. For **security** issues, see `SECURITY.md` —
-do not file those publicly.
+Open a normal GitHub issue.

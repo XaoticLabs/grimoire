@@ -1,10 +1,4 @@
 # Developer convenience targets. CI should mirror these.
-#
-# `--locked` is passed to cargo invocations that resolve dependencies, so the
-# build fails if `Cargo.lock` would be modified — i.e. if any upstream
-# version has drifted from what we've reviewed and committed. This is the
-# supply-chain backbone: without it, CI silently picks up new transitive
-# crate versions between commits.
 
 .PHONY: check fmt fmt-check clippy test audit deny machete typos all ci
 

@@ -6,7 +6,7 @@
 
 Grimoire runs AI coding agents as long-lived, supervised daemons. An agent you summon today still has an address next week, it sleeps when idle, wakes on a schedule or a file change or a message, restarts itself when it falls over, and pings you when something actually needs a human.
 
-The experiment here is **agents are processes, not function calls.** Grimoire treats an agent the way an operating system treats a service. It has an identity, a mailbox, and a supervisor.
+The experiment here is **agents are processes, not function calls.** Grimoire treats an agents like a service. It has an identity, a mailbox, and a supervisor.
 
 What we have here is a `grimd` running on a server anyone in an organization can call. Standing agents on standby, messaging each other, woken by events, supervised and observable. It started as a way to stop hoping six git worktrees would come back in sync, and the bigger idea fell out of that first quickly vibe coded thought into unix sysadmin habits, applied to agents.
 

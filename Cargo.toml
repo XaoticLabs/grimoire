@@ -12,9 +12,6 @@ readme = "README.md"
 # crate). Install from source; see the README.
 publish = false
 
-# `tonic-prost` is consumed indirectly by the tonic-prost-build generated
-# code (it provides the `ProstCodec` impl). cargo-machete can't see this
-# usage because it's threaded through generated source.
 [package.metadata.cargo-machete]
 ignored = ["tonic-prost"]
 
@@ -27,28 +24,15 @@ name = "grimw"
 path = "src/grimw/main.rs"
 
 [dependencies]
-# Async runtime
 tokio = { version = "1", features = ["full"] }
-
-# CLI
 clap = { version = "4", features = ["derive"] }
-
-# Serialization
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-
-# Database
 rusqlite = { version = "0.32", features = ["bundled"] }
-
-# Web server
 axum = { version = "0.8", features = ["ws"] }
 tokio-stream = "0.1"
-
-# Logging
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-
-# Utilities
 uuid = { version = "1", features = ["v4", "serde"] }
 chrono = { version = "0.4", features = ["serde"] }
 anyhow = "1"
@@ -63,29 +47,15 @@ tonic-prost = "0.14"
 prost = "0.14"
 semver = "1"
 blake3 = "1"
-# Self-signed identity certs for peer/worker mTLS. `ring` (transitive via
-# tonic/hyper-rustls) supplies SHA-256 for cert fingerprint pinning.
 rcgen = "0.13"
 ring = "0.17"
 subtle = "2"
 tempfile = "3"
-# `parking_lot::Mutex` is faster, smaller, and never poisons compared to
-# `std::sync::Mutex`. Used for sync mutexes that never cross an `.await`
-# (rusqlite Connection, in-memory registries). The async path uses
-# `tokio::sync::Mutex` instead — see the call sites in `agent_manager`
-# and friends.
 parking_lot = "0.12"
 futures = "0.3"
-
-# Wake-source runtime support
 cron = "0.12"
 notify = "6"
 globset = "0.4"
-
-# Outbound notification webhook — a hand-rolled hyper client (rather than
-# reqwest) to keep the supply-chain surface minimal. The TLS stack (rustls,
-# tokio-rustls, rustls-native-certs) is already in-tree via tonic; only
-# hyper-rustls is genuinely new.
 hyper = { version = "1", features = ["client", "http1"] }
 hyper-util = { version = "0.1", features = ["client", "client-legacy", "http1", "tokio"] }
 http-body-util = "0.1"
@@ -94,11 +64,6 @@ hyper-rustls = { version = "0.27", default-features = false, features = ["native
 [build-dependencies]
 tonic-prost-build = "0.14"
 
-# Profile tuning — values cribbed from jj / ruff. Release: thin LTO + single
-# codegen unit trades build time for a faster, smaller binary; `strip` drops
-# debuginfo since we ship via `cargo install`, not as a debugged binary.
-# Dev: line-tables-only on third-party deps keeps backtraces useful while
-# shaving link time; `opt-level = 1` on deps speeds up test runs noticeably.
 [profile.release]
 lto = "thin"
 codegen-units = 1
@@ -113,111 +78,33 @@ tempfile = "3"
 tower = { version = "0.5", features = ["util"] }
 
 [lints.rust]
-# Treat every rustc warning as a build error so regressions are caught
-# locally and in CI. `dead_code` is allowed because integration tests
-# pull in helper modules whose items the compiler can't see uses of
-# across the `tests/` boundary without restructuring.
-#
-# Note on the precedence dance: `-D warnings` in rustc acts as a hard
-# ceiling that won't be relaxed by a later `-W dead_code`, only by
-# `-A dead_code`.
 warnings = { level = "deny", priority = -1 }
 dead_code = "allow"
 unreachable_pub = "warn"
-# `missing_docs` is enforced at the library level via `#![warn(missing_docs)]`
-# in `src/lib.rs`. Scoping it there (rather than crate-wide via `[lints.rust]`)
-# keeps integration tests and binary entry points free of the lint while
-# still gating the public library surface. Modules opt out per-file with
-# `#![allow(missing_docs)]` until their public surface is documented;
-# `shared::auth` is the first graduate.
-# `unsafe_code` is forbidden in non-test code via `#![cfg_attr(not(test),
-# forbid(unsafe_code))]` in `lib.rs` and the two `main.rs` entry points.
-# That's stronger than a Cargo-level deny because `forbid` can't be
-# relaxed by an inner `#[allow]`. The only `unsafe` in the crate is a
-# test helper that mutates env vars under a serializing mutex.
 
 [lints.clippy]
-# Pedantic + nursery are on at warn-level. Categories below are allow-listed
-# because they're either too noisy at this codebase size (doc lints),
-# too aggressive for SQLite plumbing (i64 ↔ u32/u64 cast lints), or a
-# different preference (passing config-like structs by value reads cleaner
-# than by reference). Each entry is a deliberate trade-off, not a TODO.
-#
-# `nursery` is the upcoming lints — bug-prone categories at warn so we get
-# early signal, with the known-high-false-positive ones explicitly allowed.
 pedantic = { level = "warn", priority = -1 }
 nursery  = { level = "warn", priority = -1 }
-
-# Nursery: high-false-positive lints. Each opt-out is intentional.
-#
-# `significant_drop_tightening` fires on most `Mutex`/`RwLock` guard scopes
-# — usually correct code that holds the lock across an await or multiple
-# operations. Tightening for tightening's sake risks subtle races.
 significant_drop_tightening      = "allow"
-# Same family — fires when a lock guard is in an `if let` scrutinee. The
-# Rust 2024 temporary-lifetime rules already shorten these correctly.
 significant_drop_in_scrutinee    = "allow"
-# Style preference: `if let Some(_) = x { a } else { b }` reads more clearly
-# than `x.map_or_else(|| b, |_| a)` at most call sites in this codebase.
 option_if_let_else               = "allow"
-# Style preference: long first paragraphs in module docs (//!) are fine
-# when the module's intro genuinely takes a paragraph to set up context.
 too_long_first_doc_paragraph     = "allow"
-# Fires on template strings like `task.replace("{output}", &val)` where
-# `{output}` is a domain-level placeholder, not a Rust format-arg.
 literal_string_with_formatting_args = "allow"
-
-# Doc lints — would force `# Errors`/`# Panics` sections on hundreds of
-# internal Result/panic-capable helpers. Re-enable per-module when the
-# public API surface stabilizes.
 missing_errors_doc = "allow"
 missing_panics_doc = "allow"
 doc_markdown       = "allow"
-
-# `#[must_use]` is valuable on public API but noisy on every getter, and
-# tonic-build-generated proto code triggers it on every accessor. We've
-# annotated the hand-written API surface; the remaining fires are all in
-# generated code we don't control.
 must_use_candidate    = "allow"
-
-# SQLite columns are i64; the daemon often casts to u32/u64/usize/f64 with
-# domain knowledge that the value is in range. Re-enable per-call if we
-# add untrusted external i64 inputs.
 cast_possible_truncation = "allow"
 cast_possible_wrap       = "allow"
 cast_sign_loss           = "allow"
 cast_precision_loss      = "allow"
-
-# Config structs read more clearly when passed by value at the call site;
-# we own them and they're small.
 needless_pass_by_value = "allow"
-
-# Long match-style modules read fine in this codebase; refactoring would
-# fragment cohesive logic.
 too_many_lines = "allow"
-
-# Broad `use crate::shared::protocol::*` imports re-export dozens of RPC
-# message types; spelling each one out per call site would add hundreds of
-# lines for no semantic gain.
 wildcard_imports = "allow"
-
-# Style preferences that didn't seem worth churning working code over:
-# the existing forms read clearly and the suggestions are subjective.
-unused_async           = "allow"  # async-trait impls and seam functions for symmetric APIs
-# Several `Database` read helpers use `.ok()` on rusqlite calls and so always
-# succeed at the `Result` layer, but the `Result<…>` signature is kept for
-# uniformity with the rest of the API. A few non-DB call sites also keep a
-# `Result` return for trait/seam symmetry. Re-enable per-fn when removing.
+unused_async           = "allow"
 unnecessary_wraps      = "allow"
-
-# Restriction lints — opt-in (not in any group). The set below is the
-# consensus across rust-analyzer / ruff / jj: catches debug scaffolding and
-# `Rc<Vec>`-style anti-patterns without false-positive churn.
 dbg_macro    = "warn"
 todo         = "warn"
-# The daemon's user-facing output goes through `tracing` / structured RPC.
-# Bare `println!`/`eprintln!` is almost always a stray debug print.
-# `grim` CLI bins that legitimately print to stdout can `#[allow]` per-fn.
 print_stdout = "warn"
 print_stderr = "warn"
 rc_buffer    = "warn"
