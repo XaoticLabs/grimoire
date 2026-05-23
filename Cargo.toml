@@ -94,6 +94,20 @@ hyper-rustls = { version = "0.27", default-features = false, features = ["native
 [build-dependencies]
 tonic-prost-build = "0.14"
 
+# Profile tuning — values cribbed from jj / ruff. Release: thin LTO + single
+# codegen unit trades build time for a faster, smaller binary; `strip` drops
+# debuginfo since we ship via `cargo install`, not as a debugged binary.
+# Dev: line-tables-only on third-party deps keeps backtraces useful while
+# shaving link time; `opt-level = 1` on deps speeds up test runs noticeably.
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = "debuginfo"
+
+[profile.dev.package."*"]
+debug = "line-tables-only"
+opt-level = 1
+
 [dev-dependencies]
 tempfile = "3"
 tower = { version = "0.5", features = ["util"] }
