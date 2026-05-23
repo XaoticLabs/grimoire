@@ -6,17 +6,13 @@
 [![MSRV](https://img.shields.io/badge/MSRV-1.95-blue.svg)](#msrv)
 [![license](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#license)
 
-![Grimoire in 30 seconds — a standing reviewer wakes on a file change, finds a bug, fires a desktop toast, sleeps](docs/assets/demo.gif)
-
 Grimoire runs AI coding agents as **long-lived, supervised daemons**. An agent you summon today still has an address next week. It sleeps when idle, wakes on a schedule or a file change or a message, restarts itself when it falls over, and pings you when something actually needs a human.
 
 The experiment: **agents are processes, not function calls.** Treat them like services. Identity, mailbox, supervisor.
 
 You bring the CLI. Claude Code is the default; `pi`, opencode, aider, codex, or anything that takes a prompt works.
 
-## Why this exists (vs the alternatives)
-
-Most "Claude Code orchestrators" are parallel one-shot runners or tmux conductors — the agent dies when the script ends. Grimoire is the only one in the OSS ecosystem that:
+## Why this exists
 
 - Has a first-class **`Dormant` state**. Agents survive daemon restarts and resume their CLI session when something wakes them.
 - Is built on a **durable event log** (write-through SQLite, per-stream sequence numbers). `grim chronicle <id>` reconstructs any agent's full life; `grim fork --at <seq>` branches from any point.
@@ -104,8 +100,6 @@ The daemon owns agent lifecycles and persists everything in SQLite over three tr
 **Not built yet:**
 - Sandboxing — a cwd jail, cgroups, per-agent resource limits.
 - Policy and budget primitives — per-provider and per-cwd allow rules, token and cost ceilings.
-
-See [`ROADMAP.md`](ROADMAP.md) for the full direction.
 
 ## Recipes
 
