@@ -1,10 +1,15 @@
 edition = "2024"
+# Pin the style edition explicitly so rustfmt's defaults don't drift when a
+# future `edition` bump changes formatting heuristics. Keep aligned with
+# `edition` above on each Rust edition bump.
+style_edition = "2024"
 max_width = 100
 hard_tabs = false
 tab_spaces = 4
 newline_style = "Unix"
 use_field_init_shorthand = true
 use_try_shorthand = true
-# Stable-only options below; nightly-only options (group_imports, imports_granularity,
-# wrap_comments, format_code_in_doc_comments) are intentionally omitted so
-# `cargo fmt` works on stable. Re-enable when project moves to a nightly fmt step.
+# Nightly-only options (group_imports, imports_granularity, wrap_comments,
+# format_code_in_doc_comments) live in `.rustfmt.unstable.toml` so stable
+# `cargo fmt` keeps working. Run `cargo fmt-unstable` (alias defined in
+# `.cargo/config.toml`) on a nightly toolchain to apply them.

@@ -1,0 +1,22 @@
+# Nightly-only rustfmt options. Applied via `cargo fmt-unstable` (alias in
+# `.cargo/config.toml`) on a nightly toolchain. Stable `cargo fmt` reads
+# `rustfmt.toml` instead and ignores this file.
+#
+# Pattern borrowed from rustls: keeps stable CI working while staging the
+# import-organization and doc-comment rewrapping we want once the project
+# moves to a nightly fmt step.
+
+edition = "2024"
+style_edition = "2024"
+max_width = 100
+hard_tabs = false
+tab_spaces = 4
+newline_style = "Unix"
+use_field_init_shorthand = true
+use_try_shorthand = true
+
+# Nightly-only:
+group_imports = "StdExternalCrate"
+imports_granularity = "Module"
+wrap_comments = true
+format_code_in_doc_comments = true

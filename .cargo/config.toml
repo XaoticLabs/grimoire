@@ -1,0 +1,24 @@
+# Cargo configuration. Keep this small — most build settings belong in
+# `Cargo.toml` (profiles, lints) where they version with the package.
+# This file is for things Cargo can't express elsewhere: aliases and
+# host/target-specific build tweaks.
+
+[alias]
+# `cargo lint` mirrors the `make clippy` target. `--locked` enforces that
+# `Cargo.lock` is honored without drift; see the Makefile header for the
+# rationale. Multi-step gates (fmt + clippy + test + supply-chain) stay in
+# the Makefile since a cargo alias can only invoke one subcommand.
+lint = "clippy --locked --all-targets --all-features -- -D warnings"
+
+# `cargo fmt-unstable` runs rustfmt with the nightly-only options staged in
+# `.rustfmt.unstable.toml`. Requires a nightly toolchain (`rustup toolchain
+# install nightly`). Stable `cargo fmt` continues to read `rustfmt.toml`.
+fmt-unstable = "+nightly fmt --all -- --config-path .rustfmt.unstable.toml"
+
+# Faster Linux dev/test link times with `mold` (or fall back to `lld`).
+# Commented by default because it requires `mold` to be installed; uncomment
+# locally or set CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER in your shell.
+#
+# [target.x86_64-unknown-linux-gnu]
+# linker = "clang"
+# rustflags = ["-C", "link-arg=-fuse-ld=mold"]
