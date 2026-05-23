@@ -54,18 +54,27 @@ pub struct WebhookConfig {
     pub secret: Option<String>,
 }
 
-/// Outbound notification webhook. When `webhook_url` is set the daemon POSTs
-/// a JSON payload to it for each enabled trigger. Channel-agnostic: point it
-/// at a Slack/Discord incoming-webhook, a relay, or any HTTP endpoint.
+/// Outbound notifications. The daemon fans matched events out to any sink that
+/// is configured: an HTTPS POST (`webhook_url`), an append-only local log
+/// (`log_file`), and/or a desktop toast via `notify-send` (`desktop`). The
+/// notifier task is only spawned when at least one sink is configured.
 // Each bool is an independent TOML toggle mapping 1:1 to a config key; the
 // clippy-suggested state-machine/enum refactor would obscure that mapping.
 #[allow(clippy::struct_excessive_bools)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NotificationsConfig {
-    /// Webhook endpoint. `None` (default) disables outbound notifications
-    /// entirely — the notifier task is never spawned.
+    /// Webhook endpoint. `None` (default) leaves the webhook sink disabled.
     #[serde(default)]
     pub webhook_url: Option<String>,
+    /// Append a JSON line per matched event to this path. Useful for offline
+    /// demos and local audit. The file is created on first write; the parent
+    /// directory must already exist.
+    #[serde(default)]
+    pub log_file: Option<PathBuf>,
+    /// Fire a desktop toast via `notify-send` per matched event. Linux-only
+    /// (silently no-ops if `notify-send` isn't on PATH).
+    #[serde(default)]
+    pub desktop: bool,
     /// Notify when an agent reaches `Complete`.
     #[serde(default = "default_true")]
     pub on_completion: bool,
@@ -83,10 +92,20 @@ pub struct NotificationsConfig {
     pub timeout_secs: u64,
 }
 
+impl NotificationsConfig {
+    /// True when at least one delivery sink is configured. The notifier task
+    /// only spawns when this is true.
+    pub const fn has_sink(&self) -> bool {
+        self.webhook_url.is_some() || self.log_file.is_some() || self.desktop
+    }
+}
+
 impl Default for NotificationsConfig {
     fn default() -> Self {
         Self {
             webhook_url: None,
+            log_file: None,
+            desktop: false,
             on_completion: true,
             on_failure: true,
             on_wake: true,

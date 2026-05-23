@@ -122,13 +122,21 @@ pub async fn start() -> Result<()> {
     );
     let _scheduler_handle = Arc::new(scheduler_obj).spawn();
 
-    // Outbound notifications: a pure event-bus subscriber that POSTs selected
-    // events to a configured webhook. Only spawned when a webhook is set.
-    if config.notifications.webhook_url.is_some() {
+    // Outbound notifications: a pure event-bus subscriber that fans matched
+    // events out to any configured sink (webhook POST, local JSON log,
+    // notify-send toast). Only spawned when at least one sink is set.
+    if config.notifications.has_sink() {
+        let cfg = &config.notifications;
+        let sinks = [
+            cfg.webhook_url.as_ref().map(|_| "webhook"),
+            cfg.log_file.as_ref().map(|_| "log"),
+            cfg.desktop.then_some("desktop"),
+        ];
+        let active: Vec<&str> = sinks.into_iter().flatten().collect();
         match notifier::Notifier::new(config.notifications.clone()) {
             Ok(n) => {
                 n.start(&event_bus);
-                info!("outbound notifications enabled");
+                info!(sinks = ?active, "outbound notifications enabled");
             }
             Err(e) => tracing::warn!(error = %e, "notifier init failed; notifications disabled"),
         }

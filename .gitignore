@@ -1,5 +1,13 @@
 /target
 .claude/
+scripts/*
 ROADMAP.md
 
-docs/
+# Docs: keep only what README references (recipe + embedded gif).
+docs/*
+!docs/recipes/
+docs/recipes/*
+!docs/recipes/standing-review-agent.md
+!docs/assets/
+docs/assets/*
+!docs/assets/demo.gif

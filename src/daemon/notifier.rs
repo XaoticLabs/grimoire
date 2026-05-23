@@ -1,8 +1,9 @@
 //! Outbound notifications. A pure [`EventBus`] subscriber that forwards
-//! selected events to a configured webhook as a JSON POST. Channel-agnostic:
-//! the URL can point at Slack/Discord incoming webhooks, a relay, or any HTTP
-//! endpoint. Disabled (never spawned) when no `webhook_url` is configured.
+//! selected events to any configured sink: an HTTPS POST (`webhook_url`), an
+//! append-only local JSON log (`log_file`), and/or a desktop toast via
+//! `notify-send` (`desktop`). Never spawned when no sink is configured.
 
+use std::path::PathBuf;
 use std::time::Duration;
 
 use http_body_util::{BodyExt, Full};
@@ -47,10 +48,10 @@ impl Notifier {
         Ok(Self { config, client })
     }
 
-    /// Spawn the subscriber loop. No-op if no webhook is configured, so callers
+    /// Spawn the subscriber loop. No-op if no sink is configured, so callers
     /// can construct unconditionally.
     pub fn start(self, event_bus: &EventBus) {
-        if self.config.webhook_url.is_none() {
+        if !self.config.has_sink() {
             return;
         }
         let mut rx = event_bus.subscribe();
@@ -59,7 +60,7 @@ impl Notifier {
                 match rx.recv().await {
                     Ok(event) => {
                         if let Some(payload) = match_trigger(&self.config, &event) {
-                            self.post(&payload).await;
+                            self.dispatch(&payload).await;
                         }
                     }
                     Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
@@ -71,26 +72,36 @@ impl Notifier {
         });
     }
 
+    /// Fan a matched payload out to every configured sink. Each sink is
+    /// fire-and-forget; one sink failing must not prevent the others or
+    /// affect agent execution.
+    async fn dispatch(&self, payload: &Payload) {
+        let body = payload_body(payload);
+        if self.config.webhook_url.is_some() {
+            self.post(payload, &body).await;
+        }
+        if let Some(path) = self.config.log_file.as_ref() {
+            append_log(path, &body).await;
+        }
+        if self.config.desktop {
+            notify_desktop(payload).await;
+        }
+    }
+
     /// Fire-and-forget POST. Failures are logged, never propagated — a flaky
     /// webhook must not affect agent execution.
-    async fn post(&self, payload: &Payload) {
+    async fn post(&self, payload: &Payload, body: &serde_json::Value) {
         let Some(url) = self.config.webhook_url.as_deref() else {
             return;
         };
-        let body = serde_json::json!({
-            "event": payload.event,
-            "agent_id": payload.agent_id,
-            "message": payload.message,
-            "level": payload.level,
-            "timestamp": chrono::Utc::now().to_rfc3339(),
-        });
-        let bytes = match serde_json::to_vec(&body) {
+        let bytes = match serde_json::to_vec(body) {
             Ok(b) => b,
             Err(e) => {
                 warn!(error = %e, "notification payload serialize failed");
                 return;
             }
         };
+        let _ = payload; // used by other sinks
         let request = match Request::builder()
             .method(Method::POST)
             .uri(url)
@@ -120,6 +131,73 @@ impl Notifier {
                 "notification webhook timed out"
             ),
         }
+    }
+}
+
+/// Shared JSON shape used by the webhook and log sinks.
+fn payload_body(payload: &Payload) -> serde_json::Value {
+    serde_json::json!({
+        "event": payload.event,
+        "agent_id": payload.agent_id,
+        "message": payload.message,
+        "level": payload.level,
+        "timestamp": chrono::Utc::now().to_rfc3339(),
+    })
+}
+
+/// Append one JSON line to `path`. Best-effort: open failures are logged,
+/// not propagated.
+async fn append_log(path: &PathBuf, body: &serde_json::Value) {
+    use tokio::io::AsyncWriteExt;
+    let mut line = match serde_json::to_vec(body) {
+        Ok(b) => b,
+        Err(e) => {
+            warn!(error = %e, "notification log serialize failed");
+            return;
+        }
+    };
+    line.push(b'\n');
+    let open = tokio::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+        .await;
+    let mut file = match open {
+        Ok(f) => f,
+        Err(e) => {
+            warn!(error = %e, path = %path.display(), "notification log open failed");
+            return;
+        }
+    };
+    if let Err(e) = file.write_all(&line).await {
+        warn!(error = %e, path = %path.display(), "notification log write failed");
+    }
+}
+
+/// Fire a desktop toast via `notify-send`. Missing binary is logged once at
+/// debug level — desktop sinks are best-effort by design.
+async fn notify_desktop(payload: &Payload) {
+    let urgency = match payload.level.as_str() {
+        "error" => "critical",
+        "warn" => "normal",
+        _ => "low",
+    };
+    let title = match payload.agent_id.as_deref() {
+        Some(id) => format!("Grimoire · {} · {}", payload.event, &id[..id.len().min(8)]),
+        None => format!("Grimoire · {}", payload.event),
+    };
+    let result = tokio::process::Command::new("notify-send")
+        .arg("--urgency")
+        .arg(urgency)
+        .arg("--app-name=grimoire")
+        .arg(&title)
+        .arg(&payload.message)
+        .status()
+        .await;
+    match result {
+        Ok(s) if s.success() => debug!(event = payload.event, "desktop notification sent"),
+        Ok(s) => warn!(status = %s, "notify-send returned non-zero"),
+        Err(e) => debug!(error = %e, "notify-send unavailable"),
     }
 }
 
@@ -191,6 +269,56 @@ mod tests {
         NotificationsConfig {
             webhook_url: Some("http://example.invalid/hook".to_string()),
             ..Default::default()
+        }
+    }
+
+    #[test]
+    fn has_sink_reflects_each_sink_independently() {
+        let none = NotificationsConfig::default();
+        assert!(!none.has_sink());
+
+        let webhook = NotificationsConfig {
+            webhook_url: Some("http://x".into()),
+            ..Default::default()
+        };
+        assert!(webhook.has_sink());
+
+        let log = NotificationsConfig {
+            log_file: Some(PathBuf::from("/tmp/x.log")),
+            ..Default::default()
+        };
+        assert!(log.has_sink());
+
+        let desk = NotificationsConfig {
+            desktop: true,
+            ..Default::default()
+        };
+        assert!(desk.has_sink());
+    }
+
+    #[tokio::test]
+    async fn append_log_writes_one_json_line_per_call() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("notify.log");
+        let payload = Payload {
+            event: "agent",
+            agent_id: Some("abc12345".into()),
+            message: "first finding".into(),
+            level: "warn".into(),
+        };
+        append_log(&path, &payload_body(&payload)).await;
+        append_log(&path, &payload_body(&payload)).await;
+
+        let contents = tokio::fs::read_to_string(&path).await.unwrap();
+        let lines: Vec<_> = contents.lines().collect();
+        assert_eq!(lines.len(), 2, "one line per call");
+        for line in lines {
+            let v: serde_json::Value = serde_json::from_str(line).expect("valid JSON line");
+            assert_eq!(v["event"], "agent");
+            assert_eq!(v["message"], "first finding");
+            assert_eq!(v["agent_id"], "abc12345");
+            assert_eq!(v["level"], "warn");
+            assert!(v.get("timestamp").is_some());
         }
     }
 
