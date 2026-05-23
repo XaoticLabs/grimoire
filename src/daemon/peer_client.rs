@@ -130,7 +130,6 @@ async fn run_once(
         .await?
         .into_inner();
 
-    // Wait for HelloAck.
     let Some(ack_msg) = inbound.message().await? else {
         return Err(anyhow::anyhow!("stream closed before HelloAck"));
     };

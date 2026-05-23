@@ -196,8 +196,8 @@ impl AgentManager {
                 error!(agent_id = %agent_id, error = %e, "Failed to store session_id");
             }
 
-            // T8: keep-alive agents that complete normally with a session
-            // land in Dormant instead of Complete.
+            // keep-alive agents that complete normally with a session land
+            // in Dormant instead of Complete.
             if matches!(result.state, AgentState::Complete) {
                 let keep_alive = db.get_keep_alive(&agent_id).unwrap_or(false);
                 if keep_alive {
@@ -329,7 +329,6 @@ impl AgentManager {
 
         self.db.insert_agent(&agent)?;
         if keep_alive {
-            // Persist the flag so completion path can branch later.
             let _ = self.db.set_keep_alive(&agent.id, true);
         }
         if let Some(cfg) = &supervision {

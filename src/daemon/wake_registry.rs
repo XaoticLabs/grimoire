@@ -558,8 +558,6 @@ fn validate_config(kind: WakeSourceKind, config_json: &str) -> Result<()> {
     Ok(())
 }
 
-// Helper: convenience for callers who want to register without crafting the
-// raw config_json themselves.
 impl WakeRegistry {
     pub async fn register_cron(self: &Arc<Self>, agent_id: &str, expr: &str) -> Result<String> {
         let cfg = CronConfig {

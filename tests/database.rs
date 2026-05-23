@@ -396,33 +396,26 @@ fn append_event_returns_monotonic_id() {
 fn agent_full_lifecycle() {
     let db = test_db();
     let agent = make_agent("lifecycle-1");
-    // Insert
     db.insert_agent(&agent).unwrap();
-    // Verify initial state
     let fetched = db.get_agent("lifecycle-1").unwrap().unwrap();
     assert_eq!(fetched.state, AgentState::Summoning);
     assert_eq!(fetched.pid, None);
-    // Update PID (simulating process spawn)
     db.update_agent_pid("lifecycle-1", 42).unwrap();
     let fetched = db.get_agent("lifecycle-1").unwrap().unwrap();
     assert_eq!(fetched.pid, Some(42));
-    // Transition to Active
     db.update_agent_state("lifecycle-1", &AgentState::Active, None)
         .unwrap();
     let fetched = db.get_agent("lifecycle-1").unwrap().unwrap();
     assert_eq!(fetched.state, AgentState::Active);
-    // Set session ID
     db.update_agent_session_id("lifecycle-1", "sess-abc")
         .unwrap();
     let fetched = db.get_agent("lifecycle-1").unwrap().unwrap();
     assert_eq!(fetched.session_id.as_deref(), Some("sess-abc"));
-    // Complete with exit code
     db.update_agent_state("lifecycle-1", &AgentState::Complete, Some(0))
         .unwrap();
     let fetched = db.get_agent("lifecycle-1").unwrap().unwrap();
     assert_eq!(fetched.state, AgentState::Complete);
     assert_eq!(fetched.exit_code, Some(0));
-    // Delete
     db.delete_agent("lifecycle-1").unwrap();
     assert!(db.get_agent("lifecycle-1").unwrap().is_none());
 }
@@ -459,7 +452,6 @@ fn agent_events_lifecycle() {
     let db = test_db();
     let agent = make_agent("events-1");
     db.insert_agent(&agent).unwrap();
-    // Insert several events
     for i in 0..5 {
         let event = AgentEvent {
             id: None,
@@ -487,7 +479,6 @@ fn pact_lifecycle() {
     let db = test_db();
     let agent = make_agent("pact-source");
     db.insert_agent(&agent).unwrap();
-    // Create two pacts
     let pact1 = Pact {
         id: "pact-1".to_string(),
         source_id: "pact-source".to_string(),
@@ -512,15 +503,12 @@ fn pact_lifecycle() {
     db.insert_pact(&pact2).unwrap();
     let pending = db.get_pending_pacts_for_agent("pact-source").unwrap();
     assert_eq!(pending.len(), 2);
-    // Fire pact-1
     let target = make_agent("pact-target");
     db.insert_agent(&target).unwrap();
     db.update_pact_fired("pact-1", "pact-target").unwrap();
-    // Only pact-2 should remain pending
     let pending = db.get_pending_pacts_for_agent("pact-source").unwrap();
     assert_eq!(pending.len(), 1);
     assert_eq!(pending[0].id, "pact-2");
-    // Verify fired pact state
     let all = db.list_pacts(Some("pact-source")).unwrap();
     let fired = all.iter().find(|p| p.id == "pact-1").unwrap();
     assert_eq!(fired.state, PactState::Fired);
@@ -596,34 +584,25 @@ fn scroll_task_lifecycle() {
     db.insert_task(&task_a).unwrap();
     db.insert_task(&task_b).unwrap();
     db.insert_task(&task_c).unwrap();
-    // C depends on A and B
     db.insert_task_dependency("task-c", "task-a").unwrap();
     db.insert_task_dependency("task-c", "task-b").unwrap();
-    // Verify task listing
     let tasks = db.get_tasks_for_scroll("scroll-1").unwrap();
     assert_eq!(tasks.len(), 3);
-    assert_eq!(tasks[0].name, "Setup"); // order_index 0
-    // Verify dependencies
+    assert_eq!(tasks[0].name, "Setup");
     let deps = db.get_task_dependencies("task-c").unwrap();
     assert_eq!(deps.len(), 2);
     assert!(deps.contains(&"task-a".to_string()));
     assert!(deps.contains(&"task-b".to_string()));
-    // Verify dependents (reverse lookup)
     let dependents = db.get_task_dependents("task-a").unwrap();
     assert_eq!(dependents, vec!["task-c"]);
-    // C should NOT be ready yet (A and B are Ready, not Complete)
-    let ready = db.find_ready_tasks("scroll-1").unwrap();
-    assert!(ready.is_empty()); // C is blocked, A and B are Ready (not blocked)
-    // Complete A
-    db.update_task_state("task-a", &TaskState::Complete)
-        .unwrap();
-    // C still not ready (B not complete)
     let ready = db.find_ready_tasks("scroll-1").unwrap();
     assert!(ready.is_empty());
-    // Complete B
+    db.update_task_state("task-a", &TaskState::Complete)
+        .unwrap();
+    let ready = db.find_ready_tasks("scroll-1").unwrap();
+    assert!(ready.is_empty());
     db.update_task_state("task-b", &TaskState::Complete)
         .unwrap();
-    // Now C should be ready (both deps complete)
     let ready = db.find_ready_tasks("scroll-1").unwrap();
     assert_eq!(ready.len(), 1);
     assert_eq!(ready[0].id, "task-c");
@@ -661,13 +640,11 @@ fn scroll_state_transitions_and_active_count() {
         updated_at: now,
     };
     db.insert_task(&task).unwrap();
-    // Activate scroll
     db.update_scroll_state("scroll-st", &ScrollState::Active)
         .unwrap();
     let s = db.get_scroll("scroll-st").unwrap().unwrap();
     assert_eq!(s.state, ScrollState::Active);
     assert_eq!(db.count_active_tasks("scroll-st").unwrap(), 0);
-    // Simulate agent assignment
     db.update_task_agent("task-st-1", "agent-x").unwrap();
     assert_eq!(db.count_active_tasks("scroll-st").unwrap(), 1);
     let found = db.get_task_by_agent_id("agent-x").unwrap().unwrap();

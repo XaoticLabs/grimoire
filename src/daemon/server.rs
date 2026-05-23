@@ -51,10 +51,7 @@ fn daemon_uid() -> u32 {
     0
 }
 
-/// Start both UDS and HTTP servers
 #[allow(clippy::too_many_arguments)]
-// `HashMap` (not a generic over the hasher) is fine here: this is internal
-// daemon wiring, not a public API, and the map is built once from config.
 #[allow(clippy::implicit_hasher)]
 pub async fn run(
     manager: Arc<AgentManager>,
@@ -82,7 +79,6 @@ pub async fn run(
         webhooks,
     };
 
-    // Start UDS listener
     let uds_state = state.clone();
     let uds_handle = tokio::spawn(async move {
         if let Err(e) = run_uds_server(uds_state).await {
@@ -90,7 +86,6 @@ pub async fn run(
         }
     });
 
-    // Start HTTP server
     let http_handle = tokio::spawn(async move {
         if let Err(e) = run_http_server(state).await {
             error!("HTTP server error: {}", e);
@@ -108,7 +103,6 @@ pub async fn run(
 async fn run_uds_server(state: AppState) -> Result<()> {
     let socket_path = constants::socket_path();
 
-    // Remove stale socket
     if socket_path.exists() {
         std::fs::remove_file(&socket_path)?;
     }
@@ -181,7 +175,6 @@ async fn run_uds_server(state: AppState) -> Result<()> {
                     }
                 }
 
-                // Special case: bind streams events
                 if req.method == "agent.bind" {
                     let params: BindParams = match serde_json::from_value(req.params.clone()) {
                         Ok(p) => p,
@@ -193,7 +186,6 @@ async fn run_uds_server(state: AppState) -> Result<()> {
                         }
                     };
 
-                    // Send historical events first
                     if let Ok(events) = state.manager.get_events(&params.id, params.tail) {
                         for event in events {
                             let stream_event = StreamEvent::AgentEvent { event };
@@ -209,12 +201,10 @@ async fn run_uds_server(state: AppState) -> Result<()> {
                         }
                     }
 
-                    // Then stream live events
                     let mut rx = state.manager.subscribe();
                     loop {
                         match rx.recv().await {
                             Ok(event) => {
-                                // Filter to this agent
                                 if event.agent_id() == Some(params.id.as_str()) {
                                     let Ok(json) = serde_json::to_string(&event) else {
                                         continue;
@@ -228,7 +218,6 @@ async fn run_uds_server(state: AppState) -> Result<()> {
                                     let _ = writer.flush().await;
                                 }
 
-                                // Stop streaming if agent finished
                                 if let StreamEvent::StateChange { new_state, .. } = &event
                                     && new_state.is_terminal()
                                 {
@@ -846,8 +835,7 @@ struct LoginForm {
 
 fn login_success_response(token: &str) -> axum::response::Response {
     // HttpOnly + SameSite=Strict: no JS access, no cross-site CSRF.
-    // No `Secure` flag because the daemon listens on plain HTTP loopback;
-    // when TLS lands (Part 6 Track A §3 follow-on), add it conditionally.
+    // No `Secure` flag because the daemon listens on plain HTTP loopback.
     let cookie =
         format!("{AUTH_COOKIE_NAME}={token}; Path=/; HttpOnly; SameSite=Strict; Max-Age=86400");
     (

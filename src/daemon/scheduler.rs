@@ -388,7 +388,6 @@ impl Scheduler {
                             warn!(mail_id = %id, error = %e, "failed to mark mail Delivered after wake");
                             continue;
                         }
-                        // Look up recipient for the event payload.
                         if let Some(m) = pending.iter().find(|m| &m.id == id) {
                             self.bus.publish(StreamEvent::MailDelivered {
                                 mail_id: m.id.clone(),

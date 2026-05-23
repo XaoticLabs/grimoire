@@ -109,9 +109,7 @@ impl PeerService for PeerSvc {
             peer_name: peer.name.clone(),
         });
 
-        // Set up the inbound→client → outbound→server pipe.
         let (out_tx, out_rx) = mpsc::channel::<Result<PeerInbound, Status>>(64);
-        // Send HelloAck first.
         let _ = out_tx
             .send(Ok(PeerInbound {
                 msg: Some(peer_inbound::Msg::HelloAck(HelloAck {

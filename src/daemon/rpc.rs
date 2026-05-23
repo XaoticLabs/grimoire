@@ -888,7 +888,6 @@ async fn handle_topic_send(
             if let Ok(depth) = db.outbox_depth(&fed.peer_id)
                 && depth >= PEER_OUTBOX_MAX_DEPTH_DEFAULT
             {
-                // Skip this peer; emit a forward-failed event.
                 bus.publish(StreamEvent::PeerMailForwardFailed {
                     peer_id: fed.peer_id.clone(),
                     mail_id: mail_id_for_peer.clone(),

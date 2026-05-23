@@ -115,7 +115,6 @@ impl TaskDispatcher {
             }
         };
 
-        // Spawn the provider command.
         let mut cmd = Command::new(&provider.binary);
         for arg in &provider.args_template {
             cmd.arg(arg.replace("{task}", &assign.task));
@@ -217,7 +216,6 @@ impl TaskDispatcher {
                 });
             }
 
-            // Wait for exit
             let exit_status = {
                 let mut guard = child_slot.lock().await;
                 if let Some(child) = guard.as_mut() {
