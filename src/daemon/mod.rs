@@ -166,8 +166,8 @@ pub async fn start() -> Result<()> {
         "federation transport identity resolved"
     );
 
-    // Federation peer registry. Per spec Slice 2: this hosts outbound peer
-    // clients + outbox drainers + dispatch into the inbox handler.
+    // Federation peer registry: outbound peer clients + outbox drainers +
+    // dispatch into the inbox handler.
     let peer_registry = peer_registry::PeerRegistry::new(
         db.clone(),
         event_bus.clone(),

@@ -74,8 +74,8 @@ pub async fn handle_rpc(
     daemon_id: &str,
     req: RpcRequest,
 ) -> RpcResponse {
-    // Federation Task 4: validate RPC protocol_version. Existing callers
-    // omit the field and default to v1.
+    // Validate RPC protocol_version. Existing callers omit the field and
+    // default to v1.
     let pv = req.protocol_version.unwrap_or(RPC_PROTOCOL_VERSION);
     if pv != RPC_PROTOCOL_VERSION {
         return rpc_err(req.id, "unsupported_protocol_version");
@@ -663,7 +663,7 @@ pub async fn handle_mail_send(
             agent_id,
         } => {
             // Self via federated form: rewrite to local before reaching
-            // federation routing (Task 4 spec).
+            // federation routing.
             if target_daemon == daemon_id {
                 handle_direct_send(db, bus, &req, &params, agent_id, wake_eligible)
             } else {
@@ -1343,7 +1343,7 @@ fn handle_memory_delete(db: &Arc<Database>, bus: &EventBus, req: RpcRequest) -> 
     }
 }
 
-// --- F2: federated namespace memory handlers ---
+// --- Federated namespace memory handlers ---
 
 /// Namespaces and keys: non-empty, printable, bounded. Keys may contain `/`
 /// for hierarchy; namespaces are flat labels.
@@ -1733,12 +1733,12 @@ async fn handle_topic_unfederate(
     }
 }
 
-// --- F3a: workspace federation ---
+// --- Workspace federation ---
 
 /// Home-daemon-side opt-in: this workspace's file events will fan out
-/// to `peer` per `direction`. The drainer + producer (F3b) is not yet
-/// wired — this slice only records the intent so cross-machine subscribe
-/// can be set up ahead of the event flow landing.
+/// to `peer` per `direction`. The drainer + producer is not yet wired —
+/// this records the intent so cross-machine subscribe can be set up ahead
+/// of the event flow landing.
 async fn handle_workspace_federate(
     peer_registry: &Arc<PeerRegistry>,
     req: RpcRequest,
@@ -1791,7 +1791,7 @@ async fn handle_workspace_federate(
 
 /// Consumer-daemon-side: create a local shadow workspace pointing at a
 /// remote home, and pre-record an Inbound federation row so events from
-/// that peer are authorized on arrival (F3c). Caller supplies the
+/// that peer are authorized on arrival. Caller supplies the
 /// `<home-daemon-id>/<home-ws-id>` pair as a single `home` field
 /// matching the `agent://`-style address shape.
 async fn handle_workspace_federate_subscribe(

@@ -421,7 +421,7 @@ impl OutboxBackend for MailOutbox<'_> {
 }
 
 /// Namespace replication backend — drives `namespace_outbox` rows over
-/// the memory channel (F2).
+/// the memory channel.
 struct MemoryOutbox<'a> {
     db: &'a Database,
 }

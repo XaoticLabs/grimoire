@@ -1,4 +1,4 @@
-//! Task 1 contract tests: schema migrations and supervision CRUD.
+//! Contract tests for schema migrations and supervision CRUD.
 
 use chrono::Utc;
 use std::path::PathBuf;

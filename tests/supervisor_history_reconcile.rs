@@ -1,4 +1,4 @@
-//! Task 3 contract tests: history reconciliation + should_wake.
+//! Contract tests for history reconciliation + should_wake.
 
 use std::path::PathBuf;
 

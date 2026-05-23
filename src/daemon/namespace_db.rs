@@ -1,5 +1,5 @@
-//! F2 — federated namespace memory: a string-named KV store decoupled from
-//! git workspaces, designed to replicate across daemons.
+//! Federated namespace memory: a string-named KV store decoupled from git
+//! workspaces, designed to replicate across daemons.
 //!
 //! ## Conflict resolution: last-write-wins on a Lamport tuple
 //!

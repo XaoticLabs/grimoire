@@ -1,5 +1,3 @@
-//! Federation Task 1 contract tests for `daemon_id::load_or_mint`.
-
 use grimoire::daemon::daemon_id::load_or_mint;
 use grimoire::shared::types::validate_daemon_id;
 use std::fs;

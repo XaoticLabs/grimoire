@@ -50,7 +50,6 @@ async fn standing_review(repo: Option<PathBuf>, provider: Option<String>) -> Res
 
     let mut client = DaemonClient::connect().await?;
 
-    // Step 1 — summon a keep-alive reviewer rooted in the repo.
     let provider_note = provider
         .as_deref()
         .map_or(String::new(), |p| format!(" --provider {p}"));
@@ -74,7 +73,6 @@ async fn standing_review(repo: Option<PathBuf>, provider: Option<String>) -> Res
     let agent_id = summon.id;
     println!("  {} reviewer summoned: {}\n", "✓".green(), agent_id.bold());
 
-    // Step 2 — wake it on any file change under the repo.
     let ignore = vec![
         "**/.git/**".to_string(),
         "**/target/**".to_string(),

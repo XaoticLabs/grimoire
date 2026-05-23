@@ -336,11 +336,10 @@ impl_state_enum!(WorkspaceState {
     Destroying => "Destroying",
 });
 
-/// F3a: distinguishes a real on-disk worktree (`Local`) from a thin row
-/// on a peer daemon that mirrors a workspace homed on another daemon
-/// (`Shadow`). Shadow rows have `home_daemon_id` + `home_workspace_id`
-/// populated and no real `path`. Existing rows default to `Local` per
-/// the migration.
+/// Distinguishes a real on-disk worktree (`Local`) from a thin row on a
+/// peer daemon that mirrors a workspace homed on another daemon (`Shadow`).
+/// Shadow rows have `home_daemon_id` + `home_workspace_id` populated and no
+/// real `path`. Existing rows default to `Local` per the migration.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "PascalCase")]
 pub enum WorkspaceKind {
@@ -363,7 +362,7 @@ pub struct Workspace {
     pub created_at: DateTime<Utc>,
     /// `Local` for the canonical on-disk worktree; `Shadow` for a peer's
     /// mirror row pointing at a remote home. Default `Local` keeps the
-    /// pre-F3a single-daemon shape.
+    /// single-daemon shape.
     #[serde(default = "default_local_kind")]
     pub kind: WorkspaceKind,
     /// Set iff `kind == Shadow`: the daemon that owns the canonical
@@ -395,7 +394,7 @@ pub struct WorkspaceListEntry {
     pub home_workspace_id: Option<WorkspaceId>,
 }
 
-/// F3a: one row per (peer, workspace) opt-in for cross-daemon file event
+/// One row per (peer, workspace) opt-in for cross-daemon file event
 /// federation. Lives on the home daemon for `Outbound`/`Both` directions
 /// and on the consumer for `Inbound`/`Both`. Shape mirrors
 /// `TopicFederation`.

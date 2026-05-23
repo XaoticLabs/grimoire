@@ -1,7 +1,6 @@
-//! Contract tests for the boot-time `migrate_dormant_agents` migration
-//! (Task 1). Asserts that exactly the Complete-with-session agents are
-//! promoted to Dormant, the migration is idempotent, and unrelated rows
-//! are not touched.
+//! Contract tests for the boot-time `migrate_dormant_agents` migration:
+//! exactly the Complete-with-session agents are promoted to Dormant, the
+//! migration is idempotent, and unrelated rows are not touched.
 
 use std::path::PathBuf;
 

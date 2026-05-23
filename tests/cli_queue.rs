@@ -1,8 +1,5 @@
-// Tests for `grim queue` (Task 11 of durable-work-queue spec).
-//
-// Exercises the formatter on `QueueEntry` fixtures plus a direct RPC-handler
-// path that reads from a real in-memory DB. End-to-end CLI invocation is
-// covered by the existing client; this file is the contract layer.
+// Tests for `grim queue`: formatter on `QueueEntry` fixtures plus a direct
+// RPC-handler path that reads from a real in-memory DB.
 
 use std::sync::Arc;
 

@@ -1,8 +1,4 @@
-// RED tests for worker-pool spec, Task 3: worker.proto + tonic build wiring.
-//
-// References generated proto types under `grimoire::shared::worker_proto`. Until
-// `tonic-build` is wired, those modules do not exist; the `#![cfg(any())]` gate
-// keeps this file out of the build. Remove the gate to activate.
+// Tests for worker.proto + tonic build wiring.
 
 use prost::Message;
 

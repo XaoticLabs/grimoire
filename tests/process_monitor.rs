@@ -1,11 +1,5 @@
-// RED tests for worker-pool spec, Task 1: refactor `monitor_agent` to split
-// source-of-lines from persistence + publish.
-//
-// These tests reference types that do not yet exist (`LineSource`, `LineEvent`,
-// `consume_lines`, `persist_event`, `publish_output`, `CapturedSessionId`).
-// They are drafted from the acceptance criteria and contract-test list in
-// `.claude/specs/worker-pool-protocol-spec.md`. The `#![cfg(any())]` gate keeps
-// them out of the build until the GREEN phase begins. Remove that line to
+// Tests for the `monitor_agent` refactor that splits source-of-lines from
+// persistence + publish.
 // activate the tests.
 
 use std::sync::Arc;
@@ -229,8 +223,8 @@ async fn consume_lines_captures_session_id_from_provider() {
 
 #[tokio::test]
 async fn persist_event_and_publish_output_are_callable_from_outside_consume_lines() {
-    // The spec requires these helpers to be public-in-crate so RemoteExecutor
-    // (Task 6) can write events with the same shape as the local path.
+    // These helpers are public-in-crate so RemoteExecutor can write events
+    // with the same shape as the local path.
     let db = fresh_db();
     let bus = fresh_bus(db.clone());
     let mut rx = bus.subscribe();

@@ -16,7 +16,7 @@ pub struct RpcRequest {
     pub id: u64,
     /// RPC protocol version. Existing callers omit this; the dispatcher
     /// defaults to `1`. Unknown versions are rejected with
-    /// `unsupported_protocol_version` (federation Task 4).
+    /// `unsupported_protocol_version`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub protocol_version: Option<u32>,
     /// Bearer token. Required when the daemon cannot identify the caller
@@ -477,7 +477,7 @@ pub struct MemoryDeleteParams {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct MemoryDeleteResult {}
 
-// --- F2: federated namespace memory params/results ---
+// --- Federated namespace memory params/results ---
 // Values are treated as UTF-8 strings at the RPC boundary (the store keeps
 // raw bytes). Versioning is the LWW tuple (lamport, origin_daemon_id).
 
@@ -1020,7 +1020,7 @@ pub struct TopicUnfederateResult {
     pub removed: bool,
 }
 
-// --- F3a: workspace federation ---
+// --- Workspace federation ---
 
 /// Home-daemon side: opt a local workspace into cross-daemon file event
 /// federation with a peer.
@@ -1040,7 +1040,7 @@ pub struct WorkspaceFederateResult {
 
 /// Consumer-daemon side: create a local shadow workspace pointing at a
 /// remote home, and pre-record the inbound federation row so events
-/// from that peer are authorized when F3b/F3c ship.
+/// from that peer are authorized when the producer/consumer paths land.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorkspaceFederateSubscribeParams {
     /// `<home-daemon-id>/<home-workspace-id>` — the canonical address of

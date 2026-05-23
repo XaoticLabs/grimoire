@@ -59,7 +59,7 @@ fn make_agent(id: &str) -> Agent {
     }
 }
 // ---------------------------------------------------------------------------
-// Durable event log — schema (Task 1)
+// Durable event log — schema
 // ---------------------------------------------------------------------------
 #[test]
 fn events_table_exists_after_migration() {
@@ -100,7 +100,7 @@ fn migrate_is_idempotent() {
     let _db = Database::open(tmp.path()).unwrap();
 }
 // ---------------------------------------------------------------------------
-// Durable event log — append_event (Task 2)
+// Durable event log — append_event
 // ---------------------------------------------------------------------------
 fn sample_agent_for_created(id: &str) -> Agent {
     Agent {
@@ -780,7 +780,7 @@ fn dependency_edges_for_scroll() {
     assert!(edges.contains(&("e-c".to_string(), "e-b".to_string())));
 }
 // ---------------------------------------------------------------------------
-// task_queue — durable work queue (Task 3)
+// task_queue — durable work queue
 // ---------------------------------------------------------------------------
 fn make_queued_agent(id: &str) -> Agent {
     let mut a = make_agent(id);
@@ -976,7 +976,7 @@ fn enqueue_requires_existing_agent() {
     assert!(err.is_err(), "FK to agents(id) should reject orphan rows");
 }
 // ---------------------------------------------------------------------------
-// Restart recovery (Task 4)
+// Restart recovery
 // ---------------------------------------------------------------------------
 fn seed_agent_in_state(db: &Database, id: &str, state: AgentState) {
     let mut a = make_agent(id);

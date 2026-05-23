@@ -1,4 +1,4 @@
-//! Task 2 contract tests: Supervisor::on_state_change, idempotency,
+//! Contract tests for Supervisor::on_state_change, idempotency,
 //! cancel_pending, drain_due.
 
 use std::sync::Arc;

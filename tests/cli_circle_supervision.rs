@@ -1,4 +1,4 @@
-//! Task 6 contract tests: circle/status rendering with supervision.
+//! Contract tests for circle/status rendering with supervision.
 
 use std::path::PathBuf;
 

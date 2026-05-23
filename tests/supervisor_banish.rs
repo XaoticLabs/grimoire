@@ -1,4 +1,4 @@
-//! Task 5 contract tests: banish cascade.
+//! Contract tests for banish cascade.
 
 use std::path::PathBuf;
 use std::sync::Arc;

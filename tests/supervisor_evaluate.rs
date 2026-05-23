@@ -1,4 +1,4 @@
-//! Task 2 contract tests: Supervisor::evaluate decision tree.
+//! Contract tests for Supervisor::evaluate decision tree.
 
 use std::sync::Arc;
 

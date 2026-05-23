@@ -9,7 +9,7 @@
 //! - Send wake mail through a `WakeMailSender` seam (default impl writes a
 //!   wake-eligible mail row directly so the existing mail-wake path picks it
 //!   up).
-//! - Apply per-agent rate limiting (Task 6) on the common fire path.
+//! - Apply per-agent rate limiting on the common fire path.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -326,7 +326,7 @@ impl WakeRegistry {
             .await
     }
 
-    /// Common fire path with rate-limit gate (Task 6 behavior).
+    /// Common fire path with rate-limit gate.
     pub async fn fire(
         self: &Arc<Self>,
         wake_id: &str,
@@ -338,7 +338,6 @@ impl WakeRegistry {
             .get_wake_source(wake_id)?
             .ok_or_else(|| anyhow!("wake_not_found"))?;
 
-        // Rate limit (Task 6).
         let allow = self.consume_token(&src.agent_id).await?;
         if !allow {
             // Bump fire_count for observability of denied fires.

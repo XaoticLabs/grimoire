@@ -1,4 +1,4 @@
-//! Task 1 contract tests: AgentState::Restarting + is_supervisable.
+//! Contract tests for AgentState::Restarting + is_supervisable.
 
 use grimoire::shared::types::AgentState;
 

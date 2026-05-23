@@ -1,8 +1,7 @@
-//! Slice 1 ship-gate tests: RPC validation for federated addresses and
-//! the new `protocol_version` field. After Task 4 lands the daemon mints
-//! a `daemon_id`, parses federated addresses, and rejects federation
-//! traffic with `federation_not_configured` until Task 10 layers in real
-//! forwarding.
+//! RPC validation for federated addresses and the `protocol_version` field.
+//! The daemon mints a `daemon_id`, parses federated addresses, and rejects
+//! federation traffic with `federation_not_configured` until real forwarding
+//! is wired.
 
 use grimoire::shared::protocol::RpcRequest;
 

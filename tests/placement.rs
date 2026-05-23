@@ -1,6 +1,4 @@
-// RED tests for worker-pool spec, Task 6: `LeastLoadedPlacement`.
-//
-// References `Placement` and `LeastLoadedPlacement` not yet implemented.
+// Tests for `LeastLoadedPlacement`.
 
 use std::path::PathBuf;
 use std::sync::Arc;

@@ -20,7 +20,7 @@ use super::worker_registry::{RegisterParams, WorkerRegistry, worker_version_meet
 const REGISTRY_SETTLE_YIELD: Duration = Duration::from_millis(50);
 
 /// Routes inbound TaskEvent/TaskFinished/TaskAccepted/TaskRejected back to a
-/// per-agent channel registered by RemoteExecutor (Task 6).
+/// per-agent channel registered by RemoteExecutor.
 pub type RoutingMap = Arc<Mutex<std::collections::HashMap<String, mpsc::Sender<WorkerMessage>>>>;
 
 pub struct WorkerControlService {

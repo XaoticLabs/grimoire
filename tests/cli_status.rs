@@ -1,6 +1,4 @@
-// RED tests for worker-pool spec, Task 8b: `grim status` worker count.
-//
-// References `StatusResponse::workers` and a `WorkerStatus` not yet defined.
+// Tests for the `grim status` worker count.
 
 use grimoire::cli::commands::status;
 use grimoire::shared::protocol::{StatusResponse, WorkerStatus};

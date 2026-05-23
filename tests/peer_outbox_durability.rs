@@ -1,6 +1,6 @@
-//! Federation Task 8 contract tests: outbox state transitions and
-//! restart reconciliation. These exercise the persistence layer
-//! directly — full-stream tests live in `peer_e2e.rs`.
+//! Contract tests for outbox state transitions and restart reconciliation.
+//! These exercise the persistence layer directly — full-stream tests live
+//! in `peer_e2e.rs`.
 
 use grimoire::daemon::peer_outbox::backoff_secs;
 use grimoire::daemon::persistence::{Database, unix_now};

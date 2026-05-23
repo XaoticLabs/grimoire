@@ -1,5 +1,5 @@
-//! Banish-cascade contract tests for Task 7. Banishing an agent must
-//! retire all of its registered wake sources.
+//! Banish-cascade contract tests: banishing an agent must retire all of
+//! its registered wake sources.
 
 use std::path::PathBuf;
 use std::sync::Arc;

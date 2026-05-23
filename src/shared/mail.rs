@@ -70,8 +70,8 @@ impl std::error::Error for AddressParseError {}
 
 pub fn parse_address(s: &str) -> Result<Address, AddressParseError> {
     if let Some(rest) = s.strip_prefix("agent://") {
-        // Federation Task 2: try the federated form first
-        // (`grimd-<daemon-id>/<agent-id>`). Falls back to bare 8-hex.
+        // Try the federated form first (`grimd-<daemon-id>/<agent-id>`).
+        // Falls back to bare 8-hex.
         if let Some(stripped) = rest.strip_prefix("grimd-") {
             // Strict shape: <8hex>/<8hex>, no extra path segments.
             return match parse_federated_agent_tail(stripped) {
@@ -218,7 +218,7 @@ mod tests {
         assert_eq!(preview.chars().count(), 5);
     }
 
-    // --- Federation Task 2: federated address parser ---
+    // --- Federated address parser ---
 
     #[test]
     fn parse_address_accepts_federated_form() {

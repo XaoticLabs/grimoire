@@ -1,8 +1,4 @@
-// RED tests for worker-pool spec, Task 7: `agents.worker_id` column.
-//
-// Spec lists this as `tests/database.rs (extend)`, but extending the existing
-// passing file with non-compiling code would break it. These tests live in
-// their own file and merge into `database.rs` once the column lands.
+// Tests for the `agents.worker_id` column.
 
 use grimoire::daemon::persistence::Database;
 use grimoire::shared::types::{Agent, AgentState};

@@ -1,11 +1,9 @@
-//! Contract tests for `agent_manager::enqueue` / `dispatch_internal`
-//! (Task 8 of durable-work-queue spec).
+//! Contract tests for `agent_manager::enqueue` / `dispatch_internal`.
 //!
 //! `summon` is split into two halves: `enqueue` writes the agent +
 //! `task_queue` row in `Queued` state and returns immediately, and
 //! `dispatch_internal` (called via the `Dispatcher` trait by the scheduler)
-//! drives `executor.start` and the `Summoning -> Active` transition. These
-//! tests pin both halves' contracts so the scheduler can rely on them.
+//! drives `executor.start` and the `Summoning -> Active` transition.
 
 use std::path::Path;
 use std::sync::{Arc, Mutex};
@@ -221,7 +219,7 @@ async fn dispatch_failure_returns_err_without_touching_queue() {
     );
 }
 
-// --- banish-on-Queued / invoke-on-Queued (Task 9) ------------------------
+// --- banish-on-Queued / invoke-on-Queued ---------------------------------
 
 #[tokio::test]
 async fn banish_queued_removes_from_queue() {
@@ -327,8 +325,6 @@ async fn invoke_queued_returns_error_with_clear_message() {
         .await
         .expect_err("invoke on Queued must error");
     let msg = err.to_string();
-    // After Task 1, invoke requires Dormant; a Queued agent now reports
-    // "is not dormant (state: queued)". Either phrasing is acceptable.
     assert!(
         msg.contains("not dormant") || msg.contains("has not started"),
         "error message must indicate the agent isn't dormant, got: {msg}"

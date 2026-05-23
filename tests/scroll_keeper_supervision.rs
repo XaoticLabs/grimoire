@@ -1,4 +1,4 @@
-//! Task 7 contract tests: scroll-keeper Restarting handling.
+//! Contract tests for scroll-keeper Restarting handling.
 
 use std::path::PathBuf;
 use std::sync::Arc;

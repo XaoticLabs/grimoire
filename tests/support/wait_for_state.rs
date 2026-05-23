@@ -1,6 +1,4 @@
 #![allow(unreachable_pub)] // shared via `mod support` in each test crate; pub is load-bearing
-// Test-only helper for the durable-work-queue spec (Task 12).
-//
 // Polls the database for an agent's state, returning when it matches a
 // target state or timing out with the actual final state. Use this in any
 // test where work goes through `enqueue + scheduler.tick_now()` rather than

@@ -159,7 +159,7 @@ impl PeerService for PeerSvc {
                             .await;
                     }
                     Some(peer_outbound::Msg::MemoryDeliver(d)) => {
-                        // F2: inbound namespace replication. Apply via LWW
+                        // Inbound namespace replication. Apply via LWW
                         // (idempotent) and ack on the same stream.
                         let ack =
                             super::peer_client::apply_memory_deliver(&db, &peer_id_for_loop, &d);

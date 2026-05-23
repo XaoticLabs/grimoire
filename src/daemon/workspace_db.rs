@@ -395,7 +395,7 @@ impl Database {
         Ok(out)
     }
 
-    // --- F3a: workspace federation ---
+    // --- Workspace federation ---
 
     /// Upsert a `workspace_federations` row, merging the existing
     /// direction with the requested one the same way `topic_federations`
@@ -446,7 +446,7 @@ impl Database {
     }
 
     /// All federation rows for `workspace_id` regardless of direction —
-    /// used by `workspace show` and (in F3b) by the producer-side fanout.
+    /// used by `workspace show` and by the producer-side fanout.
     pub fn list_workspace_federations_for(
         &self,
         workspace_id: &str,
@@ -478,8 +478,8 @@ impl Database {
     }
 
     /// Peer ids on the home daemon whose subscription includes outbound
-    /// fanout for this workspace. F3b reads this to decide who gets a
-    /// `workspace_event_outbox` row on each `WorkspaceWatcher` emit.
+    /// fanout for this workspace. The producer reads this to decide who
+    /// gets a `workspace_event_outbox` row on each `WorkspaceWatcher` emit.
     pub fn workspace_outbound_peers(&self, workspace_id: &str) -> Result<Vec<String>> {
         let conn = self.workspace_conn_lock();
         let mut stmt = conn.prepare(
@@ -492,7 +492,7 @@ impl Database {
 
     /// True iff `peer_id` is allowed to push workspace events at us for
     /// the local shadow `workspace_id`. Mirrors
-    /// `topic_federation_inbound_authorized`. Used by F3c.
+    /// `topic_federation_inbound_authorized`.
     pub fn workspace_federation_inbound_authorized(
         &self,
         peer_id: &str,

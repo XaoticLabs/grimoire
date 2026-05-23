@@ -832,8 +832,7 @@ impl AgentManager {
 
     /// Test helper: insert an agent with a known session_id so `invoke` can be
     /// driven without a prior real `summon`. Agents are seeded as `Dormant`
-    /// (the post-completion-with-session state introduced by Task 1) so the
-    /// invoke path matches production semantics.
+    /// so the invoke path matches production semantics.
     pub async fn seed_agent_for_test_with_session(
         self: &Arc<Self>,
         session_id: &str,

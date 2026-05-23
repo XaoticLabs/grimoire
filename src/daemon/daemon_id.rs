@@ -1,4 +1,4 @@
-//! DaemonId minting + persistence (federation-spec Task 1).
+//! DaemonId minting + persistence.
 //!
 //! On first daemon boot we mint an 8-hex `DaemonId` and persist it atomically
 //! to `~/.grimoire/daemon.id` (override via `GRIMOIRE_DAEMON_ID_PATH`). On

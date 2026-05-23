@@ -1,5 +1,5 @@
-//! Contract tests for the new `AgentState::Dormant` variant and the
-//! `is_terminal` / `is_final` split (Task 1).
+//! Contract tests for the `AgentState::Dormant` variant and the
+//! `is_terminal` / `is_final` split.
 
 use grimoire::shared::types::AgentState;
 

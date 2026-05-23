@@ -1,7 +1,4 @@
-// RED tests for worker-pool spec, Task 8a: `grim circle` worker annotation.
-//
-// References `AgentSummary::worker_id` (added in this task) and a CLI
-// formatter helper not yet implemented.
+// Tests for `grim circle` worker annotation.
 
 use grimoire::cli::formatters;
 use grimoire::shared::types::{AgentState, AgentSummary, RestartPolicy};

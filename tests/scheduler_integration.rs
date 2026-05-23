@@ -1,5 +1,4 @@
-//! End-to-end integration tests for the durable work queue (Task 12 of the
-//! durable-work-queue spec). Exercises the cross-task contract: enqueue →
+//! End-to-end integration tests for the durable work queue: enqueue →
 //! scheduler dispatch → AgentManager.dispatch_internal → state transitions,
 //! plus restart recovery, banish-while-queued, and ad-hoc/scroll lane order.
 //!

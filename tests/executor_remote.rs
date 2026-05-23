@@ -1,6 +1,4 @@
-// RED tests for worker-pool spec, Task 6: `RemoteExecutor`.
-//
-// References `RemoteExecutor` and routing-map APIs not yet implemented.
+// Tests for `RemoteExecutor`.
 
 use std::path::PathBuf;
 use std::sync::Arc;
