@@ -179,11 +179,13 @@ fn workspace_federation_merges_and_lists() {
 
     // Unfederate is idempotent.
     assert_eq!(
-        db.delete_workspace_federation(&peer.id, "frontend").unwrap(),
+        db.delete_workspace_federation(&peer.id, "frontend")
+            .unwrap(),
         1
     );
     assert_eq!(
-        db.delete_workspace_federation(&peer.id, "frontend").unwrap(),
+        db.delete_workspace_federation(&peer.id, "frontend")
+            .unwrap(),
         0
     );
 }
@@ -196,8 +198,14 @@ fn workspace_federation_merges_and_lists() {
 fn shadow_workspace_roundtrips() {
     use chrono::Utc;
     let db = fresh_db();
-    db.insert_shadow_workspace("frontend-shadow", "abcdef01", "frontend", "main", Utc::now())
-        .unwrap();
+    db.insert_shadow_workspace(
+        "frontend-shadow",
+        "abcdef01",
+        "frontend",
+        "main",
+        Utc::now(),
+    )
+    .unwrap();
     let got = db.get_workspace("frontend-shadow").unwrap().unwrap();
     assert_eq!(got.kind, grimoire::shared::types::WorkspaceKind::Shadow);
     assert_eq!(got.home_daemon_id.as_deref(), Some("abcdef01"));

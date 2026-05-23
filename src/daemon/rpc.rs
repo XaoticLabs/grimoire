@@ -1878,10 +1878,7 @@ async fn handle_workspace_unfederate(
         .db
         .delete_workspace_federation(&peer.id, &params.workspace)
     {
-        Ok(n) => RpcResponse::success_json(
-            req.id,
-            &WorkspaceUnfederateResult { removed: n > 0 },
-        ),
+        Ok(n) => RpcResponse::success_json(req.id, &WorkspaceUnfederateResult { removed: n > 0 }),
         Err(e) => RpcResponse::error(req.id, -32000, format!("unfederate: {e}")),
     }
 }

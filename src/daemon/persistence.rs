@@ -509,9 +509,7 @@ impl Database {
         // homed on another daemon. Shadows have no on-disk worktree — the
         // path column is filled with a sentinel `shadow://<home-id>/<ws-id>`
         // so the existing UNIQUE constraint still holds.
-        let has_kind: bool = conn
-            .prepare("SELECT kind FROM workspaces LIMIT 0")
-            .is_ok();
+        let has_kind: bool = conn.prepare("SELECT kind FROM workspaces LIMIT 0").is_ok();
         if !has_kind {
             conn.execute_batch(
                 "ALTER TABLE workspaces ADD COLUMN kind TEXT NOT NULL DEFAULT 'Local';

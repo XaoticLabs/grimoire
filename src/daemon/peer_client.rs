@@ -175,8 +175,22 @@ async fn run_once(
 
     // Initial pump in case rows were queued while disconnected.
     let removing = peer_removing(registry, &peer.id);
-    pump_one_row(&mail_backend, &peer.id, removing, &out_tx, &mut in_flight_mail).await?;
-    pump_one_row(&memory_backend, &peer.id, removing, &out_tx, &mut in_flight_memory).await?;
+    pump_one_row(
+        &mail_backend,
+        &peer.id,
+        removing,
+        &out_tx,
+        &mut in_flight_mail,
+    )
+    .await?;
+    pump_one_row(
+        &memory_backend,
+        &peer.id,
+        removing,
+        &out_tx,
+        &mut in_flight_memory,
+    )
+    .await?;
 
     loop {
         tokio::select! {
@@ -425,7 +439,8 @@ impl OutboxBackend for MemoryOutbox<'_> {
         self.db.namespace_mark_outbox_delivered(row_id)
     }
     fn mark_failed_retry(&self, row_id: &str, next_attempt_at: i64) -> anyhow::Result<()> {
-        self.db.namespace_mark_outbox_failed_retry(row_id, next_attempt_at)
+        self.db
+            .namespace_mark_outbox_failed_retry(row_id, next_attempt_at)
     }
     fn row_id(row: &Self::Row) -> &str {
         &row.id

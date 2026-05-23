@@ -79,9 +79,7 @@ pub async fn run(cmd: WorkspaceCommand) -> Result<()> {
             alias,
             branch,
         } => run_federate_subscribe(&home, &peer, alias.as_deref(), &branch).await,
-        WorkspaceCommand::Unfederate { workspace, peer } => {
-            run_unfederate(&workspace, &peer).await
-        }
+        WorkspaceCommand::Unfederate { workspace, peer } => run_unfederate(&workspace, &peer).await,
     }
 }
 
