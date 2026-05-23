@@ -64,8 +64,8 @@ pub async fn run(
         }
     } else {
         // Create pact
-        let source_id = source_id.expect("source_id required");
-        let task = task.expect("--task required");
+        let source_id = source_id.context("--source is required to create a pact")?;
+        let task = task.context("--task is required to create a pact")?;
 
         let params = serde_json::json!({
             "source_id": source_id,
