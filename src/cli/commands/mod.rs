@@ -3,6 +3,7 @@ pub mod bind;
 pub mod chronicle;
 pub mod circle;
 pub mod demo;
+pub mod fork;
 pub mod inscribe;
 pub mod invoke;
 pub mod mail;

@@ -89,6 +89,34 @@ enum Commands {
         id: String,
     },
 
+    /// Fork an agent at a point in its history: spawn a new agent seeded
+    /// with the parent's output up to the cut.
+    Fork {
+        /// Parent agent ID (or prefix)
+        id: String,
+
+        /// Cut point — an event seq (inclusive) or kind name (stop after
+        /// first occurrence). Defaults to the parent's full life.
+        #[arg(long)]
+        at: Option<String>,
+
+        /// Override the fork's task. Defaults to reusing the parent's task.
+        #[arg(long)]
+        task: Option<String>,
+
+        /// Override the fork's provider. Defaults to the parent's.
+        #[arg(short, long)]
+        provider: Option<String>,
+
+        /// Override the fork's model. Defaults to the parent's.
+        #[arg(short, long)]
+        model: Option<String>,
+
+        /// Optional name for the fork.
+        #[arg(short, long)]
+        name: Option<String>,
+    },
+
     /// Replay an agent's full life from the durable event log
     #[command(visible_alias = "replay")]
     Chronicle {
@@ -349,6 +377,17 @@ async fn main() {
                 } => {
                     let id = resolve_id(&id).await;
                     cli::commands::chronicle::run(&id, until, from, kinds, no_output, json).await
+                }
+                Commands::Fork {
+                    id,
+                    at,
+                    task,
+                    provider,
+                    model,
+                    name,
+                } => {
+                    let id = resolve_id(&id).await;
+                    cli::commands::fork::run(&id, at, task, provider, model, name).await
                 }
                 Commands::Invoke { id, message } => {
                     let id = resolve_id(&id).await;
