@@ -89,6 +89,28 @@ enum Commands {
         id: String,
     },
 
+    /// Score an agent's transcript against a rubric using an evaluator agent.
+    Eval {
+        /// Target agent ID (or prefix) to evaluate
+        id: String,
+
+        /// Path to the rubric markdown file
+        #[arg(short, long)]
+        rubric: String,
+
+        /// Override the evaluator's provider. Defaults to the daemon default.
+        #[arg(short, long)]
+        provider: Option<String>,
+
+        /// Override the evaluator's model.
+        #[arg(short, long)]
+        model: Option<String>,
+
+        /// Optional name for the evaluator agent. Defaults to `eval:<short-target-id>`.
+        #[arg(short, long)]
+        name: Option<String>,
+    },
+
     /// Fork an agent at a point in its history: spawn a new agent seeded
     /// with the parent's output up to the cut.
     Fork {
@@ -377,6 +399,16 @@ async fn main() {
                 } => {
                     let id = resolve_id(&id).await;
                     cli::commands::chronicle::run(&id, until, from, kinds, no_output, json).await
+                }
+                Commands::Eval {
+                    id,
+                    rubric,
+                    provider,
+                    model,
+                    name,
+                } => {
+                    let id = resolve_id(&id).await;
+                    cli::commands::eval::run(&id, &rubric, provider, model, name).await
                 }
                 Commands::Fork {
                     id,
