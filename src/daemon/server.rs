@@ -363,11 +363,25 @@ fn json_ok<T: serde::Serialize>(value: T) -> axum::Json<serde_json::Value> {
     }
 }
 
-async fn http_list_agents(State(state): State<AppState>) -> axum::Json<serde_json::Value> {
-    match state.manager.circle(None).await {
-        Ok(agents) => json_ok(CircleResult { agents }),
+/// `Ok` → `json_ok(value)`, `Err` → `{"error": err.to_string()}`. Standard tail
+/// for HTTP handlers wrapping a manager/db call.
+fn json_result<T: serde::Serialize, E: std::fmt::Display>(
+    r: Result<T, E>,
+) -> axum::Json<serde_json::Value> {
+    match r {
+        Ok(v) => json_ok(v),
         Err(e) => axum::Json(serde_json::json!({"error": e.to_string()})),
     }
+}
+
+async fn http_list_agents(State(state): State<AppState>) -> axum::Json<serde_json::Value> {
+    json_result(
+        state
+            .manager
+            .circle(None)
+            .await
+            .map(|agents| CircleResult { agents }),
+    )
 }
 
 async fn http_summon_agent(
@@ -379,25 +393,24 @@ async fn http_summon_agent(
     let _ = params.max_restarts;
     let _ = params.restart_window_secs;
     let _ = params.escalate_to;
-    match state
-        .manager
-        .enqueue(
-            &params.task,
-            params.name,
-            params.model,
-            params.provider,
-            &cwd,
-            crate::daemon::agent_manager::Lane::Adhoc,
-        )
-        .await
-    {
-        Ok(agent) => json_ok(SummonResult {
-            id: agent.id,
-            name: agent.name,
-            state: agent.state.as_str().to_string(),
-        }),
-        Err(e) => axum::Json(serde_json::json!({"error": e.to_string()})),
-    }
+    json_result(
+        state
+            .manager
+            .enqueue(
+                &params.task,
+                params.name,
+                params.model,
+                params.provider,
+                &cwd,
+                crate::daemon::agent_manager::Lane::Adhoc,
+            )
+            .await
+            .map(|agent| SummonResult {
+                id: agent.id,
+                name: agent.name,
+                state: agent.state.as_str().to_string(),
+            }),
+    )
 }
 
 async fn http_get_agent(
@@ -415,10 +428,13 @@ async fn http_banish_agent(
     State(state): State<AppState>,
     axum::extract::Path(id): axum::extract::Path<String>,
 ) -> axum::Json<serde_json::Value> {
-    match state.manager.banish(&id).await {
-        Ok(success) => json_ok(BanishResult { success }),
-        Err(e) => axum::Json(serde_json::json!({"error": e.to_string()})),
-    }
+    json_result(
+        state
+            .manager
+            .banish(&id)
+            .await
+            .map(|success| BanishResult { success }),
+    )
 }
 
 async fn http_invoke_agent(
@@ -436,10 +452,13 @@ async fn http_invoke_agent(
         return axum::Json(serde_json::json!({"error": "message is required"}));
     }
 
-    match state.manager.invoke(&id, &message, None).await {
-        Ok(()) => axum::Json(serde_json::json!({"success": true})),
-        Err(e) => axum::Json(serde_json::json!({"error": e.to_string()})),
-    }
+    json_result(
+        state
+            .manager
+            .invoke(&id, &message, None)
+            .await
+            .map(|()| serde_json::json!({"success": true})),
+    )
 }
 
 async fn http_agent_events_sse(
@@ -491,17 +510,16 @@ async fn http_agent_history(
     State(state): State<AppState>,
     axum::extract::Path(id): axum::extract::Path<String>,
 ) -> axum::Json<serde_json::Value> {
-    match state.manager.get_events(&id, None) {
-        Ok(events) => json_ok(events),
-        Err(e) => axum::Json(serde_json::json!({"error": e.to_string()})),
-    }
+    json_result(state.manager.get_events(&id, None))
 }
 
 async fn http_list_scrolls(State(state): State<AppState>) -> axum::Json<serde_json::Value> {
-    match state.db.list_scrolls() {
-        Ok(scrolls) => axum::Json(serde_json::json!({"scrolls": scrolls})),
-        Err(e) => axum::Json(serde_json::json!({"error": e.to_string()})),
-    }
+    json_result(
+        state
+            .db
+            .list_scrolls()
+            .map(|scrolls| serde_json::json!({"scrolls": scrolls})),
+    )
 }
 
 async fn http_inscribe_scroll(
@@ -529,48 +547,52 @@ async fn http_inscribe_scroll(
         Err(e) => return axum::Json(serde_json::json!({"error": format!("Parse error: {}", e)})),
     };
 
-    match state
-        .scroll_keeper
-        .inscribe(spec, max_concurrency, Some(spec_path))
-    {
-        Ok(result) => axum::Json(serde_json::json!({
-            "id": result.scroll.id,
-            "name": result.scroll.name,
-            "task_count": result.task_count,
-            "conflicts": result.conflicts,
-        })),
-        Err(e) => axum::Json(serde_json::json!({"error": e.to_string()})),
-    }
+    json_result(
+        state
+            .scroll_keeper
+            .inscribe(spec, max_concurrency, Some(spec_path))
+            .map(|result| {
+                serde_json::json!({
+                    "id": result.scroll.id,
+                    "name": result.scroll.name,
+                    "task_count": result.task_count,
+                    "conflicts": result.conflicts,
+                })
+            }),
+    )
 }
 
 async fn http_scroll_status(
     State(state): State<AppState>,
     axum::extract::Path(id): axum::extract::Path<String>,
 ) -> axum::Json<serde_json::Value> {
-    match state.scroll_keeper.status(&id) {
-        Ok(status) => json_ok(status),
-        Err(e) => axum::Json(serde_json::json!({"error": e.to_string()})),
-    }
+    json_result(state.scroll_keeper.status(&id))
 }
 
 async fn http_activate_scroll(
     State(state): State<AppState>,
     axum::extract::Path(id): axum::extract::Path<String>,
 ) -> axum::Json<serde_json::Value> {
-    match state.scroll_keeper.activate(&id).await {
-        Ok(()) => axum::Json(serde_json::json!({"success": true})),
-        Err(e) => axum::Json(serde_json::json!({"error": e.to_string()})),
-    }
+    json_result(
+        state
+            .scroll_keeper
+            .activate(&id)
+            .await
+            .map(|()| serde_json::json!({"success": true})),
+    )
 }
 
 async fn http_abandon_scroll(
     State(state): State<AppState>,
     axum::extract::Path(id): axum::extract::Path<String>,
 ) -> axum::Json<serde_json::Value> {
-    match state.scroll_keeper.abandon(&id).await {
-        Ok(()) => axum::Json(serde_json::json!({"success": true})),
-        Err(e) => axum::Json(serde_json::json!({"error": e.to_string()})),
-    }
+    json_result(
+        state
+            .scroll_keeper
+            .abandon(&id)
+            .await
+            .map(|()| serde_json::json!({"success": true})),
+    )
 }
 
 /// Inbound webhook endpoint. The raw request body becomes the mail body —

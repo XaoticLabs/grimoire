@@ -22,8 +22,17 @@ use super::persistence::Database;
 use super::workspace_watcher::WorkspaceWatcherHandle;
 
 /// Errors enumerated as RPC code strings — keep stable for client matching.
+/// Body is `<code>` or `<code>:<details>`; `code()` returns the prefix so RPC
+/// handlers don't have to ad-hoc-split the `Display` output.
 #[derive(Debug)]
 pub struct WorkspaceError(pub String);
+
+impl WorkspaceError {
+    /// The RPC code prefix (the segment before the first `:`).
+    pub fn code(&self) -> &str {
+        self.0.split(':').next().unwrap_or("workspace_error")
+    }
+}
 
 impl std::fmt::Display for WorkspaceError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {

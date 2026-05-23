@@ -53,8 +53,39 @@ pub struct RecoveryReport {
 /// One outbox fanout row: (peer_id, outbox_id, mail_id, recipient, body, sender, created_at).
 pub type OutboxFanoutRow = (String, String, String, String, String, Option<String>, i64);
 
+/// Column list for `SELECT … FROM agents` queries. Order must match
+/// `row_to_agent`'s positional column reads.
+const AGENT_COLS: &str = "id, name, state, task, model, provider, cwd, pid, session_id, exit_code, created_at, updated_at, worker_id, restart_policy, restart_count, workspace_id";
+
+/// Column list for `SELECT … FROM wake_sources`. Matches `row_to_wake_source`.
+const WAKE_SRC_COLS: &str =
+    "id, agent_id, kind, config_json, state, fail_reason, last_fired_at, fire_count, created_at";
+
+/// Column list for `SELECT … FROM peers`. Matches `row_to_peer`.
+const PEER_COLS: &str = "id, daemon_id, name, url, bearer_token_hash, bearer_token, public_key, state, last_seen, registered_at";
+
+/// Column list for `SELECT … FROM mail`. Matches `row_to_mail`.
+const MAIL_COLS: &str = "id, recipient_id, sender_id, topic, body, in_reply_to, state, fail_reason, created_at, delivered_at, seq, wake_eligible";
+
 pub struct Database {
     conn: Mutex<Connection>,
+}
+
+/// Best-effort `ALTER TABLE ADD COLUMN` for forward-only migrations. Returns
+/// `Ok(())` whether or not the column already exists. `column_ddl` is the
+/// full DDL fragment (e.g. `"keep_alive INTEGER NOT NULL DEFAULT 0"`).
+/// All identifiers are crate literals — no injection surface.
+fn add_column_if_missing(
+    conn: &Connection,
+    table: &str,
+    column: &str,
+    column_ddl: &str,
+) -> Result<()> {
+    let probe = format!("SELECT {column} FROM {table} LIMIT 0");
+    if conn.prepare(&probe).is_err() {
+        conn.execute_batch(&format!("ALTER TABLE {table} ADD COLUMN {column_ddl};"))?;
+    }
+    Ok(())
 }
 
 impl Database {
@@ -145,15 +176,8 @@ impl Database {
             ",
         )?;
 
-        let has_provider: bool = conn.prepare("SELECT provider FROM agents LIMIT 0").is_ok();
-        if !has_provider {
-            conn.execute_batch("ALTER TABLE agents ADD COLUMN provider TEXT;")?;
-        }
-
-        let has_worker_id: bool = conn.prepare("SELECT worker_id FROM agents LIMIT 0").is_ok();
-        if !has_worker_id {
-            conn.execute_batch("ALTER TABLE agents ADD COLUMN worker_id TEXT;")?;
-        }
+        add_column_if_missing(&conn, "agents", "provider", "provider TEXT")?;
+        add_column_if_missing(&conn, "agents", "worker_id", "worker_id TEXT")?;
 
         conn.execute_batch(
             "
@@ -284,57 +308,38 @@ impl Database {
             ",
         )?;
 
-        let has_keep_alive: bool = conn
-            .prepare("SELECT keep_alive FROM agents LIMIT 0")
-            .is_ok();
-        if !has_keep_alive {
-            conn.execute_batch(
-                "ALTER TABLE agents ADD COLUMN keep_alive INTEGER NOT NULL DEFAULT 0;",
-            )?;
-        }
-
-        let has_restart_policy: bool = conn
-            .prepare("SELECT restart_policy FROM agents LIMIT 0")
-            .is_ok();
-        if !has_restart_policy {
-            conn.execute_batch(
-                "ALTER TABLE agents ADD COLUMN restart_policy TEXT NOT NULL DEFAULT 'never';",
-            )?;
-        }
-        let has_max_restarts: bool = conn
-            .prepare("SELECT max_restarts FROM agents LIMIT 0")
-            .is_ok();
-        if !has_max_restarts {
-            conn.execute_batch("ALTER TABLE agents ADD COLUMN max_restarts INTEGER;")?;
-        }
-        let has_window_secs: bool = conn
-            .prepare("SELECT restart_window_secs FROM agents LIMIT 0")
-            .is_ok();
-        if !has_window_secs {
-            conn.execute_batch("ALTER TABLE agents ADD COLUMN restart_window_secs INTEGER;")?;
-        }
-        let has_escalate_to: bool = conn
-            .prepare("SELECT escalate_to FROM agents LIMIT 0")
-            .is_ok();
-        if !has_escalate_to {
-            conn.execute_batch("ALTER TABLE agents ADD COLUMN escalate_to TEXT;")?;
-        }
-        let has_restart_count: bool = conn
-            .prepare("SELECT restart_count FROM agents LIMIT 0")
-            .is_ok();
-        if !has_restart_count {
-            conn.execute_batch(
-                "ALTER TABLE agents ADD COLUMN restart_count INTEGER NOT NULL DEFAULT 0;",
-            )?;
-        }
-        let has_escalation_depth: bool = conn
-            .prepare("SELECT escalation_depth FROM agents LIMIT 0")
-            .is_ok();
-        if !has_escalation_depth {
-            conn.execute_batch(
-                "ALTER TABLE agents ADD COLUMN escalation_depth INTEGER NOT NULL DEFAULT 0;",
-            )?;
-        }
+        add_column_if_missing(
+            &conn,
+            "agents",
+            "keep_alive",
+            "keep_alive INTEGER NOT NULL DEFAULT 0",
+        )?;
+        add_column_if_missing(
+            &conn,
+            "agents",
+            "restart_policy",
+            "restart_policy TEXT NOT NULL DEFAULT 'never'",
+        )?;
+        add_column_if_missing(&conn, "agents", "max_restarts", "max_restarts INTEGER")?;
+        add_column_if_missing(
+            &conn,
+            "agents",
+            "restart_window_secs",
+            "restart_window_secs INTEGER",
+        )?;
+        add_column_if_missing(&conn, "agents", "escalate_to", "escalate_to TEXT")?;
+        add_column_if_missing(
+            &conn,
+            "agents",
+            "restart_count",
+            "restart_count INTEGER NOT NULL DEFAULT 0",
+        )?;
+        add_column_if_missing(
+            &conn,
+            "agents",
+            "escalation_depth",
+            "escalation_depth INTEGER NOT NULL DEFAULT 0",
+        )?;
 
         conn.execute_batch(
             "
@@ -489,24 +494,24 @@ impl Database {
             ",
         )?;
 
-        let has_workspace_id: bool = conn
-            .prepare("SELECT workspace_id FROM agents LIMIT 0")
-            .is_ok();
-        if !has_workspace_id {
-            conn.execute_batch("ALTER TABLE agents ADD COLUMN workspace_id TEXT;")?;
-        }
+        add_column_if_missing(&conn, "agents", "workspace_id", "workspace_id TEXT")?;
 
         // Shadow workspaces have no on-disk worktree — the path column is
         // filled with a sentinel `shadow://<home-id>/<ws-id>` so the
         // existing UNIQUE constraint still holds.
-        let has_kind: bool = conn.prepare("SELECT kind FROM workspaces LIMIT 0").is_ok();
-        if !has_kind {
-            conn.execute_batch(
-                "ALTER TABLE workspaces ADD COLUMN kind TEXT NOT NULL DEFAULT 'Local';
-                 ALTER TABLE workspaces ADD COLUMN home_daemon_id TEXT;
-                 ALTER TABLE workspaces ADD COLUMN home_workspace_id TEXT;",
-            )?;
-        }
+        add_column_if_missing(
+            &conn,
+            "workspaces",
+            "kind",
+            "kind TEXT NOT NULL DEFAULT 'Local'",
+        )?;
+        add_column_if_missing(&conn, "workspaces", "home_daemon_id", "home_daemon_id TEXT")?;
+        add_column_if_missing(
+            &conn,
+            "workspaces",
+            "home_workspace_id",
+            "home_workspace_id TEXT",
+        )?;
         conn.execute_batch(
             "CREATE TABLE IF NOT EXISTS workspace_federations (
                 id           TEXT PRIMARY KEY,
@@ -619,6 +624,22 @@ impl Database {
         Ok(())
     }
 
+    /// Update a single `agents` column plus `updated_at`. Caller supplies the
+    /// column name; SQL uses a fixed template so no injection surface exists.
+    fn update_agent_field(
+        &self,
+        id: &str,
+        column: &str,
+        value: &dyn rusqlite::ToSql,
+    ) -> Result<()> {
+        let now = Utc::now().to_rfc3339();
+        self.exec(
+            &format!("UPDATE agents SET {column} = ?1, updated_at = ?2 WHERE id = ?3"),
+            params![value, now, id],
+        )?;
+        Ok(())
+    }
+
     pub fn update_agent_state(
         &self,
         id: &str,
@@ -634,36 +655,20 @@ impl Database {
     }
 
     pub fn update_agent_session_id(&self, id: &str, session_id: &str) -> Result<()> {
-        let now = Utc::now().to_rfc3339();
-        self.exec(
-            "UPDATE agents SET session_id = ?1, updated_at = ?2 WHERE id = ?3",
-            params![session_id, now, id],
-        )?;
-        Ok(())
+        self.update_agent_field(id, "session_id", &session_id)
     }
 
     pub fn update_agent_worker_id(&self, id: &str, worker_id: Option<&str>) -> Result<()> {
-        let now = Utc::now().to_rfc3339();
-        self.exec(
-            "UPDATE agents SET worker_id = ?1, updated_at = ?2 WHERE id = ?3",
-            params![worker_id, now, id],
-        )?;
-        Ok(())
+        self.update_agent_field(id, "worker_id", &worker_id)
     }
 
     pub fn update_agent_pid(&self, id: &str, pid: u32) -> Result<()> {
-        let now = Utc::now().to_rfc3339();
-        self.exec(
-            "UPDATE agents SET pid = ?1, updated_at = ?2 WHERE id = ?3",
-            params![pid, now, id],
-        )?;
-        Ok(())
+        self.update_agent_field(id, "pid", &pid)
     }
 
     pub fn get_agent(&self, id: &str) -> Result<Option<Agent>> {
         self.query_opt(
-            "SELECT id, name, state, task, model, provider, cwd, pid, session_id, exit_code, created_at, updated_at, worker_id, restart_policy, restart_count, workspace_id
-             FROM agents WHERE id = ?1",
+            &format!("SELECT {AGENT_COLS} FROM agents WHERE id = ?1"),
             params![id],
             row_to_agent,
         )
@@ -672,14 +677,14 @@ impl Database {
     pub fn list_agents(&self, state_filter: Option<&str>) -> Result<Vec<Agent>> {
         match state_filter {
             Some(state) => self.query_vec(
-                "SELECT id, name, state, task, model, provider, cwd, pid, session_id, exit_code, created_at, updated_at, worker_id, restart_policy, restart_count, workspace_id
-                 FROM agents WHERE state = ?1 ORDER BY created_at DESC",
+                &format!(
+                    "SELECT {AGENT_COLS} FROM agents WHERE state = ?1 ORDER BY created_at DESC"
+                ),
                 params![state],
                 row_to_agent,
             ),
             None => self.query_vec(
-                "SELECT id, name, state, task, model, provider, cwd, pid, session_id, exit_code, created_at, updated_at, worker_id, restart_policy, restart_count, workspace_id
-                 FROM agents ORDER BY created_at DESC",
+                &format!("SELECT {AGENT_COLS} FROM agents ORDER BY created_at DESC"),
                 [],
                 row_to_agent,
             ),
@@ -1275,8 +1280,7 @@ impl Database {
 
     pub fn get_wake_source(&self, id: &str) -> Result<Option<WakeSource>> {
         self.query_opt(
-            "SELECT id, agent_id, kind, config_json, state, fail_reason, last_fired_at, fire_count, created_at \
-             FROM wake_sources WHERE id = ?1",
+            &format!("SELECT {WAKE_SRC_COLS} FROM wake_sources WHERE id = ?1"),
             params![id],
             row_to_wake_source,
         )
@@ -1284,8 +1288,7 @@ impl Database {
 
     pub fn list_wake_sources_for_agent(&self, agent_id: &str) -> Result<Vec<WakeSource>> {
         self.query_vec(
-            "SELECT id, agent_id, kind, config_json, state, fail_reason, last_fired_at, fire_count, created_at \
-             FROM wake_sources WHERE agent_id = ?1 ORDER BY created_at DESC, id ASC",
+            &format!("SELECT {WAKE_SRC_COLS} FROM wake_sources WHERE agent_id = ?1 ORDER BY created_at DESC, id ASC"),
             params![agent_id],
             row_to_wake_source,
         )
@@ -1293,8 +1296,7 @@ impl Database {
 
     pub fn list_all_wake_sources(&self) -> Result<Vec<WakeSource>> {
         self.query_vec(
-            "SELECT id, agent_id, kind, config_json, state, fail_reason, last_fired_at, fire_count, created_at \
-             FROM wake_sources ORDER BY created_at DESC, agent_id ASC, id ASC",
+            &format!("SELECT {WAKE_SRC_COLS} FROM wake_sources ORDER BY created_at DESC, agent_id ASC, id ASC"),
             [],
             row_to_wake_source,
         )
@@ -1302,8 +1304,7 @@ impl Database {
 
     pub fn list_armed_wake_sources(&self) -> Result<Vec<WakeSource>> {
         self.query_vec(
-            "SELECT id, agent_id, kind, config_json, state, fail_reason, last_fired_at, fire_count, created_at \
-             FROM wake_sources WHERE state = 'armed' ORDER BY created_at ASC",
+            &format!("SELECT {WAKE_SRC_COLS} FROM wake_sources WHERE state = 'armed' ORDER BY created_at ASC"),
             [],
             row_to_wake_source,
         )
@@ -1501,8 +1502,7 @@ impl Database {
             |r| r.get(0),
         )?;
         tx.execute(
-            "INSERT INTO mail (id, recipient_id, sender_id, topic, body, in_reply_to, state, fail_reason, created_at, delivered_at, seq, wake_eligible)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+            &format!("INSERT INTO mail ({MAIL_COLS}) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)"),
             params![
                 mail.id,
                 mail.recipient_id,
@@ -1530,8 +1530,7 @@ impl Database {
         seq: i64,
     ) -> Result<()> {
         tx.execute(
-            "INSERT INTO mail (id, recipient_id, sender_id, topic, body, in_reply_to, state, fail_reason, created_at, delivered_at, seq, wake_eligible)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+            &format!("INSERT INTO mail ({MAIL_COLS}) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)"),
             params![
                 mail.id,
                 mail.recipient_id,
@@ -1595,7 +1594,7 @@ impl Database {
                     sender_seq,
                     recipient,
                     sender,
-                    Some(extract_topic(recipient)),
+                    Some(recipient.strip_prefix("topic://").unwrap_or("")),
                     body,
                     created_at,
                 ],
@@ -1636,64 +1635,33 @@ impl Database {
         state_filter: Option<MailState>,
         limit: u32,
     ) -> Result<Vec<Mail>> {
+        use std::fmt::Write;
         let limit = i64::from(limit.clamp(1, 1000));
-        let conn = self.conn.lock();
-        let mut sql = String::from(
-            "SELECT id, recipient_id, sender_id, topic, body, in_reply_to, state, fail_reason, created_at, delivered_at, seq, wake_eligible \
-             FROM mail WHERE recipient_id = ?1",
-        );
-        if after_seq.is_some() {
-            sql.push_str(" AND seq > ?2");
+        let mut sql = format!("SELECT {MAIL_COLS} FROM mail WHERE recipient_id = ?1");
+        let mut args: Vec<Box<dyn rusqlite::ToSql>> = vec![Box::new(recipient_id.to_string())];
+        if let Some(s) = after_seq {
+            write!(sql, " AND seq > ?{}", args.len() + 1).unwrap();
+            args.push(Box::new(s));
         }
-        if state_filter.is_some() {
-            if after_seq.is_some() {
-                sql.push_str(" AND state = ?3");
-            } else {
-                sql.push_str(" AND state = ?2");
-            }
+        if let Some(st) = state_filter {
+            write!(sql, " AND state = ?{}", args.len() + 1).unwrap();
+            args.push(Box::new(st.as_str().to_string()));
         }
-        sql.push_str(" ORDER BY seq ASC LIMIT ");
-        sql.push_str(&limit.to_string());
+        write!(sql, " ORDER BY seq ASC LIMIT {limit}").unwrap();
 
+        let conn = self.conn.lock();
         let mut stmt = conn.prepare(&sql)?;
+        let mut rows = stmt.query(rusqlite::params_from_iter(args.iter().map(|b| &**b)))?;
         let mut out = Vec::new();
-        let mut push = |row: &rusqlite::Row| -> Result<()> {
+        while let Some(row) = rows.next()? {
             out.push(row_to_mail(row)?);
-            Ok(())
-        };
-        match (after_seq, state_filter) {
-            (None, None) => {
-                let mut rows = stmt.query(params![recipient_id])?;
-                while let Some(row) = rows.next()? {
-                    push(row)?;
-                }
-            }
-            (Some(s), None) => {
-                let mut rows = stmt.query(params![recipient_id, s])?;
-                while let Some(row) = rows.next()? {
-                    push(row)?;
-                }
-            }
-            (None, Some(st)) => {
-                let mut rows = stmt.query(params![recipient_id, st.as_str()])?;
-                while let Some(row) = rows.next()? {
-                    push(row)?;
-                }
-            }
-            (Some(s), Some(st)) => {
-                let mut rows = stmt.query(params![recipient_id, s, st.as_str()])?;
-                while let Some(row) = rows.next()? {
-                    push(row)?;
-                }
-            }
         }
         Ok(out)
     }
 
     pub fn get_mail(&self, id: &str) -> Result<Option<Mail>> {
         self.query_opt(
-            "SELECT id, recipient_id, sender_id, topic, body, in_reply_to, state, fail_reason, created_at, delivered_at, seq, wake_eligible \
-             FROM mail WHERE id = ?1",
+            &format!("SELECT {MAIL_COLS} FROM mail WHERE id = ?1"),
             params![id],
             row_to_mail,
         )
@@ -1703,10 +1671,8 @@ impl Database {
     /// `Ok(None)` if none match.
     pub fn get_mail_by_prefix(&self, prefix: &str) -> Result<Option<Mail>> {
         let conn = self.conn.lock();
-        let mut stmt = conn.prepare(
-            "SELECT id, recipient_id, sender_id, topic, body, in_reply_to, state, fail_reason, created_at, delivered_at, seq, wake_eligible \
-             FROM mail WHERE id LIKE ?1 || '%' LIMIT 2",
-        )?;
+        let sql = format!("SELECT {MAIL_COLS} FROM mail WHERE id LIKE ?1 || '%' LIMIT 2");
+        let mut stmt = conn.prepare(&sql)?;
         let mut rows = stmt.query(params![prefix])?;
         let first = match rows.next()? {
             Some(r) => row_to_mail(r)?,
@@ -1742,8 +1708,7 @@ impl Database {
 
     pub fn list_pending_wake_eligible(&self, recipient_id: &str) -> Result<Vec<Mail>> {
         self.query_vec(
-            "SELECT id, recipient_id, sender_id, topic, body, in_reply_to, state, fail_reason, created_at, delivered_at, seq, wake_eligible \
-             FROM mail WHERE recipient_id = ?1 AND state = 'Pending' AND wake_eligible = 1 ORDER BY seq ASC",
+            &format!("SELECT {MAIL_COLS} FROM mail WHERE recipient_id = ?1 AND state = 'Pending' AND wake_eligible = 1 ORDER BY seq ASC"),
             params![recipient_id],
             row_to_mail,
         )
@@ -2051,7 +2016,7 @@ impl Database {
 
     pub fn get_peer_by_name(&self, name: &str) -> Result<Option<crate::shared::types::Peer>> {
         self.query_opt(
-            "SELECT id, daemon_id, name, url, bearer_token_hash, bearer_token, public_key, state, last_seen, registered_at FROM peers WHERE name = ?1",
+            &format!("SELECT {PEER_COLS} FROM peers WHERE name = ?1"),
             params![name],
             row_to_peer,
         )
@@ -2062,7 +2027,7 @@ impl Database {
         daemon_id: &str,
     ) -> Result<Option<crate::shared::types::Peer>> {
         self.query_opt(
-            "SELECT id, daemon_id, name, url, bearer_token_hash, bearer_token, public_key, state, last_seen, registered_at FROM peers WHERE daemon_id = ?1",
+            &format!("SELECT {PEER_COLS} FROM peers WHERE daemon_id = ?1"),
             params![daemon_id],
             row_to_peer,
         )
@@ -2070,7 +2035,7 @@ impl Database {
 
     pub fn get_peer(&self, peer_id: &str) -> Result<Option<crate::shared::types::Peer>> {
         self.query_opt(
-            "SELECT id, daemon_id, name, url, bearer_token_hash, bearer_token, public_key, state, last_seen, registered_at FROM peers WHERE id = ?1",
+            &format!("SELECT {PEER_COLS} FROM peers WHERE id = ?1"),
             params![peer_id],
             row_to_peer,
         )
@@ -2081,7 +2046,7 @@ impl Database {
         hash: &[u8],
     ) -> Result<Option<crate::shared::types::Peer>> {
         self.query_opt(
-            "SELECT id, daemon_id, name, url, bearer_token_hash, bearer_token, public_key, state, last_seen, registered_at FROM peers WHERE bearer_token_hash = ?1",
+            &format!("SELECT {PEER_COLS} FROM peers WHERE bearer_token_hash = ?1"),
             params![hash],
             row_to_peer,
         )
@@ -2089,7 +2054,7 @@ impl Database {
 
     pub fn list_peers(&self) -> Result<Vec<crate::shared::types::Peer>> {
         self.query_vec(
-            "SELECT id, daemon_id, name, url, bearer_token_hash, bearer_token, public_key, state, last_seen, registered_at FROM peers ORDER BY registered_at",
+            &format!("SELECT {PEER_COLS} FROM peers ORDER BY registered_at"),
             [],
             row_to_peer,
         )
@@ -2394,13 +2359,6 @@ fn row_to_topic_federation(row: &rusqlite::Row) -> Result<crate::shared::types::
     })
 }
 
-fn extract_topic(recipient: &str) -> String {
-    recipient
-        .strip_prefix("topic://")
-        .map(std::string::ToString::to_string)
-        .unwrap_or_default()
-}
-
 /// Current unix epoch seconds. Used for `mail.created_at` / `mail.delivered_at`
 /// and for `subscriptions.created_at`.
 pub fn unix_now() -> i64 {
@@ -2525,9 +2483,12 @@ fn row_to_agent(row: &rusqlite::Row) -> Result<Agent> {
     let cwd_str: String = row.get(6)?;
     let created_str: String = row.get(10)?;
     let updated_str: String = row.get(11)?;
-    let policy_str: String = row
-        .get::<_, Option<String>>(13)?
-        .unwrap_or_else(|| "never".to_string());
+    let policy_str: Option<String> = row.get(13)?;
+    let restart_policy: RestartPolicy = policy_str
+        .as_deref()
+        .unwrap_or("never")
+        .parse()
+        .unwrap_or(RestartPolicy::Never);
     let restart_count: i64 = row.get::<_, Option<i64>>(14)?.unwrap_or(0);
 
     Ok(Agent {
@@ -2544,7 +2505,7 @@ fn row_to_agent(row: &rusqlite::Row) -> Result<Agent> {
         created_at: parse_timestamp(&created_str)?,
         updated_at: parse_timestamp(&updated_str)?,
         worker_id: row.get::<_, Option<String>>(12)?,
-        restart_policy: policy_str.parse().unwrap_or(RestartPolicy::Never),
+        restart_policy,
         restart_count: restart_count.max(0) as u32,
         workspace_id: row.get::<_, Option<String>>(15)?,
     })

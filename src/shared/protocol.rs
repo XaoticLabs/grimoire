@@ -8,6 +8,18 @@ use super::types::{
     MemoryListItem, ScrollId, TaskConflict, TaskState, WakeSource, WorkspaceId, WorkspaceListEntry,
 };
 
+/// Empty `{}` result body for RPC methods that just report success.
+/// Serializes to `{}` so the wire format matches per-method empty result types.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct EmptyResult {}
+
+/// Single-`id` params shape for RPC methods whose only argument is an id
+/// (agent, scroll, workspace, …). Aliases share the wire shape `{"id": "..."}`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct IdParams {
+    pub id: String,
+}
+
 /// JSON-RPC request from CLI to daemon
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct RpcRequest {
@@ -112,10 +124,7 @@ pub struct BindParams {
     pub tail: Option<usize>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct BanishParams {
-    pub id: AgentId,
-}
+pub type BanishParams = IdParams;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct InvokeParams {
@@ -208,10 +217,7 @@ pub struct QueueListResponse {
 
 // --- Replay / chronicle params/results ---
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ReplayParams {
-    pub id: AgentId,
-}
+pub type ReplayParams = IdParams;
 
 /// One entry of an agent's reconstructed life: the durable per-agent `seq`,
 /// the event `kind` tag, the stored timestamp, and the full event payload.
@@ -317,8 +323,7 @@ pub struct MailUnsubscribeParams {
     pub subscription_id: String,
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct MailUnsubscribeResult {}
+pub type MailUnsubscribeResult = EmptyResult;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TopicCount {
@@ -405,13 +410,9 @@ pub struct WorkspaceListResult {
     pub orphans: Vec<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct WorkspaceDestroyParams {
-    pub id: WorkspaceId,
-}
+pub type WorkspaceDestroyParams = IdParams;
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct WorkspaceDestroyResult {}
+pub type WorkspaceDestroyResult = EmptyResult;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorkspaceAssignParams {
@@ -419,8 +420,7 @@ pub struct WorkspaceAssignParams {
     pub agent_id: AgentId,
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct WorkspaceAssignResult {}
+pub type WorkspaceAssignResult = EmptyResult;
 
 // --- Memory params/results ---
 
@@ -474,8 +474,7 @@ pub struct MemoryDeleteParams {
     pub sender: Option<AgentId>,
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct MemoryDeleteResult {}
+pub type MemoryDeleteResult = EmptyResult;
 
 // --- Federated namespace memory params/results ---
 // Values are treated as UTF-8 strings at the RPC boundary (the store keeps
@@ -537,8 +536,7 @@ pub struct NsDeleteParams {
     pub sender: Option<AgentId>,
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct NsDeleteResult {}
+pub type NsDeleteResult = EmptyResult;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NsFederateParams {
@@ -548,8 +546,7 @@ pub struct NsFederateParams {
     pub direction: String,
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct NsFederateResult {}
+pub type NsFederateResult = EmptyResult;
 
 // --- Notify params/results ---
 
@@ -855,7 +852,12 @@ impl StreamEvent {
 
     /// Stable kind tag matching the serde rename for this variant.
     /// Used as the durable event log's `kind` column so serialized payload
-    /// and kind cannot drift.
+    /// Wire tag for this event (the `type` field on the JSON envelope) and
+    /// the SQL `events.kind` column value. The drift-detection test
+    /// `kind_matches_serde_rename_for_each_variant` keeps these in sync with
+    /// each variant's `#[serde(rename = "…")]`. Hand-maintained because
+    /// `serde_variant::to_variant_name` does not support internally-tagged
+    /// enums.
     pub const fn kind(&self) -> &'static str {
         match self {
             Self::Output { .. } => "output",
@@ -914,20 +916,9 @@ pub struct ScrollInscribeResult {
     pub conflicts: Vec<TaskConflict>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ScrollActivateParams {
-    pub id: ScrollId,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ScrollStatusParams {
-    pub id: ScrollId,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ScrollAbandonParams {
-    pub id: ScrollId,
-}
+pub type ScrollActivateParams = IdParams;
+pub type ScrollStatusParams = IdParams;
+pub type ScrollAbandonParams = IdParams;
 
 // --- Federation peer / topic params ---
 

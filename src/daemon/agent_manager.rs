@@ -232,25 +232,19 @@ impl AgentManager {
 
             // Supervision history reconciliation: if there's a scheduled
             // history row for this agent, flip it based on the final state.
-            match result.state {
-                AgentState::Complete => {
-                    let n = db
-                        .update_latest_scheduled_outcome(
-                            &agent_id,
-                            RestartHistoryOutcome::Succeeded,
-                        )
-                        .unwrap_or(0);
-                    if n > 0 {
-                        let _ = db.bump_restart_count(&agent_id);
-                    }
+            // Only Complete bumps restart_count; Failed just records outcome.
+            let outcome = match result.state {
+                AgentState::Complete => Some(RestartHistoryOutcome::Succeeded),
+                AgentState::Failed => Some(RestartHistoryOutcome::FailedAgain),
+                _ => None,
+            };
+            if let Some(outcome) = outcome {
+                let updated = db
+                    .update_latest_scheduled_outcome(&agent_id, outcome)
+                    .unwrap_or(0);
+                if updated > 0 && result.state == AgentState::Complete {
+                    let _ = db.bump_restart_count(&agent_id);
                 }
-                AgentState::Failed => {
-                    let _ = db.update_latest_scheduled_outcome(
-                        &agent_id,
-                        RestartHistoryOutcome::FailedAgain,
-                    );
-                }
-                _ => {}
             }
 
             let mut agents = manager.agents.lock().await;

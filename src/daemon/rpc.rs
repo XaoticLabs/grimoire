@@ -26,6 +26,172 @@ fn parse_params<T: DeserializeOwned>(req: &RpcRequest) -> Result<T, RpcResponse>
         .map_err(|e| RpcResponse::error(req.id, -32602, format!("Invalid params: {e}")))
 }
 
+/// Standard "Failed to <action>: <err>" RPC error response (code -32000).
+fn rpc_fail(req_id: u64, action: &str, err: impl std::fmt::Display) -> RpcResponse {
+    RpcResponse::error(req_id, -32000, format!("Failed to {action}: {err}"))
+}
+
+/// `Ok` → success_json with the value serialized; `Err` → `Failed to <action>: <err>`.
+/// Use `.map(|v| WrapperResult { ... })` upstream when the success type needs
+/// to be a wire wrapper.
+fn try_op<T: serde::Serialize, E: std::fmt::Display>(
+    req_id: u64,
+    action: &str,
+    r: Result<T, E>,
+) -> RpcResponse {
+    match r {
+        Ok(v) => RpcResponse::success_json(req_id, &v),
+        Err(e) => rpc_fail(req_id, action, e),
+    }
+}
+
+/// Resolve a peer name to a `Peer`, mapping the standard tri-state outcome
+/// (`Ok(Some)` / `Ok(None)` / `Err`) into an `RpcResponse` error suitable for
+/// early return via `let peer = resolve_peer(req_id, &reg, name)?;`.
+fn resolve_peer(
+    req_id: u64,
+    peer_registry: &PeerRegistry,
+    name: &str,
+) -> Result<crate::shared::types::Peer, RpcResponse> {
+    match peer_registry.db.get_peer_by_name(name) {
+        Ok(Some(p)) => Ok(p),
+        Ok(None) => Err(rpc_err(req_id, "peer_not_found")),
+        Err(e) => Err(RpcResponse::error(req_id, -32000, format!("db: {e}"))),
+    }
+}
+
+/// Resolve a workspace id to a `Workspace`, same shape as `resolve_peer`.
+fn resolve_workspace(
+    req_id: u64,
+    db: &Database,
+    id: &str,
+) -> Result<crate::shared::types::Workspace, RpcResponse> {
+    match db.get_workspace(id) {
+        Ok(Some(w)) => Ok(w),
+        Ok(None) => Err(rpc_err(req_id, "workspace_not_found")),
+        Err(e) => Err(RpcResponse::error(req_id, -32000, format!("db: {e}"))),
+    }
+}
+
+/// Decide the initial `MailState` for a piece of outbound mail given the
+/// looked-up recipient agent. Returns `(state, fail_reason)` — the reason is
+/// `Some` iff the state is `Failed`.
+fn compute_mail_state(
+    agent: Option<&crate::shared::types::Agent>,
+) -> (MailState, Option<&'static str>) {
+    match agent {
+        None => (MailState::Failed, Some("unknown_recipient")),
+        Some(a) if a.state == AgentState::Banished => {
+            (MailState::Failed, Some("recipient_banished"))
+        }
+        Some(_) => (MailState::Pending, None),
+    }
+}
+
+/// Build a freshly-stamped local outbound `Mail` row. `seq` is set by the
+/// insert path; `delivered_at` is derived from `state` so all send paths
+/// agree on the invariants.
+#[allow(clippy::too_many_arguments)]
+fn new_outbound_mail(
+    mail_id: String,
+    recipient_id: String,
+    sender: Option<String>,
+    topic: Option<String>,
+    body: String,
+    state: MailState,
+    fail_reason: Option<&'static str>,
+    wake_eligible: bool,
+    now: i64,
+) -> Mail {
+    let delivered_at = if state == MailState::Pending {
+        None
+    } else {
+        Some(now)
+    };
+    Mail {
+        id: mail_id,
+        recipient_id,
+        sender_id: sender,
+        topic,
+        body,
+        in_reply_to: None,
+        state,
+        fail_reason: fail_reason.map(str::to_string),
+        created_at: now,
+        delivered_at,
+        seq: 0,
+        wake_eligible,
+    }
+}
+
+/// Per-state event emission for a freshly-inserted local mail row.
+/// `Pending` → `MailSent` + `MailReceived`; `Failed` → `MailFailed`;
+/// `Delivered` should never occur at send time but is handled defensively.
+fn emit_mail_events(bus: &EventBus, mail: &Mail, body_preview: &str) {
+    match mail.state {
+        MailState::Pending => {
+            bus.publish(StreamEvent::MailSent {
+                mail_id: mail.id.clone(),
+                sender_id: mail.sender_id.clone(),
+                recipient_id: Some(mail.recipient_id.clone()),
+                topic: mail.topic.clone(),
+            });
+            bus.publish(StreamEvent::MailReceived {
+                mail_id: mail.id.clone(),
+                recipient_id: mail.recipient_id.clone(),
+                sender_id: mail.sender_id.clone(),
+                topic: mail.topic.clone(),
+                body_preview: body_preview.to_string(),
+                wake_eligible: mail.wake_eligible,
+                origin_daemon_id: None,
+            });
+        }
+        MailState::Failed => {
+            let reason = mail
+                .fail_reason
+                .clone()
+                .unwrap_or_else(|| "unknown".to_string());
+            bus.publish(StreamEvent::MailFailed {
+                mail_id: mail.id.clone(),
+                recipient_id: mail.recipient_id.clone(),
+                sender_id: mail.sender_id.clone(),
+                reason,
+            });
+        }
+        MailState::Delivered => {
+            tracing::warn!(mail_id = %mail.id, "unexpected Delivered state at send time");
+        }
+    }
+}
+
+/// Parse `req.params` into the inferred type, returning early with the
+/// invalid-params `RpcResponse` on failure. Use in handlers that return
+/// `RpcResponse`:
+///
+/// ```ignore
+/// let params: BanishParams = try_params!(req);
+/// ```
+macro_rules! try_params {
+    ($req:expr) => {
+        match parse_params(&$req) {
+            Ok(p) => p,
+            Err(e) => return e,
+        }
+    };
+}
+
+/// Unwrap a `Result<T, RpcResponse>`, returning early with the error
+/// response on `Err`. Pairs with helpers like `resolve_peer` /
+/// `resolve_workspace` that already produce an `RpcResponse` on failure.
+macro_rules! try_rpc {
+    ($expr:expr) => {
+        match $expr {
+            Ok(v) => v,
+            Err(resp) => return resp,
+        }
+    };
+}
+
 /// Test-only wrapper that fabricates a `PeerRegistry` and a synthetic
 /// `daemon_id`. Production code goes through `handle_rpc` with the real
 /// per-daemon registry from `AppState`.
@@ -142,10 +308,7 @@ pub async fn handle_rpc(
 /// durable event log. Decoupling via the bus keeps the RPC layer free of any
 /// HTTP/notifier dependency.
 fn handle_notify(bus: &EventBus, req: RpcRequest) -> RpcResponse {
-    let params: NotifyParams = match parse_params(&req) {
-        Ok(p) => p,
-        Err(e) => return e,
-    };
+    let params: NotifyParams = try_params!(req);
     if params.message.trim().is_empty() {
         return RpcResponse::error(req.id, -32602, "notify: message must not be empty".into());
     }
@@ -166,10 +329,7 @@ async fn handle_wake_add(
     reg: &Arc<WakeRegistry>,
     req: RpcRequest,
 ) -> RpcResponse {
-    let params: WakeAddParams = match parse_params(&req) {
-        Ok(p) => p,
-        Err(e) => return e,
-    };
+    let params: WakeAddParams = try_params!(req);
     // Validate agent exists.
     match db.get_agent(&params.agent_id) {
         Ok(Some(_)) => {}
@@ -196,17 +356,15 @@ async fn handle_wake_list(reg: &Arc<WakeRegistry>, req: RpcRequest) -> RpcRespon
         Some(id) => reg.list_for_agent(&id).await,
         None => reg.list_all().await,
     };
-    match result {
-        Ok(sources) => RpcResponse::success_json(req.id, &WakeListResult { sources }),
-        Err(e) => RpcResponse::error(req.id, -32000, format!("list: {e}")),
-    }
+    try_op(
+        req.id,
+        "list",
+        result.map(|sources| WakeListResult { sources }),
+    )
 }
 
 async fn handle_wake_remove(reg: &Arc<WakeRegistry>, req: RpcRequest) -> RpcResponse {
-    let params: WakeRemoveParams = match parse_params(&req) {
-        Ok(p) => p,
-        Err(e) => return e,
-    };
+    let params: WakeRemoveParams = try_params!(req);
     match reg.remove(&params.wake_id).await {
         Ok(true) => RpcResponse::success_json(req.id, &WakeRemoveResult { success: true }),
         Ok(false) => rpc_err(req.id, "wake_not_found"),
@@ -215,10 +373,7 @@ async fn handle_wake_remove(reg: &Arc<WakeRegistry>, req: RpcRequest) -> RpcResp
 }
 
 async fn handle_wake_test(reg: &Arc<WakeRegistry>, req: RpcRequest) -> RpcResponse {
-    let params: WakeTestParams = match parse_params(&req) {
-        Ok(p) => p,
-        Err(e) => return e,
-    };
+    let params: WakeTestParams = try_params!(req);
     match reg.test_fire(&params.wake_id).await {
         Ok(mail_id) => RpcResponse::success_json(
             req.id,
@@ -244,16 +399,10 @@ async fn handle_summon(
     workspace_registry: &Arc<WorkspaceRegistry>,
     req: RpcRequest,
 ) -> RpcResponse {
-    let params: SummonParams = match parse_params(&req) {
-        Ok(p) => p,
-        Err(e) => return e,
-    };
+    let params: SummonParams = try_params!(req);
 
     // Supervision validation.
-    let policy_str = params
-        .restart_policy
-        .clone()
-        .unwrap_or_else(|| "never".to_string());
+    let policy_str = params.restart_policy.as_deref().unwrap_or("never");
     let policy: crate::shared::types::RestartPolicy = match policy_str.parse() {
         Ok(p) => p,
         Err(_) => return rpc_err(req.id, "invalid_restart_policy"),
@@ -307,11 +456,7 @@ async fn handle_summon(
     }
     let workspace_path: Option<std::path::PathBuf> = match &params.workspace {
         Some(name) => {
-            let ws = match db.get_workspace(name) {
-                Ok(Some(w)) => w,
-                Ok(None) => return rpc_err(req.id, "workspace_not_found"),
-                Err(e) => return RpcResponse::error(req.id, -32000, format!("db: {e}")),
-            };
+            let ws = try_rpc!(resolve_workspace(req.id, db, name));
             if ws.state != crate::shared::types::WorkspaceState::Active {
                 return rpc_err(req.id, "workspace_destroying");
             }
@@ -338,7 +483,7 @@ async fn handle_summon(
         .await
     {
         Ok(a) => a,
-        Err(e) => return RpcResponse::error(req.id, -32000, format!("Failed to summon: {e}")),
+        Err(e) => return rpc_fail(req.id, "summon", e),
     };
 
     // Post-insert assignment.
@@ -372,47 +517,42 @@ async fn handle_summon(
 async fn handle_circle(manager: &Arc<AgentManager>, req: RpcRequest) -> RpcResponse {
     let params: CircleParams = parse_params(&req).unwrap_or(CircleParams { state: None });
 
-    match manager.circle(params.state.as_deref()).await {
-        Ok(agents) => {
-            let result = CircleResult { agents };
-            RpcResponse::success_json(req.id, &result)
-        }
-        Err(e) => RpcResponse::error(req.id, -32000, format!("Failed to list: {e}")),
-    }
+    try_op(
+        req.id,
+        "list",
+        manager
+            .circle(params.state.as_deref())
+            .await
+            .map(|agents| CircleResult { agents }),
+    )
 }
 
 async fn handle_banish(manager: &Arc<AgentManager>, req: RpcRequest) -> RpcResponse {
-    let params: BanishParams = match parse_params(&req) {
-        Ok(p) => p,
-        Err(e) => return e,
-    };
-
-    match manager.banish(&params.id).await {
-        Ok(success) => {
-            let result = BanishResult { success };
-            RpcResponse::success_json(req.id, &result)
-        }
-        Err(e) => RpcResponse::error(req.id, -32000, format!("Failed to banish: {e}")),
-    }
+    let params: BanishParams = try_params!(req);
+    try_op(
+        req.id,
+        "banish",
+        manager
+            .banish(&params.id)
+            .await
+            .map(|success| BanishResult { success }),
+    )
 }
 
 async fn handle_invoke(manager: &Arc<AgentManager>, req: RpcRequest) -> RpcResponse {
-    let params: InvokeParams = match parse_params(&req) {
-        Ok(p) => p,
-        Err(e) => return e,
-    };
-
-    match manager.invoke(&params.id, &params.message, None).await {
-        Ok(()) => RpcResponse::success(req.id, serde_json::json!({"success": true})),
-        Err(e) => RpcResponse::error(req.id, -32000, format!("Failed to invoke: {e}")),
-    }
+    let params: InvokeParams = try_params!(req);
+    try_op(
+        req.id,
+        "invoke",
+        manager
+            .invoke(&params.id, &params.message, None)
+            .await
+            .map(|()| serde_json::json!({"success": true})),
+    )
 }
 
 fn handle_pact_create(db: &Arc<Database>, req: RpcRequest) -> RpcResponse {
-    let params: PactCreateParams = match parse_params(&req) {
-        Ok(p) => p,
-        Err(e) => return e,
-    };
+    let params: PactCreateParams = try_params!(req);
 
     let pact_id = crate::shared::constants::generate_short_id();
     let pact = Pact {
@@ -426,37 +566,30 @@ fn handle_pact_create(db: &Arc<Database>, req: RpcRequest) -> RpcResponse {
         fired_at: None,
     };
 
-    match db.insert_pact(&pact) {
-        Ok(()) => {
-            let result = PactCreateResult {
-                id: pact_id,
-                source_id: params.source_id,
-            };
-            RpcResponse::success_json(req.id, &result)
-        }
-        Err(e) => RpcResponse::error(req.id, -32000, format!("Failed to create pact: {e}")),
-    }
+    try_op(
+        req.id,
+        "create pact",
+        db.insert_pact(&pact).map(|()| PactCreateResult {
+            id: pact_id,
+            source_id: params.source_id,
+        }),
+    )
 }
 
 fn handle_pact_list(db: &Arc<Database>, req: RpcRequest) -> RpcResponse {
     let params: PactListParams = parse_params(&req).unwrap_or(PactListParams { source_id: None });
-
-    match db.list_pacts(params.source_id.as_deref()) {
-        Ok(pacts) => {
-            let result = PactListResult { pacts };
-            RpcResponse::success_json(req.id, &result)
-        }
-        Err(e) => RpcResponse::error(req.id, -32000, format!("Failed to list pacts: {e}")),
-    }
+    try_op(
+        req.id,
+        "list pacts",
+        db.list_pacts(params.source_id.as_deref())
+            .map(|pacts| PactListResult { pacts }),
+    )
 }
 
 // --- Scroll handlers ---
 
 fn handle_scroll_inscribe(keeper: &Arc<ScrollKeeper>, req: RpcRequest) -> RpcResponse {
-    let params: ScrollInscribeParams = match parse_params(&req) {
-        Ok(p) => p,
-        Err(e) => return e,
-    };
+    let params: ScrollInscribeParams = try_params!(req);
 
     let content = match std::fs::read_to_string(&params.spec_path) {
         Ok(c) => c,
@@ -472,70 +605,67 @@ fn handle_scroll_inscribe(keeper: &Arc<ScrollKeeper>, req: RpcRequest) -> RpcRes
     let spec = match super::scroll_parser::parse_scroll(&content) {
         Ok(s) => s,
         Err(e) => {
-            return RpcResponse::error(req.id, -32000, format!("Failed to parse spec: {e}"));
+            return rpc_fail(req.id, "parse spec", e);
         }
     };
 
-    match keeper.inscribe(spec, params.max_concurrency, Some(params.spec_path)) {
-        Ok(result) => {
-            let resp = ScrollInscribeResult {
+    try_op(
+        req.id,
+        "inscribe",
+        keeper
+            .inscribe(spec, params.max_concurrency, Some(params.spec_path))
+            .map(|result| ScrollInscribeResult {
                 id: result.scroll.id,
                 name: result.scroll.name,
                 task_count: result.task_count,
                 conflicts: result.conflicts,
-            };
-            RpcResponse::success_json(req.id, &resp)
-        }
-        Err(e) => RpcResponse::error(req.id, -32000, format!("Failed to inscribe: {e}")),
-    }
+            }),
+    )
 }
 
 async fn handle_scroll_activate(keeper: &Arc<ScrollKeeper>, req: RpcRequest) -> RpcResponse {
-    let params: ScrollActivateParams = match parse_params(&req) {
-        Ok(p) => p,
-        Err(e) => return e,
-    };
-
-    match keeper.activate(&params.id).await {
-        Ok(()) => RpcResponse::success(req.id, serde_json::json!({"success": true})),
-        Err(e) => RpcResponse::error(req.id, -32000, format!("Failed to activate: {e}")),
-    }
+    let params: ScrollActivateParams = try_params!(req);
+    try_op(
+        req.id,
+        "activate",
+        keeper
+            .activate(&params.id)
+            .await
+            .map(|()| serde_json::json!({"success": true})),
+    )
 }
 
 fn handle_scroll_status(keeper: &Arc<ScrollKeeper>, req: RpcRequest) -> RpcResponse {
-    let params: ScrollStatusParams = match parse_params(&req) {
-        Ok(p) => p,
-        Err(e) => return e,
-    };
-
-    match keeper.status(&params.id) {
-        Ok(status) => RpcResponse::success_json(req.id, &status),
-        Err(e) => RpcResponse::error(req.id, -32000, format!("Failed to get status: {e}")),
-    }
+    let params: ScrollStatusParams = try_params!(req);
+    try_op(req.id, "get status", keeper.status(&params.id))
 }
 
 fn handle_scroll_list(db: &Arc<Database>, req: RpcRequest) -> RpcResponse {
-    match db.list_scrolls() {
-        Ok(scrolls) => RpcResponse::success(req.id, serde_json::json!({"scrolls": scrolls})),
-        Err(e) => RpcResponse::error(req.id, -32000, format!("Failed to list scrolls: {e}")),
-    }
+    try_op(
+        req.id,
+        "list scrolls",
+        db.list_scrolls()
+            .map(|scrolls| serde_json::json!({"scrolls": scrolls})),
+    )
 }
 
 async fn handle_scroll_abandon(keeper: &Arc<ScrollKeeper>, req: RpcRequest) -> RpcResponse {
-    let params: ScrollAbandonParams = match parse_params(&req) {
-        Ok(p) => p,
-        Err(e) => return e,
-    };
-
-    match keeper.abandon(&params.id).await {
-        Ok(()) => RpcResponse::success(req.id, serde_json::json!({"success": true})),
-        Err(e) => RpcResponse::error(req.id, -32000, format!("Failed to abandon: {e}")),
-    }
+    let params: ScrollAbandonParams = try_params!(req);
+    try_op(
+        req.id,
+        "abandon",
+        keeper
+            .abandon(&params.id)
+            .await
+            .map(|()| serde_json::json!({"success": true})),
+    )
 }
 
 fn handle_queue_list(db: &Arc<Database>, req: RpcRequest) -> RpcResponse {
-    match db.list_queue() {
-        Ok(rows) => {
+    try_op(
+        req.id,
+        "list queue",
+        db.list_queue().map(|rows| {
             let now = chrono::Utc::now();
             let entries: Vec<QueueEntry> = rows
                 .into_iter()
@@ -553,11 +683,9 @@ fn handle_queue_list(db: &Arc<Database>, req: RpcRequest) -> RpcResponse {
                     }
                 })
                 .collect();
-            let resp = QueueListResponse { entries };
-            RpcResponse::success_json(req.id, &resp)
-        }
-        Err(e) => RpcResponse::error(req.id, -32000, format!("Failed to list queue: {e}")),
-    }
+            QueueListResponse { entries }
+        }),
+    )
 }
 
 /// Return an agent's full durable event timeline for `grim chronicle`. The
@@ -565,10 +693,7 @@ fn handle_queue_list(db: &Arc<Database>, req: RpcRequest) -> RpcResponse {
 /// beyond that this is a straight read of the `events` table. All filtering
 /// and state reconstruction is the client's job.
 fn handle_replay(db: &Arc<Database>, req: RpcRequest) -> RpcResponse {
-    let params: ReplayParams = match parse_params(&req) {
-        Ok(p) => p,
-        Err(resp) => return resp,
-    };
+    let params: ReplayParams = try_params!(req);
 
     match db.get_agent(&params.id) {
         Ok(Some(_)) => {}
@@ -580,12 +705,14 @@ fn handle_replay(db: &Arc<Database>, req: RpcRequest) -> RpcResponse {
             );
         }
         Err(e) => {
-            return RpcResponse::error(req.id, -32000, format!("Failed to load agent: {e}"));
+            return rpc_fail(req.id, "load agent", e);
         }
     }
 
-    match db.read_stream_events(&params.id) {
-        Ok(stored) => {
+    try_op(
+        req.id,
+        "read event log",
+        db.read_stream_events(&params.id).map(|stored| {
             let entries: Vec<ReplayEntry> = stored
                 .into_iter()
                 .map(|s| ReplayEntry {
@@ -595,16 +722,12 @@ fn handle_replay(db: &Arc<Database>, req: RpcRequest) -> RpcResponse {
                     event: s.event,
                 })
                 .collect();
-            RpcResponse::success_json(
-                req.id,
-                &ReplayResponse {
-                    agent_id: params.id,
-                    entries,
-                },
-            )
-        }
-        Err(e) => RpcResponse::error(req.id, -32000, format!("Failed to read event log: {e}")),
-    }
+            ReplayResponse {
+                agent_id: params.id,
+                entries,
+            }
+        }),
+    )
 }
 
 // --- Mail handlers ---
@@ -623,10 +746,7 @@ pub async fn handle_mail_send(
     daemon_id: &str,
     req: RpcRequest,
 ) -> RpcResponse {
-    let params: MailSendParams = match parse_params(&req) {
-        Ok(p) => p,
-        Err(e) => return e,
-    };
+    let params: MailSendParams = try_params!(req);
 
     if params.body.len() > MAX_MAIL_BODY_BYTES {
         return rpc_err(req.id, "body_too_large");
@@ -699,88 +819,32 @@ fn handle_direct_send(
     let preview = body_preview(&params.body, PREVIEW_CHARS);
     let mail_id = crate::shared::constants::generate_short_id();
     let now = unix_now();
-
-    let (state, fail_reason): (MailState, Option<&'static str>) = match &agent {
-        None => (MailState::Failed, Some("unknown_recipient")),
-        Some(a) if a.state == AgentState::Banished => {
-            (MailState::Failed, Some("recipient_banished"))
-        }
-        Some(_) => (MailState::Pending, None),
-    };
-
-    let mail = Mail {
-        id: mail_id.clone(),
-        recipient_id: recipient_id.clone(),
-        sender_id: params.sender.clone(),
-        topic: None,
-        body: params.body.clone(),
-        in_reply_to: None,
+    let (state, fail_reason) = compute_mail_state(agent.as_ref());
+    let mail = new_outbound_mail(
+        mail_id.clone(),
+        recipient_id,
+        params.sender.clone(),
+        None,
+        params.body.clone(),
         state,
-        fail_reason: fail_reason.map(std::string::ToString::to_string),
-        created_at: now,
-        delivered_at: if state == MailState::Pending {
-            None
-        } else {
-            Some(now)
-        },
-        seq: 0,
+        fail_reason,
         wake_eligible,
-    };
+        now,
+    );
 
     if let Err(e) = db.insert_mail(&mail) {
         return RpcResponse::error(req.id, -32000, format!("insert_mail: {e}"));
     }
+    emit_mail_events(bus, &mail, &preview);
 
-    match state {
-        MailState::Failed => {
-            let reason = fail_reason.unwrap_or("unknown").to_string();
-            bus.publish(StreamEvent::MailFailed {
-                mail_id: mail_id.clone(),
-                recipient_id,
-                sender_id: params.sender.clone(),
-                reason,
-            });
-            let result = MailSendResult {
-                delivered: 0,
-                mail_ids: vec![mail_id],
-            };
-            RpcResponse::success_json(req.id, &result)
-        }
-        MailState::Pending => {
-            bus.publish(StreamEvent::MailSent {
-                mail_id: mail_id.clone(),
-                sender_id: params.sender.clone(),
-                recipient_id: Some(recipient_id.clone()),
-                topic: None,
-            });
-            bus.publish(StreamEvent::MailReceived {
-                mail_id: mail_id.clone(),
-                recipient_id,
-                sender_id: params.sender.clone(),
-                topic: None,
-                body_preview: preview,
-                wake_eligible,
-                origin_daemon_id: None,
-            });
-            let result = MailSendResult {
-                delivered: 1,
-                mail_ids: vec![mail_id],
-            };
-            RpcResponse::success_json(req.id, &result)
-        }
-        MailState::Delivered => {
-            // Direct send only ever computes Failed or Pending above; Delivered
-            // is set later, on ack. This arm exists for exhaustiveness — don't
-            // panic in an RPC handler if that invariant ever changes. Treat it
-            // as a successful enqueue and log the surprise.
-            tracing::warn!(%mail_id, "unexpected Delivered state at send time");
-            let result = MailSendResult {
-                delivered: 1,
-                mail_ids: vec![mail_id],
-            };
-            RpcResponse::success_json(req.id, &result)
-        }
-    }
+    let delivered = u32::from(state == MailState::Pending);
+    RpcResponse::success_json(
+        req.id,
+        &MailSendResult {
+            delivered,
+            mail_ids: vec![mail_id],
+        },
+    )
 }
 
 async fn handle_topic_send(
@@ -817,48 +881,28 @@ async fn handle_topic_send(
     // Determine each subscriber's initial state (Pending vs Failed for
     // banished). Pre-compute mail rows so the batch insert is one txn.
     let mut mails: Vec<Mail> = Vec::with_capacity(subscribers.len());
-    let mut per_state: Vec<MailState> = Vec::with_capacity(subscribers.len());
     let mut delivered: u32 = 0;
-    let mut failed_reasons: Vec<(String, String)> = Vec::new();
 
     for sub in &subscribers {
         let agent = match db.get_agent(&sub.subscriber_id) {
             Ok(a) => a,
             Err(e) => return RpcResponse::error(req.id, -32000, format!("db error: {e}")),
         };
-        let (state, fail_reason): (MailState, Option<&'static str>) = match agent {
-            None => (MailState::Failed, Some("unknown_recipient")),
-            Some(a) if a.state == AgentState::Banished => {
-                (MailState::Failed, Some("recipient_banished"))
-            }
-            Some(_) => (MailState::Pending, None),
-        };
-        let mail_id = crate::shared::constants::generate_short_id();
-        let mail = Mail {
-            id: mail_id.clone(),
-            recipient_id: sub.subscriber_id.clone(),
-            sender_id: params.sender.clone(),
-            topic: Some(topic.clone()),
-            body: params.body.clone(),
-            in_reply_to: None,
-            state,
-            fail_reason: fail_reason.map(std::string::ToString::to_string),
-            created_at: now,
-            delivered_at: if state == MailState::Pending {
-                None
-            } else {
-                Some(now)
-            },
-            seq: 0,
-            wake_eligible,
-        };
+        let (state, fail_reason) = compute_mail_state(agent.as_ref());
         if state == MailState::Pending {
             delivered += 1;
-        } else if let Some(r) = fail_reason {
-            failed_reasons.push((mail_id.clone(), r.to_string()));
         }
-        mails.push(mail);
-        per_state.push(state);
+        mails.push(new_outbound_mail(
+            crate::shared::constants::generate_short_id(),
+            sub.subscriber_id.clone(),
+            params.sender.clone(),
+            Some(topic.clone()),
+            params.body.clone(),
+            state,
+            fail_reason,
+            wake_eligible,
+            now,
+        ));
     }
 
     if let Err(e) = db.insert_mail_batch(&mails) {
@@ -917,44 +961,12 @@ async fn handle_topic_send(
         }
     }
 
-    // Emit one MailSent per subscriber row; each carries the per-recipient
-    // mail_id so the event stream is "one event per recipient".
-    for (mail, state) in mails.iter().zip(per_state.iter()) {
-        match state {
-            MailState::Pending => {
-                bus.publish(StreamEvent::MailSent {
-                    mail_id: mail.id.clone(),
-                    sender_id: params.sender.clone(),
-                    recipient_id: Some(mail.recipient_id.clone()),
-                    topic: Some(topic.clone()),
-                });
-                bus.publish(StreamEvent::MailReceived {
-                    mail_id: mail.id.clone(),
-                    recipient_id: mail.recipient_id.clone(),
-                    sender_id: params.sender.clone(),
-                    topic: Some(topic.clone()),
-                    body_preview: preview.clone(),
-                    wake_eligible,
-                    origin_daemon_id: None,
-                });
-            }
-            MailState::Failed => {
-                let reason = mail
-                    .fail_reason
-                    .clone()
-                    .unwrap_or_else(|| "unknown".to_string());
-                bus.publish(StreamEvent::MailFailed {
-                    mail_id: mail.id.clone(),
-                    recipient_id: mail.recipient_id.clone(),
-                    sender_id: params.sender.clone(),
-                    reason,
-                });
-            }
-            MailState::Delivered => {}
-        }
+    // Emit one MailSent + MailReceived per Pending row (and MailFailed per
+    // Failed row); event stream is "one event per recipient".
+    for mail in &mails {
+        emit_mail_events(bus, mail, &preview);
     }
 
-    let _ = failed_reasons; // logged via events
     let result = MailSendResult {
         delivered,
         mail_ids: mails.into_iter().map(|m| m.id).collect(),
@@ -963,28 +975,21 @@ async fn handle_topic_send(
 }
 
 fn handle_mail_list(db: &Arc<Database>, req: RpcRequest) -> RpcResponse {
-    let params: MailListParams = match parse_params(&req) {
-        Ok(p) => p,
-        Err(e) => return e,
-    };
+    let params: MailListParams = try_params!(req);
     let limit = params.limit.unwrap_or(100);
     if limit > 1000 {
         return rpc_err(req.id, "limit_too_large");
     }
-    match db.list_mail_by_recipient(&params.agent_id, params.after_seq, params.state, limit) {
-        Ok(mails) => {
-            let result = MailListResult { mails };
-            RpcResponse::success_json(req.id, &result)
-        }
-        Err(e) => RpcResponse::error(req.id, -32000, format!("Failed to list mail: {e}")),
-    }
+    try_op(
+        req.id,
+        "list mail",
+        db.list_mail_by_recipient(&params.agent_id, params.after_seq, params.state, limit)
+            .map(|mails| MailListResult { mails }),
+    )
 }
 
 fn handle_mail_ack(db: &Arc<Database>, bus: &EventBus, req: RpcRequest) -> RpcResponse {
-    let params: MailAckParams = match parse_params(&req) {
-        Ok(p) => p,
-        Err(e) => return e,
-    };
+    let params: MailAckParams = try_params!(req);
 
     let mail = match db.get_mail(&params.mail_id) {
         Ok(Some(m)) => m,
@@ -1014,10 +1019,7 @@ fn handle_mail_ack(db: &Arc<Database>, bus: &EventBus, req: RpcRequest) -> RpcRe
 }
 
 fn handle_mail_subscribe(db: &Arc<Database>, req: RpcRequest) -> RpcResponse {
-    let params: MailSubscribeParams = match parse_params(&req) {
-        Ok(p) => p,
-        Err(e) => return e,
-    };
+    let params: MailSubscribeParams = try_params!(req);
 
     if !is_valid_topic_name(&params.topic) {
         return rpc_err(req.id, "invalid_topic_name");
@@ -1048,10 +1050,7 @@ fn handle_mail_subscribe(db: &Arc<Database>, req: RpcRequest) -> RpcResponse {
 }
 
 fn handle_mail_unsubscribe(db: &Arc<Database>, req: RpcRequest) -> RpcResponse {
-    let params: MailUnsubscribeParams = match parse_params(&req) {
-        Ok(p) => p,
-        Err(e) => return e,
-    };
+    let params: MailUnsubscribeParams = try_params!(req);
     match db.delete_subscription(&params.subscription_id) {
         Ok(true) => RpcResponse::success_json(req.id, &MailUnsubscribeResult::default()),
         Ok(false) => rpc_err(req.id, "subscription_not_found"),
@@ -1060,8 +1059,10 @@ fn handle_mail_unsubscribe(db: &Arc<Database>, req: RpcRequest) -> RpcResponse {
 }
 
 fn handle_mail_topics(db: &Arc<Database>, req: RpcRequest) -> RpcResponse {
-    match db.list_topics_with_counts() {
-        Ok(rows) => {
+    try_op(
+        req.id,
+        "list_topics",
+        db.list_topics_with_counts().map(|rows| {
             let topics: Vec<TopicCount> = rows
                 .into_iter()
                 .map(|(topic, n)| TopicCount {
@@ -1069,11 +1070,9 @@ fn handle_mail_topics(db: &Arc<Database>, req: RpcRequest) -> RpcResponse {
                     subscriber_count: n,
                 })
                 .collect();
-            let r = MailTopicsResult { topics };
-            RpcResponse::success_json(req.id, &r)
-        }
-        Err(e) => RpcResponse::error(req.id, -32000, format!("list_topics: {e}")),
-    }
+            MailTopicsResult { topics }
+        }),
+    )
 }
 
 async fn handle_status(
@@ -1081,8 +1080,10 @@ async fn handle_status(
     daemon_id: &str,
     req: RpcRequest,
 ) -> RpcResponse {
-    match manager.circle(None).await {
-        Ok(agents) => {
+    try_op(
+        req.id,
+        "status",
+        manager.circle(None).await.map(|agents| {
             use crate::shared::types::AgentState;
             let active = agents
                 .iter()
@@ -1092,27 +1093,22 @@ async fn handle_status(
                 .iter()
                 .filter(|a| a.state == AgentState::Queued)
                 .count();
-            let result = DaemonStatusResult {
+            DaemonStatusResult {
                 uptime_secs: 0,
                 agent_count: agents.len(),
                 active_count: active,
                 queued_count: queued,
                 max_concurrent_agents: manager.max_concurrent_agents(),
                 daemon_id: Some(daemon_id.to_string()),
-            };
-            RpcResponse::success_json(req.id, &result)
-        }
-        Err(e) => RpcResponse::error(req.id, -32000, format!("Failed: {e}")),
-    }
+            }
+        }),
+    )
 }
 
 // --- Workspace + Memory handlers ---
 
 async fn handle_workspace_create(reg: &Arc<WorkspaceRegistry>, req: RpcRequest) -> RpcResponse {
-    let params: WorkspaceCreateParams = match parse_params(&req) {
-        Ok(p) => p,
-        Err(e) => return e,
-    };
+    let params: WorkspaceCreateParams = try_params!(req);
     if let Err(e) = validate_workspace_id(&params.name) {
         let _ = e;
         return rpc_err(req.id, "invalid_workspace_name");
@@ -1125,79 +1121,51 @@ async fn handle_workspace_create(reg: &Arc<WorkspaceRegistry>, req: RpcRequest) 
         )
         .await
     {
-        Ok(ws) => {
-            let result = WorkspaceCreateResult {
+        Ok(ws) => RpcResponse::success_json(
+            req.id,
+            &WorkspaceCreateResult {
                 id: ws.id,
                 path: ws.path,
-            };
-            RpcResponse::success_json(req.id, &result)
-        }
-        Err(e) => {
-            let msg = e.to_string();
-            // Map prefix to RPC code, keep details in message after colon.
-            let code = msg.split(':').next().unwrap_or("workspace_error");
-            rpc_err(req.id, code)
-        }
+            },
+        ),
+        Err(e) => rpc_err(req.id, e.code()),
     }
 }
 
 fn handle_workspace_list(reg: &Arc<WorkspaceRegistry>, req: RpcRequest) -> RpcResponse {
-    match reg.list() {
-        Ok((entries, orphans)) => {
-            let result = WorkspaceListResult {
-                workspaces: entries,
-                orphans,
-            };
-            RpcResponse::success_json(req.id, &result)
-        }
-        Err(e) => RpcResponse::error(req.id, -32000, format!("list: {e}")),
-    }
+    try_op(
+        req.id,
+        "list",
+        reg.list().map(|(workspaces, orphans)| WorkspaceListResult {
+            workspaces,
+            orphans,
+        }),
+    )
 }
 
 async fn handle_workspace_destroy(reg: &Arc<WorkspaceRegistry>, req: RpcRequest) -> RpcResponse {
-    let params: WorkspaceDestroyParams = match parse_params(&req) {
-        Ok(p) => p,
-        Err(e) => return e,
-    };
+    let params: WorkspaceDestroyParams = try_params!(req);
     match reg.destroy(&params.id).await {
         Ok(()) => RpcResponse::success_json(req.id, &WorkspaceDestroyResult::default()),
-        Err(e) => {
-            let msg = e.to_string();
-            let code = msg.split(':').next().unwrap_or("workspace_error");
-            rpc_err(req.id, code)
-        }
+        Err(e) => rpc_err(req.id, e.code()),
     }
 }
 
 async fn handle_workspace_assign(reg: &Arc<WorkspaceRegistry>, req: RpcRequest) -> RpcResponse {
-    let params: WorkspaceAssignParams = match parse_params(&req) {
-        Ok(p) => p,
-        Err(e) => return e,
-    };
+    let params: WorkspaceAssignParams = try_params!(req);
     match reg.assign(&params.workspace_id, &params.agent_id).await {
         Ok(()) => RpcResponse::success_json(req.id, &WorkspaceAssignResult::default()),
-        Err(e) => {
-            let msg = e.to_string();
-            let code = msg.split(':').next().unwrap_or("workspace_error");
-            rpc_err(req.id, code)
-        }
+        Err(e) => rpc_err(req.id, e.code()),
     }
 }
 
 fn handle_memory_put(db: &Arc<Database>, bus: &EventBus, req: RpcRequest) -> RpcResponse {
-    let params: MemoryPutParams = match parse_params(&req) {
-        Ok(p) => p,
-        Err(e) => return e,
-    };
+    let params: MemoryPutParams = try_params!(req);
     if validate_memory_key(&params.key).is_err() {
         return rpc_err(req.id, "invalid_memory_key");
     }
     // Workspace must exist and be Active.
-    let ws = match db.get_workspace(&params.workspace_id) {
-        Ok(Some(w)) => w,
-        Ok(None) => return rpc_err(req.id, "workspace_not_found"),
-        Err(e) => return RpcResponse::error(req.id, -32000, format!("db: {e}")),
-    };
+    let ws = try_rpc!(resolve_workspace(req.id, db, &params.workspace_id));
     if ws.state != crate::shared::types::WorkspaceState::Active {
         return rpc_err(req.id, "workspace_destroying");
     }
@@ -1225,16 +1193,13 @@ fn handle_memory_put(db: &Arc<Database>, bus: &EventBus, req: RpcRequest) -> Rpc
         return rpc_err(req.id, "memory_total_cap_exceeded");
     }
 
-    let updated_by = params
-        .sender
-        .clone()
-        .unwrap_or_else(|| "system".to_string());
+    let updated_by = params.sender.as_deref().unwrap_or("system");
     let outcome = match db.memory_put_cas(
         &params.workspace_id,
         &params.key,
         &bytes,
         params.expected_version,
-        &updated_by,
+        updated_by,
     ) {
         Ok(o) => o,
         Err(e) => return RpcResponse::error(req.id, -32000, format!("put: {e}")),
@@ -1268,10 +1233,7 @@ fn handle_memory_put(db: &Arc<Database>, bus: &EventBus, req: RpcRequest) -> Rpc
 }
 
 fn handle_memory_get(db: &Arc<Database>, req: RpcRequest) -> RpcResponse {
-    let params: MemoryGetParams = match parse_params(&req) {
-        Ok(p) => p,
-        Err(e) => return e,
-    };
+    let params: MemoryGetParams = try_params!(req);
     if validate_memory_key(&params.key).is_err() {
         return rpc_err(req.id, "invalid_memory_key");
     }
@@ -1289,22 +1251,17 @@ fn handle_memory_get(db: &Arc<Database>, req: RpcRequest) -> RpcResponse {
 }
 
 fn handle_memory_list(db: &Arc<Database>, req: RpcRequest) -> RpcResponse {
-    let params: MemoryListParams = match parse_params(&req) {
-        Ok(p) => p,
-        Err(e) => return e,
-    };
-    let prefix = params.prefix.as_deref();
-    match db.memory_list_prefix(&params.workspace_id, prefix) {
-        Ok(entries) => RpcResponse::success_json(req.id, &MemoryListResult { entries }),
-        Err(e) => RpcResponse::error(req.id, -32000, format!("list: {e}")),
-    }
+    let params: MemoryListParams = try_params!(req);
+    try_op(
+        req.id,
+        "list",
+        db.memory_list_prefix(&params.workspace_id, params.prefix.as_deref())
+            .map(|entries| MemoryListResult { entries }),
+    )
 }
 
 fn handle_memory_delete(db: &Arc<Database>, bus: &EventBus, req: RpcRequest) -> RpcResponse {
-    let params: MemoryDeleteParams = match parse_params(&req) {
-        Ok(p) => p,
-        Err(e) => return e,
-    };
+    let params: MemoryDeleteParams = try_params!(req);
     if validate_memory_key(&params.key).is_err() {
         return rpc_err(req.id, "invalid_memory_key");
     }
@@ -1381,10 +1338,7 @@ async fn handle_ns_put(
     daemon_id: &str,
     req: RpcRequest,
 ) -> RpcResponse {
-    let params: crate::shared::protocol::NsPutParams = match parse_params(&req) {
-        Ok(p) => p,
-        Err(e) => return e,
-    };
+    let params: crate::shared::protocol::NsPutParams = try_params!(req);
     if !valid_ns_name(&params.namespace) || !valid_ns_name(&params.key) {
         return rpc_err(req.id, "invalid_namespace_or_key");
     }
@@ -1410,10 +1364,7 @@ async fn handle_ns_put(
 }
 
 fn handle_ns_get(db: &Arc<Database>, req: RpcRequest) -> RpcResponse {
-    let params: crate::shared::protocol::NsGetParams = match parse_params(&req) {
-        Ok(p) => p,
-        Err(e) => return e,
-    };
+    let params: crate::shared::protocol::NsGetParams = try_params!(req);
     match db.namespace_get(&params.namespace, &params.key) {
         Ok(Some(e)) => RpcResponse::success_json(
             req.id,
@@ -1429,25 +1380,24 @@ fn handle_ns_get(db: &Arc<Database>, req: RpcRequest) -> RpcResponse {
 }
 
 fn handle_ns_list(db: &Arc<Database>, req: RpcRequest) -> RpcResponse {
-    let params: crate::shared::protocol::NsListParams = match parse_params(&req) {
-        Ok(p) => p,
-        Err(e) => return e,
-    };
-    match db.namespace_list(&params.namespace, params.prefix.as_deref()) {
-        Ok(entries) => {
-            let entries = entries
-                .into_iter()
-                .map(|e| crate::shared::protocol::NsListItem {
-                    key: e.key,
-                    lamport: e.lamport,
-                    origin_daemon_id: e.origin_daemon_id,
-                    updated_at: e.updated_at,
-                })
-                .collect();
-            RpcResponse::success_json(req.id, &crate::shared::protocol::NsListResult { entries })
-        }
-        Err(e) => RpcResponse::error(req.id, -32000, format!("ns list: {e}")),
-    }
+    let params: crate::shared::protocol::NsListParams = try_params!(req);
+    try_op(
+        req.id,
+        "ns list",
+        db.namespace_list(&params.namespace, params.prefix.as_deref())
+            .map(|entries| {
+                let entries = entries
+                    .into_iter()
+                    .map(|e| crate::shared::protocol::NsListItem {
+                        key: e.key,
+                        lamport: e.lamport,
+                        origin_daemon_id: e.origin_daemon_id,
+                        updated_at: e.updated_at,
+                    })
+                    .collect();
+                crate::shared::protocol::NsListResult { entries }
+            }),
+    )
 }
 
 async fn handle_ns_delete(
@@ -1456,10 +1406,7 @@ async fn handle_ns_delete(
     daemon_id: &str,
     req: RpcRequest,
 ) -> RpcResponse {
-    let params: crate::shared::protocol::NsDeleteParams = match parse_params(&req) {
-        Ok(p) => p,
-        Err(e) => return e,
-    };
+    let params: crate::shared::protocol::NsDeleteParams = try_params!(req);
     if !valid_ns_name(&params.namespace) || !valid_ns_name(&params.key) {
         return rpc_err(req.id, "invalid_namespace_or_key");
     }
@@ -1474,10 +1421,7 @@ async fn handle_ns_delete(
 
 async fn handle_ns_federate(peer_registry: &Arc<PeerRegistry>, req: RpcRequest) -> RpcResponse {
     use crate::shared::types::FederationDirection;
-    let params: crate::shared::protocol::NsFederateParams = match parse_params(&req) {
-        Ok(p) => p,
-        Err(e) => return e,
-    };
+    let params: crate::shared::protocol::NsFederateParams = try_params!(req);
     if !valid_ns_name(&params.namespace) {
         return rpc_err(req.id, "invalid_namespace");
     }
@@ -1485,11 +1429,7 @@ async fn handle_ns_federate(peer_registry: &Arc<PeerRegistry>, req: RpcRequest) 
         Ok(d) => d,
         Err(_) => return rpc_err(req.id, "invalid_direction"),
     };
-    let peer = match peer_registry.db.get_peer_by_name(&params.peer) {
-        Ok(Some(p)) => p,
-        Ok(None) => return rpc_err(req.id, "peer_not_found"),
-        Err(e) => return RpcResponse::error(req.id, -32000, format!("db: {e}")),
-    };
+    let peer = try_rpc!(resolve_peer(req.id, peer_registry, &params.peer));
     let id = crate::shared::constants::generate_short_id();
     match peer_registry.db.namespace_upsert_federation(
         &id,
@@ -1544,20 +1484,17 @@ async fn handle_federated_direct_send(
     let outbox_id = crate::shared::constants::generate_short_id();
     let recipient_addr = format!("agent://grimd-{target_daemon}/{agent_id}");
 
-    let mail = Mail {
-        id: mail_id.clone(),
-        recipient_id: recipient_addr.clone(),
-        sender_id: params.sender.clone(),
-        topic: None,
-        body: params.body.clone(),
-        in_reply_to: None,
-        state: MailState::Pending,
-        fail_reason: None,
-        created_at: now,
-        delivered_at: None,
-        seq: 0,
+    let mail = new_outbound_mail(
+        mail_id.clone(),
+        recipient_addr.clone(),
+        params.sender.clone(),
+        None,
+        params.body.clone(),
+        MailState::Pending,
+        None,
         wake_eligible,
-    };
+        now,
+    );
 
     if let Err(e) =
         db.insert_mail_with_outbox(&mail, &peer.id, &outbox_id, &recipient_addr, None, now)
@@ -1581,10 +1518,7 @@ async fn handle_federated_direct_send(
 }
 
 async fn handle_peer_add(peer_registry: &Arc<PeerRegistry>, req: RpcRequest) -> RpcResponse {
-    let params: PeerAddParams = match parse_params(&req) {
-        Ok(p) => p,
-        Err(e) => return e,
-    };
+    let params: PeerAddParams = try_params!(req);
     match peer_registry
         .register_peer(
             &params.name,
@@ -1620,17 +1554,18 @@ fn handle_peer_local_cert(peer_registry: &Arc<PeerRegistry>, req: RpcRequest) ->
 }
 
 async fn handle_peer_list(peer_registry: &Arc<PeerRegistry>, req: RpcRequest) -> RpcResponse {
-    match peer_registry.list_with_outbox_depth().await {
-        Ok(peers) => RpcResponse::success_json(req.id, &PeerListResult { peers }),
-        Err(e) => RpcResponse::error(req.id, -32000, format!("list_peers: {e}")),
-    }
+    try_op(
+        req.id,
+        "list_peers",
+        peer_registry
+            .list_with_outbox_depth()
+            .await
+            .map(|peers| PeerListResult { peers }),
+    )
 }
 
 async fn handle_peer_remove(peer_registry: &Arc<PeerRegistry>, req: RpcRequest) -> RpcResponse {
-    let params: PeerRemoveParams = match parse_params(&req) {
-        Ok(p) => p,
-        Err(e) => return e,
-    };
+    let params: PeerRemoveParams = try_params!(req);
     match peer_registry.remove_peer(&params.name).await {
         Ok(removed) => RpcResponse::success_json(req.id, &PeerRemoveResult { removed }),
         Err(e) => rpc_err(req.id, &e.to_string()),
@@ -1638,10 +1573,7 @@ async fn handle_peer_remove(peer_registry: &Arc<PeerRegistry>, req: RpcRequest) 
 }
 
 async fn handle_peer_ping(peer_registry: &Arc<PeerRegistry>, req: RpcRequest) -> RpcResponse {
-    let params: PeerPingParams = match parse_params(&req) {
-        Ok(p) => p,
-        Err(e) => return e,
-    };
+    let params: PeerPingParams = try_params!(req);
     match peer_registry.ping_peer(&params.name).await {
         Ok((rtt, state)) => {
             RpcResponse::success_json(req.id, &PeerPingResult { rtt_ms: rtt, state })
@@ -1652,10 +1584,7 @@ async fn handle_peer_ping(peer_registry: &Arc<PeerRegistry>, req: RpcRequest) ->
 
 async fn handle_topic_federate(peer_registry: &Arc<PeerRegistry>, req: RpcRequest) -> RpcResponse {
     use crate::shared::types::FederationDirection;
-    let params: TopicFederateParams = match parse_params(&req) {
-        Ok(p) => p,
-        Err(e) => return e,
-    };
+    let params: TopicFederateParams = try_params!(req);
     if !is_valid_topic_name(&params.topic) {
         return rpc_err(req.id, "invalid_topic_name");
     }
@@ -1669,11 +1598,7 @@ async fn handle_topic_federate(peer_registry: &Arc<PeerRegistry>, req: RpcReques
         Ok(d) => d,
         Err(_) => return rpc_err(req.id, "invalid_direction"),
     };
-    let peer = match peer_registry.db.get_peer_by_name(&params.peer) {
-        Ok(Some(p)) => p,
-        Ok(None) => return rpc_err(req.id, "peer_not_found"),
-        Err(e) => return RpcResponse::error(req.id, -32000, format!("db: {e}")),
-    };
+    let peer = try_rpc!(resolve_peer(req.id, peer_registry, &params.peer));
     let id = crate::shared::constants::generate_short_id();
     let now = unix_now();
     let final_dir =
@@ -1704,15 +1629,8 @@ async fn handle_topic_unfederate(
     peer_registry: &Arc<PeerRegistry>,
     req: RpcRequest,
 ) -> RpcResponse {
-    let params: TopicUnfederateParams = match parse_params(&req) {
-        Ok(p) => p,
-        Err(e) => return e,
-    };
-    let peer = match peer_registry.db.get_peer_by_name(&params.peer) {
-        Ok(Some(p)) => p,
-        Ok(None) => return rpc_err(req.id, "peer_not_found"),
-        Err(e) => return RpcResponse::error(req.id, -32000, format!("db: {e}")),
-    };
+    let params: TopicUnfederateParams = try_params!(req);
+    let peer = try_rpc!(resolve_peer(req.id, peer_registry, &params.peer));
     match peer_registry
         .db
         .delete_topic_federation(&peer.id, &params.topic)
@@ -1743,30 +1661,23 @@ async fn handle_workspace_federate(
     req: RpcRequest,
 ) -> RpcResponse {
     use crate::shared::types::{FederationDirection, WorkspaceKind};
-    let params: WorkspaceFederateParams = match parse_params(&req) {
-        Ok(p) => p,
-        Err(e) => return e,
-    };
+    let params: WorkspaceFederateParams = try_params!(req);
     let direction: FederationDirection = match params.direction.parse() {
         Ok(d) => d,
         Err(_) => return rpc_err(req.id, "invalid_direction"),
     };
-    let ws = match peer_registry.db.get_workspace(&params.workspace) {
-        Ok(Some(w)) => w,
-        Ok(None) => return rpc_err(req.id, "workspace_not_found"),
-        Err(e) => return RpcResponse::error(req.id, -32000, format!("db: {e}")),
-    };
+    let ws = try_rpc!(resolve_workspace(
+        req.id,
+        &peer_registry.db,
+        &params.workspace
+    ));
     // Only the *home* of a workspace can opt it into outbound federation —
     // shadows already point at a remote home and would re-export events
     // they don't originate.
     if matches!(ws.kind, WorkspaceKind::Shadow) {
         return rpc_err(req.id, "workspace_is_shadow_cannot_federate");
     }
-    let peer = match peer_registry.db.get_peer_by_name(&params.peer) {
-        Ok(Some(p)) => p,
-        Ok(None) => return rpc_err(req.id, "peer_not_found"),
-        Err(e) => return RpcResponse::error(req.id, -32000, format!("db: {e}")),
-    };
+    let peer = try_rpc!(resolve_peer(req.id, peer_registry, &params.peer));
     let id = crate::shared::constants::generate_short_id();
     let now = unix_now();
     let final_dir = match peer_registry.db.upsert_workspace_federation(
@@ -1798,10 +1709,7 @@ async fn handle_workspace_federate_subscribe(
     req: RpcRequest,
 ) -> RpcResponse {
     use crate::shared::types::FederationDirection;
-    let params: WorkspaceFederateSubscribeParams = match parse_params(&req) {
-        Ok(p) => p,
-        Err(e) => return e,
-    };
+    let params: WorkspaceFederateSubscribeParams = try_params!(req);
     let Some((home_daemon_id, home_workspace_id)) = params.home.split_once('/') else {
         return rpc_err(req.id, "invalid_home_address_expected_daemon/workspace");
     };
@@ -1811,11 +1719,7 @@ async fn handle_workspace_federate_subscribe(
     if home_workspace_id.is_empty() {
         return rpc_err(req.id, "invalid_home_workspace_id");
     }
-    let peer = match peer_registry.db.get_peer_by_name(&params.peer) {
-        Ok(Some(p)) => p,
-        Ok(None) => return rpc_err(req.id, "peer_not_found"),
-        Err(e) => return RpcResponse::error(req.id, -32000, format!("db: {e}")),
-    };
+    let peer = try_rpc!(resolve_peer(req.id, peer_registry, &params.peer));
 
     let local_id = params
         .alias
@@ -1864,15 +1768,8 @@ async fn handle_workspace_unfederate(
     peer_registry: &Arc<PeerRegistry>,
     req: RpcRequest,
 ) -> RpcResponse {
-    let params: WorkspaceUnfederateParams = match parse_params(&req) {
-        Ok(p) => p,
-        Err(e) => return e,
-    };
-    let peer = match peer_registry.db.get_peer_by_name(&params.peer) {
-        Ok(Some(p)) => p,
-        Ok(None) => return rpc_err(req.id, "peer_not_found"),
-        Err(e) => return RpcResponse::error(req.id, -32000, format!("db: {e}")),
-    };
+    let params: WorkspaceUnfederateParams = try_params!(req);
+    let peer = try_rpc!(resolve_peer(req.id, peer_registry, &params.peer));
     match peer_registry
         .db
         .delete_workspace_federation(&peer.id, &params.workspace)

@@ -37,30 +37,14 @@ const RESTART_DELAY_SECS: i64 = 2;
 const RATE_LIMITED_DELAY_SECS: i64 = 60;
 
 /// Pending entry in the supervisor's min-heap.
-#[derive(Debug, Clone)]
+///
+/// Field order is significant: derived `Ord` sorts by `fire_at`, then
+/// `agent_id`, then `attempt` for deterministic tiebreaking.
+#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct PendingRestart {
+    pub fire_at: DateTime<Utc>,
     pub agent_id: AgentId,
     pub attempt: u32,
-    pub fire_at: DateTime<Utc>,
-}
-
-impl PartialEq for PendingRestart {
-    fn eq(&self, other: &Self) -> bool {
-        self.fire_at == other.fire_at && self.agent_id == other.agent_id
-    }
-}
-impl Eq for PendingRestart {}
-impl PartialOrd for PendingRestart {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.cmp(other))
-    }
-}
-impl Ord for PendingRestart {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.fire_at
-            .cmp(&other.fire_at)
-            .then_with(|| self.agent_id.cmp(&other.agent_id))
-    }
 }
 
 /// Output of policy evaluation.
