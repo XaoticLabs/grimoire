@@ -10,6 +10,23 @@ use std::time::Duration;
 /// Poll interval while waiting for a child task process to exit.
 const TASK_POLL_INTERVAL: Duration = Duration::from_millis(20);
 
+/// Build the daemon-owned env-var contribution for a spawned task. Always
+/// includes `GRIMOIRE_AGENT_ID` from the assignment; merges any extra env
+/// the daemon sent on the `AssignTask.env` proto field (forward-compat for
+/// future `GRIMOIRE_*` vars without a wire bump). Returned as a Vec rather
+/// than a HashMap so the caller's iteration order is deterministic in tests.
+fn build_agent_env(agent_id: &str, extra: &HashMap<String, String>) -> Vec<(String, String)> {
+    let mut out: Vec<(String, String)> = Vec::with_capacity(extra.len() + 1);
+    out.push(("GRIMOIRE_AGENT_ID".to_string(), agent_id.to_string()));
+    // Extra entries from the daemon. A daemon-sent `GRIMOIRE_AGENT_ID` here
+    // is honored — the canonical injection is just the safety net for
+    // older daemons that don't populate `assign.env`.
+    for (k, v) in extra {
+        out.push((k.clone(), v.clone()));
+    }
+    out
+}
+
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::{Child, Command};
 use tokio::sync::Mutex;
@@ -104,6 +121,16 @@ impl TaskDispatcher {
             cmd.arg(arg.replace("{task}", &assign.task));
         }
         for (k, v) in &provider.env {
+            cmd.env(k, v);
+        }
+        // Daemon-owned identity injection. `GRIMOIRE_AGENT_ID` is the canonical
+        // env var spawned agents read so they can call back into `grim` (mail,
+        // memory, notify) knowing who they are without being told. Previously
+        // only locally-executed agents got it; remote-worker agents couldn't
+        // `grim notify` because this line wasn't here. `assign.env` is the
+        // proto field 7 — forward-compat for any future `GRIMOIRE_*` the
+        // daemon wants to send (workspace, scroll, etc.) without a wire bump.
+        for (k, v) in build_agent_env(&assign.agent_id, &assign.env) {
             cmd.env(k, v);
         }
         cmd.current_dir(&assign.cwd)
@@ -251,5 +278,34 @@ impl TaskDispatcher {
 
     pub fn drain(&self) {
         self.draining.store(true, Ordering::SeqCst);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn agent_env_always_carries_agent_id() {
+        let env = build_agent_env("abc12345", &HashMap::new());
+        assert!(
+            env.iter()
+                .any(|(k, v)| k == "GRIMOIRE_AGENT_ID" && v == "abc12345")
+        );
+    }
+
+    #[test]
+    fn agent_env_merges_extra_from_daemon() {
+        let mut extra = HashMap::new();
+        extra.insert("GRIMOIRE_WORKSPACE_ID".to_string(), "ws-1".to_string());
+        let env = build_agent_env("abc12345", &extra);
+        assert!(
+            env.iter()
+                .any(|(k, v)| k == "GRIMOIRE_AGENT_ID" && v == "abc12345")
+        );
+        assert!(
+            env.iter()
+                .any(|(k, v)| k == "GRIMOIRE_WORKSPACE_ID" && v == "ws-1")
+        );
     }
 }
