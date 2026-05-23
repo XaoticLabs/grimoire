@@ -233,16 +233,22 @@ fn bootstrap_runtime(config: &Config) -> Result<()> {
     let socket = config.socket_path();
     let port = config.port();
 
-    eprintln!();
-    eprintln!("  ◆ grimoire daemon v{}", env!("CARGO_PKG_VERSION"));
-    eprintln!(
-        "    pid {}  ·  socket {}  ·  http 127.0.0.1:{}",
-        pid,
-        socket.display(),
-        port
-    );
-    eprintln!("    db {}", constants::db_path().display());
-    eprintln!();
+    // Startup banner — written to stderr (not the structured tracing log)
+    // so it shows up in interactive `grim daemon start` even when the user
+    // hasn't enabled an env filter that lets `info!` through.
+    #[allow(clippy::print_stderr)]
+    {
+        eprintln!();
+        eprintln!("  ◆ grimoire daemon v{}", env!("CARGO_PKG_VERSION"));
+        eprintln!(
+            "    pid {}  ·  socket {}  ·  http 127.0.0.1:{}",
+            pid,
+            socket.display(),
+            port
+        );
+        eprintln!("    db {}", constants::db_path().display());
+        eprintln!();
+    }
 
     info!(pid = pid, dir = %dir.display(), "Grimoire daemon starting");
     Ok(())

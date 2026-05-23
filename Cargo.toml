@@ -123,6 +123,11 @@ tower = { version = "0.5", features = ["util"] }
 # `-A dead_code`.
 warnings = { level = "deny", priority = -1 }
 dead_code = "allow"
+# `unreachable_pub` is a great lint (rust-analyzer/ruff both enable it) but
+# this crate has ~870 `pub` items that aren't reachable from `lib.rs`'s
+# curated surface and would all need to flip to `pub(crate)`. Tackle as a
+# dedicated mechanical sweep, then enable.
+# unreachable_pub = "warn"
 # `missing_docs` is enforced at the library level via `#![warn(missing_docs)]`
 # in `src/lib.rs`. Scoping it there (rather than crate-wide via `[lints.rust]`)
 # keeps integration tests and binary entry points free of the lint while
@@ -209,3 +214,14 @@ unused_async           = "allow"  # async-trait impls and seam functions for sym
 # `Result` return for trait/seam symmetry. Re-enable per-fn when removing.
 unnecessary_wraps      = "allow"
 
+# Restriction lints — opt-in (not in any group). The set below is the
+# consensus across rust-analyzer / ruff / jj: catches debug scaffolding and
+# `Rc<Vec>`-style anti-patterns without false-positive churn.
+dbg_macro    = "warn"
+todo         = "warn"
+# The daemon's user-facing output goes through `tracing` / structured RPC.
+# Bare `println!`/`eprintln!` is almost always a stray debug print.
+# `grim` CLI bins that legitimately print to stdout can `#[allow]` per-fn.
+print_stdout = "warn"
+print_stderr = "warn"
+rc_buffer    = "warn"

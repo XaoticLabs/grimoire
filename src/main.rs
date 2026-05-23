@@ -1,4 +1,8 @@
 #![cfg_attr(not(test), forbid(unsafe_code))]
+// `grim` is the CLI entry point — printing diagnostics/usage hints to the
+// user's terminal is its job. Library/daemon code is still gated by the
+// global `print_stdout`/`print_stderr` lints.
+#![allow(clippy::print_stdout, clippy::print_stderr)]
 
 use std::time::Duration;
 
