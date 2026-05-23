@@ -18,7 +18,7 @@ use super::workspace_db::MemoryWriteOutcome;
 use super::workspace_registry::{WorkspaceRegistry, publish_memory_topic_mail};
 use crate::shared::types::{validate_memory_key, validate_workspace_id};
 
-const MAX_MAIL_BODY_BYTES: usize = 65_536;
+pub const MAX_MAIL_BODY_BYTES: usize = 65_536;
 const PREVIEW_CHARS: usize = 200;
 
 fn parse_params<T: DeserializeOwned>(req: &RpcRequest) -> Result<T, RpcResponse> {
@@ -611,7 +611,7 @@ fn rpc_err(req_id: u64, code: &str) -> RpcResponse {
     RpcResponse::error(req_id, -32000, code.to_string())
 }
 
-async fn handle_mail_send(
+pub async fn handle_mail_send(
     db: &Arc<Database>,
     bus: &EventBus,
     peer_registry: &Arc<PeerRegistry>,

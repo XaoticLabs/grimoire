@@ -21,6 +21,37 @@ pub struct Config {
     pub worker: Option<WorkerConfig>,
     #[serde(default)]
     pub notifications: NotificationsConfig,
+    /// Inbound webhooks that publish into the mail bus. Keyed by the URL
+    /// segment used in `POST /webhooks/<name>`. Empty (the default) keeps
+    /// the webhook surface closed.
+    #[serde(default)]
+    pub webhooks: HashMap<String, WebhookConfig>,
+}
+
+/// One inbound webhook → mail bridge. Each entry exposes one endpoint at
+/// `/webhooks/<name>` whose raw request body is delivered to `topic` (or to
+/// `recipient` for direct mail). If `secret` is set, callers must present it
+/// in the `X-Grimoire-Webhook-Token` header — the only auth on the otherwise-
+/// public webhook surface. We deliberately *don't* implement provider-specific
+/// HMAC schemes (GitHub's `X-Hub-Signature-256`, Slack's signing-secret); the
+/// expected deploy is "reverse proxy → daemon," where the proxy unwraps any
+/// such header and applies a daemon-side token instead.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WebhookConfig {
+    /// Destination topic (without the `topic://` prefix). Mutually exclusive
+    /// with `recipient`.
+    #[serde(default)]
+    pub topic: Option<String>,
+    /// Direct agent recipient ID (without the `agent://` prefix). Mutually
+    /// exclusive with `topic`.
+    #[serde(default)]
+    pub recipient: Option<String>,
+    /// If present, the request must carry it in `X-Grimoire-Webhook-Token`.
+    /// Unset = the endpoint is open to anyone who can reach the HTTP port.
+    /// The daemon binds 127.0.0.1 by default, but operators exposing it to
+    /// the network should always set this.
+    #[serde(default)]
+    pub secret: Option<String>,
 }
 
 /// Outbound notification webhook. When `webhook_url` is set the daemon POSTs

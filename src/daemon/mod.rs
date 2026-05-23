@@ -27,6 +27,7 @@ pub mod server;
 pub mod supervisor;
 pub mod wake_registry;
 pub mod wake_sources;
+pub mod webhook;
 pub mod worker_registry;
 pub mod worker_rpc_server;
 pub mod workspace_db;
@@ -202,6 +203,7 @@ pub async fn start() -> Result<()> {
     );
 
     // Start servers (UDS + HTTP)
+    let webhooks = Arc::new(config.webhooks.clone());
     server::run(
         manager,
         db,
@@ -212,6 +214,7 @@ pub async fn start() -> Result<()> {
         peer_registry,
         daemon_id,
         auth_token,
+        webhooks,
     )
     .await?;
 

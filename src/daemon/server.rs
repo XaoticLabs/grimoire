@@ -31,6 +31,9 @@ pub struct AppState {
     /// metric; an `Instant` (not a wall-clock time) so clock skew doesn't
     /// confuse the value across daemon restarts on the same host.
     pub started_at: std::time::Instant,
+    /// Inbound webhook configuration keyed by `name` (the URL segment in
+    /// `POST /webhooks/<name>`). Empty map = the webhook surface is closed.
+    pub webhooks: Arc<std::collections::HashMap<String, crate::shared::config::WebhookConfig>>,
 }
 
 /// UID the daemon process is running as. Cached at boot; used by the UDS
@@ -50,6 +53,9 @@ fn daemon_uid() -> u32 {
 
 /// Start both UDS and HTTP servers
 #[allow(clippy::too_many_arguments)]
+// `HashMap` (not a generic over the hasher) is fine here: this is internal
+// daemon wiring, not a public API, and the map is built once from config.
+#[allow(clippy::implicit_hasher)]
 pub async fn run(
     manager: Arc<AgentManager>,
     db: Arc<super::persistence::Database>,
@@ -60,6 +66,7 @@ pub async fn run(
     peer_registry: Arc<super::peer_registry::PeerRegistry>,
     daemon_id: String,
     auth_token: Arc<AuthToken>,
+    webhooks: Arc<std::collections::HashMap<String, crate::shared::config::WebhookConfig>>,
 ) -> Result<()> {
     let state = AppState {
         manager: manager.clone(),
@@ -72,6 +79,7 @@ pub async fn run(
         daemon_id,
         auth_token,
         started_at: std::time::Instant::now(),
+        webhooks,
     };
 
     // Start UDS listener
@@ -334,10 +342,13 @@ async fn run_http_server(state: AppState) -> Result<()> {
         ));
 
     // Unauthenticated routes — the login endpoints accept the token
-    // explicitly and set the cookie on success.
+    // explicitly and set the cookie on success. Webhooks live here because
+    // external services (GitHub, Slack, …) won't carry the daemon's bearer
+    // token; per-webhook auth is the optional shared secret in the config.
     let public = Router::new()
         .route("/auth/login", get(http_login_get).post(http_login_post))
-        .route("/auth/logout", post(http_logout));
+        .route("/auth/logout", post(http_logout))
+        .route("/webhooks/{name}", post(http_webhook));
 
     let app = Router::new()
         .merge(protected)
@@ -571,6 +582,103 @@ async fn http_abandon_scroll(
         Ok(()) => axum::Json(serde_json::json!({"success": true})),
         Err(e) => axum::Json(serde_json::json!({"error": e.to_string()})),
     }
+}
+
+/// Inbound webhook endpoint. The raw request body becomes the mail body —
+/// no provider-specific decoding here; subscriber agents know the shape of
+/// whatever they signed up for. Goes through the same `mail.send` path
+/// every other mail does, so subscriber wake-on-mail Just Works.
+async fn http_webhook(
+    State(state): State<AppState>,
+    axum::extract::Path(name): axum::extract::Path<String>,
+    headers: axum::http::HeaderMap,
+    body: axum::body::Bytes,
+) -> axum::response::Response {
+    use super::webhook::{WEBHOOK_TOKEN_HEADER, WebhookAuth, check_token, resolve_target};
+
+    let Some(cfg) = state.webhooks.get(&name) else {
+        return webhook_err(axum::http::StatusCode::NOT_FOUND, "unknown_webhook");
+    };
+
+    let presented = headers
+        .get(WEBHOOK_TOKEN_HEADER)
+        .and_then(|h| h.to_str().ok());
+    match check_token(presented, cfg.secret.as_deref()) {
+        WebhookAuth::Open | WebhookAuth::Match => {}
+        WebhookAuth::Missing => {
+            return webhook_err(axum::http::StatusCode::UNAUTHORIZED, "missing_token");
+        }
+        WebhookAuth::Mismatch => {
+            return webhook_err(axum::http::StatusCode::UNAUTHORIZED, "bad_token");
+        }
+    }
+
+    let to = match resolve_target(cfg) {
+        Ok(addr) => addr,
+        Err(code) => return webhook_err(axum::http::StatusCode::INTERNAL_SERVER_ERROR, code),
+    };
+
+    if body.len() > super::rpc::MAX_MAIL_BODY_BYTES {
+        return webhook_err(axum::http::StatusCode::PAYLOAD_TOO_LARGE, "body_too_large");
+    }
+
+    // Bodies are passed through verbatim. UTF-8 is required (mail body is a
+    // String); binary webhook payloads aren't a use case for v1 — operators
+    // can base64 ahead of the daemon if they need one.
+    let Ok(body_str) = String::from_utf8(body.to_vec()) else {
+        return webhook_err(axum::http::StatusCode::BAD_REQUEST, "body_not_utf8");
+    };
+
+    // Reuse the canonical mail-send path so the topic fan-out, federation
+    // routing, body-size guard, and StreamEvent emission all stay
+    // single-sourced. The synthetic RpcRequest is the price for not
+    // refactoring the handler — id=0 is fine because we throw it away.
+    let req = crate::shared::protocol::RpcRequest {
+        method: "mail.send".to_string(),
+        params: serde_json::json!({
+            "to": to,
+            "body": body_str,
+            // Sender stays None: a `webhook://` prefix would be the audit-friendly
+            // choice but is currently rejected by the reserved-prefix guard.
+            // Operators trace via the webhook name in logs + the topic in mail.
+            "sender": null,
+            "wake_eligible": true,
+        }),
+        id: 0,
+        protocol_version: None,
+        auth_token: None,
+    };
+    let bus = state.manager.event_bus();
+    let resp =
+        super::rpc::handle_mail_send(&state.db, &bus, &state.peer_registry, &state.daemon_id, req)
+            .await;
+
+    if let Some(err) = resp.error {
+        // Map the symbolic mail-layer code to an HTTP status. Anything we
+        // don't recognize gets a 500 so the operator sees the message.
+        let status = match err.message.as_str() {
+            "body_too_large" => axum::http::StatusCode::PAYLOAD_TOO_LARGE,
+            "unknown_recipient" | "unknown_topic" => axum::http::StatusCode::NOT_FOUND,
+            _ => axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+        };
+        return webhook_err(status, &err.message);
+    }
+
+    let payload = resp.result.unwrap_or_else(|| serde_json::json!({}));
+    axum::response::Response::builder()
+        .status(axum::http::StatusCode::OK)
+        .header(axum::http::header::CONTENT_TYPE, "application/json")
+        .body(axum::body::Body::from(payload.to_string()))
+        .unwrap_or_else(|_| axum::response::Response::new(axum::body::Body::from("{}")))
+}
+
+fn webhook_err(status: axum::http::StatusCode, code: &str) -> axum::response::Response {
+    let body = serde_json::json!({ "error": code }).to_string();
+    axum::response::Response::builder()
+        .status(status)
+        .header(axum::http::header::CONTENT_TYPE, "application/json")
+        .body(axum::body::Body::from(body))
+        .unwrap_or_else(|_| axum::response::Response::new(axum::body::Body::from("{}")))
 }
 
 /// Prometheus text-exposition endpoint. Behind the same bearer-auth wall as
