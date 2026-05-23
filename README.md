@@ -54,14 +54,14 @@ A short tour of what the daemon does.
 - **Worker pool.** Dispatch agents to remote machines through the `grimw` worker binary over mutual TLS, with capability-aware placement. With no workers registered it runs everything locally.
 - **Notifications.** The daemon reaches you, the missing half of "fire it and walk away." Any webhook (Slack, Discord, a relay) gets a JSON POST on completion, failure, wake, or when an agent decides it's worth a human.
 - **Inbound webhooks.** The mirror image: configure `[webhooks.<name>]` and `POST /webhooks/<name>` becomes mail on a topic, so a standing agent subscribed to it wakes on real-world events (a GitHub PR, a Linear issue, a CI run).
-- **Time-travel.** `grim chronicle <id>` (alias `grim replay`) reconstructs an agent's full life from the durable log — stdout interleaved with state changes, wake fires, restarts, mail, notifications — with state-at-point reconstruction at any seq. `grim fork <id> --at <seq>` branches a new agent seeded with the parent's transcript up to the cut.
+- **Time-travel.** `grim chronicle <id>` (alias `grim replay`) reconstructs an agent's full life from the durable log — stdout interleaved with state changes, wake fires, restarts, mail, notifications — with state-at-point reconstruction at any seq. `grim fork <id> --at <seq>` branches a new agent seeded with the parent's transcript up to the cut. `grim eval <id> --rubric <file>` scores a transcript by spawning an evaluator agent against a rubric.
 - **Metrics.** `GET /metrics` exposes a Prometheus snapshot (queue depth, agents by state, per-kind event counters, notifications by level) behind the same bearer auth as `/api/*`.
 
 The command vocabulary is deliberately thematic. If you'd rather think in plain terms:
 
-| `summon` | `circle` | `bind` | `banish` | `invoke` | `chronicle` | `fork` | `scry` | `pact` | `scroll` | `wake` |
-|----------|----------|--------|----------|----------|-------------|--------|--------|--------|----------|--------|
-| run | ps | tail | kill | follow-up | replay history | branch at a point | dashboard | chain | run a DAG | resume a sleeper |
+| `summon` | `circle` | `bind` | `banish` | `invoke` | `chronicle` | `fork` | `eval` | `scry` | `pact` | `scroll` | `wake` |
+|----------|----------|--------|----------|----------|-------------|--------|--------|--------|--------|----------|--------|
+| run | ps | tail | kill | follow-up | replay history | branch at a point | score with a rubric | dashboard | chain | run a DAG | resume a sleeper |
 
 ## Architecture
 
@@ -86,10 +86,9 @@ Here's where things actually stand.
 
 **Works today:** summon, standing agents, wake triggers (cron / file / completion / mail / inbound webhook), pacts, scrolls, mail and topics, supervision trees, workspaces and shared memory, federated namespace memory across daemons, the `grimw` worker pool, outbound notifications, a live SSE dashboard, time-travel over the durable log (`grim chronicle` / `grim replay` / `grim fork`), and a Prometheus `/metrics` endpoint. The trust layer ships on by default across all three transports — mutual TLS on the gRPC peer and worker links — with negotiated protocol versioning.
 
-**Partial:** Federated namespaces replicate writes made after `ns federate`, but there's no initial-state snapshot for a peer joining a populated namespace yet, and concurrent writes to one key resolve last-write-wins rather than surfacing the conflict. Agent identity injection (`GRIMOIRE_AGENT_ID`) covers local execution but not remote workers yet. Metrics ships Prometheus only; OTel tracing export is not wired.
+**Partial:** Federated namespaces replicate writes made after `ns federate`, but there's no initial-state snapshot for a peer joining a populated namespace yet, and concurrent writes to one key resolve last-write-wins rather than surfacing the conflict. Metrics ships Prometheus only; OTel tracing export is not wired.
 
 **Not built yet:**
-- Eval. `grim eval <id> --rubric <file>` to score an agent's transcript with an evaluator agent. The natural third leg of chronicle + fork.
 - Sandboxing. A cwd jail, cgroups, per-agent resource limits.
 - Policy and budget primitives. Per-provider and per-cwd allow rules, token and cost ceilings.
 
