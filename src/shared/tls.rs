@@ -199,7 +199,7 @@ pub fn generate(name: &str) -> Result<Identity> {
             .context("generating self-signed identity cert")?;
     Ok(Identity {
         cert_pem: cert_key.cert.pem(),
-        key_pem: cert_key.key_pair.serialize_pem(),
+        key_pem: cert_key.signing_key.serialize_pem(),
     })
 }
 
