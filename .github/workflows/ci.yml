@@ -30,7 +30,7 @@ jobs:
         toolchain: ["1.95.0", "stable"]
         task: [fmt-check, clippy, test]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
 
       - name: Install protoc
         run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
@@ -38,14 +38,18 @@ jobs:
       # rust-toolchain.toml pins channel + components; setting it explicitly
       # here makes the action cache key stable and ensures clippy/rustfmt are
       # always present in case the toolchain file drifts.
+      #
+      # `dtolnay/rust-toolchain` ships no semver tags — pin the `master`
+      # branch by full commit SHA. Dependabot tracks it via the
+      # `github-actions` ecosystem and bumps the pin + trailing comment.
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@master
+        uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # master
         with:
           toolchain: ${{ matrix.toolchain }}
           components: rustfmt, clippy
 
       - name: Cache cargo registry + target
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@23869a5bd66c73db3c0ac40331f3206eb23791dc # v2.9.1
         with:
           shared-key: ${{ matrix.toolchain }}-${{ matrix.task }}
 
@@ -60,15 +64,15 @@ jobs:
     env:
       RUSTDOCFLAGS: -D warnings -D rustdoc::broken_intra_doc_links -D rustdoc::private_intra_doc_links
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
       - name: Install protoc
         run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@master
+        uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # master
         with:
           toolchain: stable
       - name: Cache cargo registry + target
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@23869a5bd66c73db3c0ac40331f3206eb23791dc # v2.9.1
         with:
           shared-key: docs
       - name: cargo doc
@@ -84,33 +88,33 @@ jobs:
       matrix:
         task: [deny, machete, typos]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@master
+        uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # master
         with:
           toolchain: "1.95.0"
 
       - name: Cache cargo registry
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@23869a5bd66c73db3c0ac40331f3206eb23791dc # v2.9.1
         with:
           shared-key: supply-${{ matrix.task }}
 
       - name: Install cargo-deny
         if: matrix.task == 'deny'
-        uses: taiki-e/install-action@v2
+        uses: taiki-e/install-action@6c1f7cf125e42770ff087ea443901b487cc5471a # v2.79.5
         with:
           tool: cargo-deny
 
       - name: Install cargo-machete
         if: matrix.task == 'machete'
-        uses: taiki-e/install-action@v2
+        uses: taiki-e/install-action@6c1f7cf125e42770ff087ea443901b487cc5471a # v2.79.5
         with:
           tool: cargo-machete
 
       - name: Install typos
         if: matrix.task == 'typos'
-        uses: taiki-e/install-action@v2
+        uses: taiki-e/install-action@6c1f7cf125e42770ff087ea443901b487cc5471a # v2.79.5
         with:
           tool: typos-cli
 
@@ -125,7 +129,7 @@ jobs:
     name: review-by dates
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
       - name: Fail on past review-by dates in deny.toml
         run: |
           set -euo pipefail
