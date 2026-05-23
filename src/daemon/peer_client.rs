@@ -12,15 +12,15 @@ use tracing::debug;
 
 use crate::shared::peer_proto::peer_client::PeerClient as TonicPeerClient;
 use crate::shared::peer_proto::{
-    Hello, MailAck, MailDeliver, MemoryAck, MemoryDeliver, PeerInbound, PeerOutbound, peer_inbound,
+    Hello, MailAck, MemoryAck, MemoryDeliver, PeerInbound, PeerOutbound, peer_inbound,
     peer_outbound,
 };
 use crate::shared::protocol::StreamEvent;
 use crate::shared::types::{Peer, PeerState};
 
-use super::peer_outbox::backoff_secs;
+use super::peer_outbox::{InFlight, OutboxBackend, handle_ack_outcome, pump_one_row};
 use super::peer_registry::PeerRegistry;
-use super::persistence::unix_now;
+use super::persistence::{Database, unix_now};
 
 /// Connection timeout for outbound gRPC to a federation peer. After this
 /// elapses the client task falls back to its exponential backoff.
@@ -164,24 +164,19 @@ async fn run_once(
         peer_id: peer.id.clone(),
     });
 
-    // Track currently-in-flight mail to match against MailAcks. The u32 is the
-    // outbox row's prior-failure count, carried so a failed ack can grow the
-    // retry backoff off the real attempt number.
-    let mut in_flight_outbox_id: Option<(String, u32)> = None;
-    let mut in_flight_mail_id: Option<String> = None;
-    // F2 replication: (namespace_outbox row id, prior attempts, op_id).
-    let mut in_flight_memory: Option<(String, u32, String)> = None;
+    // One in-flight slot per outbox table. Mail's ack_key is the `mail_id`;
+    // memory's is the `op_id`. The generic helpers stash + clear these as
+    // each row ships and acks.
+    let mut in_flight_mail: Option<InFlight> = None;
+    let mut in_flight_memory: Option<InFlight> = None;
+
+    let mail_backend = MailOutbox { db: &registry.db };
+    let memory_backend = MemoryOutbox { db: &registry.db };
 
     // Initial pump in case rows were queued while disconnected.
-    pump_one(
-        registry,
-        peer,
-        &out_tx,
-        &mut in_flight_outbox_id,
-        &mut in_flight_mail_id,
-    )
-    .await?;
-    pump_memory(registry, peer, &out_tx, &mut in_flight_memory).await?;
+    let removing = peer_removing(registry, &peer.id);
+    pump_one_row(&mail_backend, &peer.id, removing, &out_tx, &mut in_flight_mail).await?;
+    pump_one_row(&memory_backend, &peer.id, removing, &out_tx, &mut in_flight_memory).await?;
 
     loop {
         tokio::select! {
@@ -200,25 +195,30 @@ async fn run_once(
                     Ok(None) => return Err(anyhow::anyhow!("stream closed")),
                     Err(e) => return Err(e.into()),
                 };
-                handle_inbound(registry, peer, msg, &out_tx, &mut in_flight_outbox_id, &mut in_flight_mail_id, &mut in_flight_memory).await?;
+                handle_inbound(registry, peer, msg, &out_tx, &mail_backend, &memory_backend, &mut in_flight_mail, &mut in_flight_memory).await?;
                 let _ = registry.db.set_peer_last_seen(&peer.id, unix_now());
-                if in_flight_outbox_id.is_none() {
-                    pump_one(registry, peer, &out_tx, &mut in_flight_outbox_id, &mut in_flight_mail_id).await?;
-                }
-                if in_flight_memory.is_none() {
-                    pump_memory(registry, peer, &out_tx, &mut in_flight_memory).await?;
-                }
+                let removing = peer_removing(registry, &peer.id);
+                pump_one_row(&mail_backend, &peer.id, removing, &out_tx, &mut in_flight_mail).await?;
+                pump_one_row(&memory_backend, &peer.id, removing, &out_tx, &mut in_flight_memory).await?;
             }
             () = notify_outbox.notified() => {
-                if in_flight_outbox_id.is_none() {
-                    pump_one(registry, peer, &out_tx, &mut in_flight_outbox_id, &mut in_flight_mail_id).await?;
-                }
-                if in_flight_memory.is_none() {
-                    pump_memory(registry, peer, &out_tx, &mut in_flight_memory).await?;
-                }
+                let removing = peer_removing(registry, &peer.id);
+                pump_one_row(&mail_backend, &peer.id, removing, &out_tx, &mut in_flight_mail).await?;
+                pump_one_row(&memory_backend, &peer.id, removing, &out_tx, &mut in_flight_memory).await?;
             }
         }
     }
+}
+
+/// True iff the peer row is in `Removing`. Drainer halts in that case so
+/// teardown isn't racing fresh sends. A missing/errored lookup is treated
+/// as "not removing" — matching the pre-refactor behavior where the
+/// `if let Ok(Some(_)) && removing` guard simply fell through.
+fn peer_removing(registry: &Arc<PeerRegistry>, peer_id: &str) -> bool {
+    matches!(
+        registry.db.get_peer(peer_id),
+        Ok(Some(p)) if p.state == PeerState::Removing
+    )
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -227,9 +227,10 @@ async fn handle_inbound(
     peer: &Peer,
     msg: PeerInbound,
     out_tx: &mpsc::Sender<PeerOutbound>,
-    in_flight_outbox_id: &mut Option<(String, u32)>,
-    in_flight_mail_id: &mut Option<String>,
-    in_flight_memory: &mut Option<(String, u32, String)>,
+    mail_backend: &MailOutbox<'_>,
+    memory_backend: &MemoryOutbox<'_>,
+    in_flight_mail: &mut Option<InFlight>,
+    in_flight_memory: &mut Option<InFlight>,
 ) -> anyhow::Result<()> {
     // Each arm is enumerated explicitly so dispatch for a new variant is a
     // compile error rather than silently routed to a wildcard.
@@ -258,11 +259,12 @@ async fn handle_inbound(
             Ok(())
         }
         Some(peer_inbound::Msg::MailAck(ack)) => {
-            if Some(&ack.mail_id) == in_flight_mail_id.as_ref() {
-                if let Some((id, attempts)) = in_flight_outbox_id.take() {
-                    handle_outbox_ack(registry, peer, &id, attempts, &ack);
-                }
-                *in_flight_mail_id = None;
+            // Ack-key match before clearing the slot: a delayed ack for an
+            // already-resolved row must not resolve the wrong follow-up.
+            if matches!(in_flight_mail.as_ref(), Some(f) if f.ack_key == ack.mail_id) {
+                let slot = in_flight_mail.take().expect("just matched");
+                handle_ack_outcome(mail_backend, &slot, ack.ok);
+                emit_mail_ack_event(registry, peer, &ack);
             }
             Ok(())
         }
@@ -280,18 +282,39 @@ async fn handle_inbound(
             Ok(())
         }
         Some(peer_inbound::Msg::MemoryAck(ack)) => {
-            if let Some((id, attempts, op_id)) = in_flight_memory.take() {
-                if op_id == ack.op_id {
-                    handle_memory_ack(registry, peer, &id, attempts, &ack);
-                } else {
-                    // Ack for a different op than tracked; restore and ignore.
-                    *in_flight_memory = Some((id, attempts, op_id));
+            if matches!(in_flight_memory.as_ref(), Some(f) if f.ack_key == ack.op_id) {
+                let slot = in_flight_memory.take().expect("just matched");
+                handle_ack_outcome(memory_backend, &slot, ack.ok);
+                if !ack.ok {
+                    tracing::warn!(peer = %peer.name, op = %ack.op_id, reason = %ack.reason,
+                        "namespace replication rejected");
                 }
             }
+            // Ack for an unknown op — drop it; the sender will retry the
+            // tracked row when the real ack arrives.
             Ok(())
         }
         Some(peer_inbound::Msg::Goodbye(_)) => Err(anyhow::anyhow!("peer goodbye")),
         None => Ok(()),
+    }
+}
+
+/// Mail-side observability: forwarding success / rejection events.
+/// Memory has no equivalent (the LWW path is silent by design), so this
+/// stays in the mail-only branch rather than on the trait.
+fn emit_mail_ack_event(registry: &Arc<PeerRegistry>, peer: &Peer, ack: &MailAck) {
+    if ack.ok {
+        registry.bus.publish(StreamEvent::PeerMailForwarded {
+            peer_id: peer.id.clone(),
+            mail_id: ack.mail_id.clone(),
+            sender_seq: 0,
+        });
+    } else {
+        registry.bus.publish(StreamEvent::PeerMailForwardFailed {
+            peer_id: peer.id.clone(),
+            mail_id: ack.mail_id.clone(),
+            reason: ack.reason.clone(),
+        });
     }
 }
 
@@ -345,145 +368,86 @@ pub fn apply_memory_deliver(
     }
 }
 
-fn handle_memory_ack(
-    registry: &Arc<PeerRegistry>,
-    peer: &Peer,
-    outbox_id: &str,
-    attempts: u32,
-    ack: &MemoryAck,
-) {
-    let now = unix_now();
-    if ack.ok {
-        let _ = registry.db.namespace_mark_outbox_delivered(outbox_id);
-    } else {
-        let backoff = backoff_secs(attempts + 1);
-        let _ = registry
-            .db
-            .namespace_mark_outbox_failed_retry(outbox_id, now + backoff as i64);
-        tracing::warn!(peer = %peer.name, op = %ack.op_id, reason = %ack.reason,
-            "namespace replication rejected");
+/// Mail outbox backend — drives `peer_outbox` rows over the mail channel.
+struct MailOutbox<'a> {
+    db: &'a Database,
+}
+
+impl OutboxBackend for MailOutbox<'_> {
+    type Row = crate::shared::types::PeerOutboxRow;
+
+    fn next_row(&self, peer_id: &str, now: i64) -> anyhow::Result<Option<Self::Row>> {
+        self.db.next_outbox_row(peer_id, now)
+    }
+    fn mark_in_flight(&self, row_id: &str) -> anyhow::Result<()> {
+        self.db.mark_outbox_in_flight(row_id)
+    }
+    fn mark_delivered(&self, row_id: &str) -> anyhow::Result<()> {
+        self.db.mark_outbox_delivered(row_id)
+    }
+    fn mark_failed_retry(&self, row_id: &str, next_attempt_at: i64) -> anyhow::Result<()> {
+        self.db.mark_outbox_failed_retry(row_id, next_attempt_at)
+    }
+    fn row_id(row: &Self::Row) -> &str {
+        &row.id
+    }
+    fn row_attempts(row: &Self::Row) -> u32 {
+        row.attempts
+    }
+    fn row_ack_key(row: &Self::Row) -> String {
+        row.mail_id.clone()
+    }
+    fn row_to_outbound(row: &Self::Row) -> PeerOutbound {
+        PeerOutbound {
+            msg: Some(peer_outbound::Msg::MailDeliver(
+                super::peer_outbox::row_to_mail_deliver(row),
+            )),
+        }
     }
 }
 
-/// Drain one namespace replication row for this peer, mirroring `pump_one`.
-async fn pump_memory(
-    registry: &Arc<PeerRegistry>,
-    peer: &Peer,
-    out_tx: &mpsc::Sender<PeerOutbound>,
-    in_flight_memory: &mut Option<(String, u32, String)>,
-) -> anyhow::Result<()> {
-    if in_flight_memory.is_some() {
-        return Ok(());
-    }
-    if let Ok(Some(p)) = registry.db.get_peer(&peer.id)
-        && p.state == PeerState::Removing
-    {
-        return Ok(());
-    }
-    let now = unix_now();
-    let Some(row) = registry.db.namespace_next_outbox(&peer.id, now)? else {
-        return Ok(());
-    };
-    registry.db.namespace_mark_outbox_in_flight(&row.id)?;
-    let deliver = MemoryDeliver {
-        op_id: row.op_id.clone(),
-        namespace: row.namespace.clone(),
-        key: row.key.clone(),
-        value: row.value.clone(),
-        lamport: row.lamport,
-        origin_daemon_id: row.origin_daemon_id.clone(),
-        deleted: row.deleted,
-        updated_by: row.updated_by.clone(),
-    };
-    if let Err(e) = out_tx
-        .send(PeerOutbound {
-            msg: Some(peer_outbound::Msg::MemoryDeliver(deliver)),
-        })
-        .await
-    {
-        let backoff = backoff_secs(row.attempts + 1);
-        let _ = registry
-            .db
-            .namespace_mark_outbox_failed_retry(&row.id, now + backoff as i64);
-        return Err(anyhow::anyhow!("send: {e}"));
-    }
-    *in_flight_memory = Some((row.id, row.attempts, row.op_id));
-    Ok(())
+/// Namespace replication backend — drives `namespace_outbox` rows over
+/// the memory channel (F2).
+struct MemoryOutbox<'a> {
+    db: &'a Database,
 }
 
-fn handle_outbox_ack(
-    registry: &Arc<PeerRegistry>,
-    peer: &Peer,
-    outbox_id: &str,
-    attempts: u32,
-    ack: &MailAck,
-) {
-    let now = unix_now();
-    if ack.ok {
-        let _ = registry.db.mark_outbox_delivered(outbox_id);
-        registry.bus.publish(StreamEvent::PeerMailForwarded {
-            peer_id: peer.id.clone(),
-            mail_id: ack.mail_id.clone(),
-            sender_seq: 0,
-        });
-    } else {
-        // `attempts` is the row's prior-failure count, so this delivery was
-        // attempt `attempts + 1`. Grow the backoff off that real number, the
-        // same way the local-send-failure path in `pump_one` does, so a
-        // persistently-unreachable peer is retried progressively less often.
-        let backoff = backoff_secs(attempts + 1);
-        let _ = registry
-            .db
-            .mark_outbox_failed_retry(outbox_id, now + backoff as i64);
-        registry.bus.publish(StreamEvent::PeerMailForwardFailed {
-            peer_id: peer.id.clone(),
-            mail_id: ack.mail_id.clone(),
-            reason: ack.reason.clone(),
-        });
-    }
-}
+impl OutboxBackend for MemoryOutbox<'_> {
+    type Row = crate::daemon::namespace_db::NsOutboxRow;
 
-async fn pump_one(
-    registry: &Arc<PeerRegistry>,
-    peer: &Peer,
-    out_tx: &mpsc::Sender<PeerOutbound>,
-    in_flight_outbox_id: &mut Option<(String, u32)>,
-    in_flight_mail_id: &mut Option<String>,
-) -> anyhow::Result<()> {
-    if in_flight_outbox_id.is_some() {
-        return Ok(());
+    fn next_row(&self, peer_id: &str, now: i64) -> anyhow::Result<Option<Self::Row>> {
+        self.db.namespace_next_outbox(peer_id, now)
     }
-    if let Ok(Some(p)) = registry.db.get_peer(&peer.id)
-        && p.state == PeerState::Removing
-    {
-        return Ok(());
+    fn mark_in_flight(&self, row_id: &str) -> anyhow::Result<()> {
+        self.db.namespace_mark_outbox_in_flight(row_id)
     }
-    let now = unix_now();
-    let Some(row) = registry.db.next_outbox_row(&peer.id, now)? else {
-        return Ok(());
-    };
-    registry.db.mark_outbox_in_flight(&row.id)?;
-    let deliver = MailDeliver {
-        mail_id: row.mail_id.clone(),
-        sender: row.sender.clone().unwrap_or_default(),
-        recipient: row.recipient.clone(),
-        body: row.body.clone(),
-        topic: row.topic.clone(),
-        sender_seq: row.sender_seq,
-    };
-    if let Err(e) = out_tx
-        .send(PeerOutbound {
-            msg: Some(peer_outbound::Msg::MailDeliver(deliver)),
-        })
-        .await
-    {
-        let backoff = backoff_secs(row.attempts + 1);
-        let _ = registry
-            .db
-            .mark_outbox_failed_retry(&row.id, now + backoff as i64);
-        return Err(anyhow::anyhow!("send: {e}"));
+    fn mark_delivered(&self, row_id: &str) -> anyhow::Result<()> {
+        self.db.namespace_mark_outbox_delivered(row_id)
     }
-    *in_flight_outbox_id = Some((row.id, row.attempts));
-    *in_flight_mail_id = Some(row.mail_id);
-    Ok(())
+    fn mark_failed_retry(&self, row_id: &str, next_attempt_at: i64) -> anyhow::Result<()> {
+        self.db.namespace_mark_outbox_failed_retry(row_id, next_attempt_at)
+    }
+    fn row_id(row: &Self::Row) -> &str {
+        &row.id
+    }
+    fn row_attempts(row: &Self::Row) -> u32 {
+        row.attempts
+    }
+    fn row_ack_key(row: &Self::Row) -> String {
+        row.op_id.clone()
+    }
+    fn row_to_outbound(row: &Self::Row) -> PeerOutbound {
+        PeerOutbound {
+            msg: Some(peer_outbound::Msg::MemoryDeliver(MemoryDeliver {
+                op_id: row.op_id.clone(),
+                namespace: row.namespace.clone(),
+                key: row.key.clone(),
+                value: row.value.clone(),
+                lamport: row.lamport,
+                origin_daemon_id: row.origin_daemon_id.clone(),
+                deleted: row.deleted,
+                updated_by: row.updated_by.clone(),
+            })),
+        }
+    }
 }
