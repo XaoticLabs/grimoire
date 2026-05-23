@@ -86,7 +86,7 @@ Here's where things actually stand.
 
 **Works today:** summon, standing agents, wake triggers (cron / file / completion / mail / inbound webhook), pacts, scrolls, mail and topics, supervision trees, workspaces and shared memory, federated namespace memory across daemons, the `grimw` worker pool, outbound notifications, a live SSE dashboard, time-travel over the durable log (`grim chronicle` / `grim replay` / `grim fork`), and a Prometheus `/metrics` endpoint. The trust layer ships on by default across all three transports — mutual TLS on the gRPC peer and worker links — with negotiated protocol versioning.
 
-**Partial:** Federated namespaces replicate writes made after `ns federate`, but there's no initial-state snapshot for a peer joining a populated namespace yet, and concurrent writes to one key resolve last-write-wins rather than surfacing the conflict. Metrics ships Prometheus only; OTel tracing export is not wired.
+**Partial:** Federated namespaces replicate writes made after `ns federate`, but there's no initial-state snapshot for a peer joining a populated namespace yet, and concurrent writes to one key resolve last-write-wins rather than surfacing the conflict. Federated *workspaces* are mid-build: the schema and operator surface (`grim workspace federate` / `federate-subscribe` / `unfederate`, plus the `Local | Shadow` workspace kind) shipped in F3a, but the event flow that actually wakes a remote agent on a file change in another daemon's workspace is F3b/F3c — the next concrete pickup. Metrics ships Prometheus only; OTel tracing export is not wired.
 
 **Not built yet:**
 - Sandboxing. A cwd jail, cgroups, per-agent resource limits.
