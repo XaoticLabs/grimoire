@@ -1,3 +1,4 @@
+#![allow(unreachable_pub)] // shared via `mod support` in each test crate; pub is load-bearing
 // Test-only helper. Spins a tonic gRPC server implementing the WorkerControl
 // service against `127.0.0.1:0`, captures the worker's bidi stream, and
 // exposes a queue of received `WorkerMessage`s plus a sender for outbound

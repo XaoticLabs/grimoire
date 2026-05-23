@@ -14,9 +14,9 @@ use clap::{Parser, Subcommand};
 /// already running.
 const DAEMON_AUTOSTART_POLL: Duration = Duration::from_millis(500);
 
-mod cli;
-mod daemon;
-mod shared;
+pub mod cli;
+pub mod daemon;
+pub mod shared;
 
 #[derive(Parser)]
 #[command(name = "grim", about = "Grimoire — AI Agent Orchestrator")]
