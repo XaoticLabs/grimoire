@@ -67,7 +67,6 @@ const COUNTER_KINDS: &[(&str, &str, &str)] = &[
 pub fn render(db: &Database, started_at: Instant, version: &str) -> String {
     let mut out = String::with_capacity(2048);
 
-    // Build info — pinned to 1, version in a label, the standard idiom.
     let _ = writeln!(out, "# HELP grimoire_build_info Grimoire build info.");
     let _ = writeln!(out, "# TYPE grimoire_build_info gauge");
     let _ = writeln!(out, "grimoire_build_info{{version=\"{version}\"}} 1");

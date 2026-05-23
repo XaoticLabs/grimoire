@@ -1,4 +1,4 @@
-//! Task 3 contract tests: scheduler tick_supervision + restart_dispatch.
+//! Contract tests for scheduler tick_supervision + restart_dispatch.
 
 use std::path::PathBuf;
 use std::sync::Arc;

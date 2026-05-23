@@ -130,7 +130,6 @@ async fn run_once(
         .await?
         .into_inner();
 
-    // Wait for HelloAck.
     let Some(ack_msg) = inbound.message().await? else {
         return Err(anyhow::anyhow!("stream closed before HelloAck"));
     };
@@ -421,7 +420,7 @@ impl OutboxBackend for MailOutbox<'_> {
 }
 
 /// Namespace replication backend — drives `namespace_outbox` rows over
-/// the memory channel (F2).
+/// the memory channel.
 struct MemoryOutbox<'a> {
     db: &'a Database,
 }

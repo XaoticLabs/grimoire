@@ -1,7 +1,4 @@
-// RED tests for worker-pool spec, Task 5: `WorkerRegistry`.
-//
-// References types that do not yet exist (`WorkerRegistry`, `Worker`,
-// `WorkerId`, `RegisterRequest`, etc.).
+// Tests for `WorkerRegistry`.
 
 use std::sync::Arc;
 use std::time::Duration;

@@ -1,8 +1,4 @@
-// RED tests for worker-pool spec, Task 9: config additions for daemon
-// `[worker]` block + `grimw.toml`.
-//
-// References `WorkerConfig` field on `DaemonConfig` and a future `GrimwConfig`
-// in the `grimw` module.
+// Tests for config additions: daemon `[worker]` block + `grimw.toml`.
 
 use std::sync::atomic::Ordering;
 
@@ -71,8 +67,8 @@ secret = "shh"
     );
 }
 
-// RED tests for durable-work-queue spec, Task 6: `daemon.max_concurrent_agents`
-// configuration with `serde(default)` of 8 and an `Arc<AtomicU32>` reload path.
+// Tests for `daemon.max_concurrent_agents` configuration with
+// `serde(default)` of 8 and an `Arc<AtomicU32>` reload path.
 
 #[test]
 fn daemon_config_max_concurrent_default_is_eight() {

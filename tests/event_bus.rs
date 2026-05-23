@@ -196,7 +196,7 @@ async fn late_subscriber_misses_earlier_events() {
 }
 
 // ---------------------------------------------------------------------------
-// Durable event log — writer task wired into EventBus (Task 3)
+// Durable event log — writer task wired into EventBus
 // ---------------------------------------------------------------------------
 
 fn count_events(db: &Database) -> i64 {
@@ -327,7 +327,7 @@ async fn mixed_variants_all_persisted() {
 }
 
 // ---------------------------------------------------------------------------
-// Restart recovery publishes a StateChange event per failed agent (Task 4)
+// Restart recovery publishes a StateChange event per failed agent
 // ---------------------------------------------------------------------------
 
 #[tokio::test]

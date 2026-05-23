@@ -1,8 +1,7 @@
-// RED tests for worker-pool spec, Task 2: `Executor` trait + `LocalExecutor`;
-// route `AgentManager` through it.
+// Tests for `Executor` trait + `LocalExecutor`; `AgentManager` is routed
+// through it.
 //
-// References types that do not yet exist (`Executor`, `ExecuteRequest`,
-// `ExecutorHandle`, `LocalExecutor`). Gated with `#![cfg(any())]` until the
+// Gated with `#![cfg(any())]` until the
 // GREEN phase begins; remove the gate to activate.
 
 use std::path::PathBuf;
@@ -121,7 +120,7 @@ async fn agent_manager_summon_uses_executor() {
     let manager =
         AgentManager::new_with_executor(db.clone(), bus, Config::default(), executor).await;
 
-    // Post Task 8: summon is split into enqueue (queue write) + dispatch
+    // summon is split into enqueue (queue write) + dispatch
     // (executor call). The scheduler normally drives dispatch; here we mirror
     // its claim+dispatch sequence by hand to keep the test focused on the
     // executor wire-up.

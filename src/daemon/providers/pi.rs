@@ -1,4 +1,4 @@
-//! Tier-1 adapter for Earendil Works' `pi` coding agent CLI.
+//! Adapter for Earendil Works' `pi` coding agent CLI.
 //!
 //! pi has a native session model with a JSONL session tree
 //! (`~/.pi/agent/sessions/`) and resume by id/path, so this is a `Native`

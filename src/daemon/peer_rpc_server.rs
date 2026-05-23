@@ -109,9 +109,7 @@ impl PeerService for PeerSvc {
             peer_name: peer.name.clone(),
         });
 
-        // Set up the inbound→client → outbound→server pipe.
         let (out_tx, out_rx) = mpsc::channel::<Result<PeerInbound, Status>>(64);
-        // Send HelloAck first.
         let _ = out_tx
             .send(Ok(PeerInbound {
                 msg: Some(peer_inbound::Msg::HelloAck(HelloAck {
@@ -159,7 +157,7 @@ impl PeerService for PeerSvc {
                             .await;
                     }
                     Some(peer_outbound::Msg::MemoryDeliver(d)) => {
-                        // F2: inbound namespace replication. Apply via LWW
+                        // Inbound namespace replication. Apply via LWW
                         // (idempotent) and ack on the same stream.
                         let ack =
                             super::peer_client::apply_memory_deliver(&db, &peer_id_for_loop, &d);

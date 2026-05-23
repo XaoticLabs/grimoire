@@ -1,7 +1,7 @@
-//! Federation Task 3 contract tests: schema, dedupe, cascade.
+//! Contract tests for federation schema, dedupe, and cascade.
 //!
 //! Boots a fresh `Database` against a tempdir and asserts the four
-//! federation tables exist and behave per spec (UNIQUE on
+//! federation tables exist and behave correctly (UNIQUE on
 //! `(peer_id, sender_seq)`, PK dedupe on `peer_inbox`, FK cascade from
 //! `peers` to `peer_outbox`).
 
@@ -118,9 +118,9 @@ fn topic_federation_direction_merge_idempotent() {
     assert_eq!(dir2, FederationDirection::Both);
 }
 
-/// F3a — `workspace_federations` mirrors `topic_federations`: Outbound +
-/// Inbound merges to Both, and the row is keyed UNIQUE on
-/// (peer_id, workspace_id) so a re-federate is an upsert, not a duplicate.
+/// `workspace_federations` mirrors `topic_federations`: Outbound + Inbound
+/// merges to Both, and the row is keyed UNIQUE on (peer_id, workspace_id)
+/// so a re-federate is an upsert, not a duplicate.
 #[test]
 fn workspace_federation_merges_and_lists() {
     use chrono::Utc;
@@ -190,10 +190,10 @@ fn workspace_federation_merges_and_lists() {
     );
 }
 
-/// F3a — a Shadow workspace row carries `home_daemon_id` +
-/// `home_workspace_id`, lives at the `shadow://…` sentinel path, and
-/// roundtrips through `get_workspace`. `kind=Local` is the default for
-/// every pre-F3a row per the migration.
+/// A Shadow workspace row carries `home_daemon_id` + `home_workspace_id`,
+/// lives at the `shadow://…` sentinel path, and roundtrips through
+/// `get_workspace`. `kind=Local` is the default for every pre-existing row
+/// per the migration.
 #[test]
 fn shadow_workspace_roundtrips() {
     use chrono::Utc;

@@ -1,4 +1,4 @@
-// Contract tests for `daemon::scheduler` (Task 7 of durable-work-queue spec).
+// Contract tests for `daemon::scheduler`.
 //
 // These tests drive the scheduler through its test-mode `tick_now()` entry
 // point so timing is deterministic. The scheduler depends on a `Dispatcher`

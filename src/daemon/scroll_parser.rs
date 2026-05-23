@@ -119,7 +119,6 @@ pub fn parse_scroll(content: &str) -> Result<ScrollSpec> {
         }
     }
 
-    // Check for self-dependencies
     for task in &tasks {
         if task.depends_on.contains(&task.name) {
             return Err(anyhow!("Task '{}' cannot depend on itself", task.name));

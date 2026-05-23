@@ -1,19 +1,17 @@
 //! Generic per-peer outbox drainer.
 //!
-//! Both the federation mail path (F1) and the namespace replication path
-//! (F2) follow the same shape: a `pending` row is claimed by flipping it
-//! to `in_flight`, shipped as a single `PeerOutbound` frame, and resolved
-//! on the matching ack — `delivered` on success, `pending` with bumped
-//! `attempts` + `next_attempt_at` on failure. Phase 3 adds three more
-//! drainers (workspace events, agent lifecycle, scroll dispatch); rather
-//! than clone the loop a fourth and fifth time, the per-table specifics
-//! live behind [`OutboxBackend`] and the common loop body lives in
-//! [`pump_one_row`] / [`handle_ack_outcome`].
+//! Both the federation mail path and the namespace replication path follow
+//! the same shape: a `pending` row is claimed by flipping it to `in_flight`,
+//! shipped as a single `PeerOutbound` frame, and resolved on the matching
+//! ack — `delivered` on success, `pending` with bumped `attempts` +
+//! `next_attempt_at` on failure. The per-table specifics live behind
+//! [`OutboxBackend`] and the common loop body lives in [`pump_one_row`] /
+//! [`handle_ack_outcome`].
 //!
 //! Bus-event emission (mail's `PeerMailForwarded` / `PeerMailForwardFailed`)
 //! is intentionally kept at the call site, not on the trait — memory has
-//! no equivalent and the future drainers each carry their own
-//! observability needs.
+//! no equivalent and other drainers each carry their own observability
+//! needs.
 
 use tokio::sync::mpsc;
 
@@ -22,8 +20,7 @@ use crate::shared::types::PeerOutboxRow;
 
 use super::persistence::unix_now;
 
-/// Computed retry delay for the `attempts`-th failure (1-based). Caps at
-/// 60s (federation-spec ambiguity table).
+/// Computed retry delay for the `attempts`-th failure (1-based). Caps at 60s.
 pub fn backoff_secs(attempts: u32) -> u64 {
     let exp = 1u64 << attempts.saturating_sub(1).min(6);
     exp.min(60)
@@ -50,7 +47,7 @@ pub fn row_to_mail_deliver(row: &PeerOutboxRow) -> crate::shared::peer_proto::Ma
 /// What the per-peer client task remembers about a row it has shipped
 /// and is waiting on an ack for. Single in-flight slot per drainer keeps
 /// the wire serial — the receiving side only needs to ack one outstanding
-/// row at a time (federation-spec §3.4).
+/// row at a time.
 #[derive(Debug, Clone)]
 pub struct InFlight {
     /// Outbox row PK (used to drive `mark_delivered` / `mark_failed_retry`).

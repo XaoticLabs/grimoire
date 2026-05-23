@@ -1,7 +1,4 @@
-//! Task 4 contract tests: mail.send reserved-prefix guard.
-//!
-//! We exercise the RPC handler directly by spinning up the daemon
-//! components and sending RpcRequests.
+//! Contract tests for the mail.send reserved-prefix guard.
 
 use std::path::PathBuf;
 use std::sync::Arc;

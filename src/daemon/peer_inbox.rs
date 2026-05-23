@@ -1,4 +1,4 @@
-//! Federation inbound mail handler (Task 9).
+//! Federation inbound mail handler.
 //!
 //! When a `MailDeliver` arrives over the peer channel:
 //! 1. Validate body size and recipient shape.

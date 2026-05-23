@@ -1,4 +1,4 @@
-//! Task 6 contract tests: handle_summon validation.
+//! Contract tests for handle_summon validation.
 
 use std::sync::Arc;
 

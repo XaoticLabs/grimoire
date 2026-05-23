@@ -1,6 +1,4 @@
-// RED tests for worker-pool spec, Task 5: daemon-side worker RPC server.
-//
-// References `worker_rpc_server` startup helpers and proto types from Task 3.
+// Tests for the daemon-side worker RPC server.
 
 use std::sync::Arc;
 use std::time::Duration;

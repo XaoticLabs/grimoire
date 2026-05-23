@@ -179,7 +179,6 @@ impl PeerRegistry {
         self.db.insert_peer(&peer)?;
         self.ensure_connected(&peer).await?;
 
-        // Wait for handshake to complete (Active) or timeout.
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(timeout_secs);
         loop {
             match self.db.get_peer_by_name(name)? {

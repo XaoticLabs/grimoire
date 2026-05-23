@@ -1,4 +1,4 @@
-//! Task 5 contract tests: replay_pending_on_boot.
+//! Contract tests for replay_pending_on_boot.
 
 use std::sync::Arc;
 

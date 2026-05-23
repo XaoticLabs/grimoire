@@ -134,7 +134,6 @@ impl ScrollKeeper {
             tasks.push(task);
         }
 
-        // Insert dependency edges
         for task_spec in &spec.tasks {
             let task_id = &name_to_id[&task_spec.name];
             for dep_name in &task_spec.depends_on {
@@ -216,7 +215,6 @@ impl ScrollKeeper {
 
         let tasks = self.db.get_tasks_for_scroll(scroll_id)?;
 
-        // Build name map for dependency display
         let id_to_name: HashMap<String, String> = tasks
             .iter()
             .map(|r| (r.id.clone(), r.name.clone()))
@@ -304,7 +302,6 @@ impl ScrollKeeper {
             return;
         }
 
-        // Check if scroll is done
         let tasks = match self.db.get_tasks_for_scroll(&task.scroll_id) {
             Ok(r) => r,
             Err(e) => {
@@ -369,10 +366,8 @@ impl ScrollKeeper {
 
         let _ = self.db.update_task_state(&task.id, &TaskState::Failed);
 
-        // Skip all downstream tasks
         self.skip_downstream(&task.id);
 
-        // Check if scroll is done
         let Ok(tasks) = self.db.get_tasks_for_scroll(&task.scroll_id) else {
             return;
         };
@@ -441,7 +436,6 @@ impl ScrollKeeper {
                 break;
             }
 
-            // Check for file conflicts with active tasks
             let has_conflict = active_tasks
                 .iter()
                 .any(|active| TaskConflict::detect(active, task).is_some());
@@ -454,7 +448,6 @@ impl ScrollKeeper {
                 continue;
             }
 
-            // Spawn agent for this task
             let cwd_opt = task.cwd.as_ref().map(PathBuf::from);
             let cwd = self.manager.resolve_cwd(cwd_opt);
 
@@ -495,7 +488,6 @@ impl ScrollKeeper {
         let edges = self.db.get_all_dependencies_for_scroll(scroll_id)?;
         let tasks = self.db.get_tasks_for_scroll(scroll_id)?;
 
-        // Build adjacency list
         let mut adj: HashMap<String, Vec<String>> = HashMap::new();
         let all_ids: HashSet<String> = tasks.iter().map(|r| r.id.clone()).collect();
 

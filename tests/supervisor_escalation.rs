@@ -1,4 +1,4 @@
-//! Task 4 contract tests: escalation mail + depth propagation.
+//! Contract tests for escalation mail + depth propagation.
 
 use std::path::PathBuf;
 use std::sync::Arc;

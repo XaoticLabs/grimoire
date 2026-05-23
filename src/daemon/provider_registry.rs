@@ -20,8 +20,8 @@ impl ProviderRegistry {
 
         let mut providers: HashMap<String, Arc<dyn Provider>> = HashMap::new();
 
-        // Always register the built-in Tier-1 native-resume adapters. Their
-        // names are reserved: a `[providers.*]` config entry may not shadow them
+        // Always register the built-in native-resume adapters. Their names
+        // are reserved: a `[providers.*]` config entry may not shadow them
         // (doing so would swap a native-session adapter for the generic
         // transcript-replay one and silently lose resume fidelity).
         providers.insert(
@@ -33,7 +33,7 @@ impl ProviderRegistry {
             Arc::new(PiProvider::new(config.pi_binary())),
         );
 
-        // Register custom (Tier-2) providers from config via the generic adapter.
+        // Register custom providers from config via the generic adapter.
         for (name, provider_config) in &config.providers {
             if RESERVED.contains(&name.as_str()) {
                 tracing::warn!(

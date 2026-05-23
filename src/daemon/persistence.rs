@@ -145,19 +145,16 @@ impl Database {
             ",
         )?;
 
-        // Migration: add provider column if missing (for existing DBs)
         let has_provider: bool = conn.prepare("SELECT provider FROM agents LIMIT 0").is_ok();
         if !has_provider {
             conn.execute_batch("ALTER TABLE agents ADD COLUMN provider TEXT;")?;
         }
 
-        // Migration: add worker_id column if missing.
         let has_worker_id: bool = conn.prepare("SELECT worker_id FROM agents LIMIT 0").is_ok();
         if !has_worker_id {
             conn.execute_batch("ALTER TABLE agents ADD COLUMN worker_id TEXT;")?;
         }
 
-        // Scroll tables
         conn.execute_batch(
             "
             CREATE TABLE IF NOT EXISTS scrolls (
@@ -287,9 +284,6 @@ impl Database {
             ",
         )?;
 
-        // Migration: add keep_alive column if missing (Task 8 — additive,
-        // landed in this migration block so a fresh DB and an upgraded DB
-        // both end up with the column present).
         let has_keep_alive: bool = conn
             .prepare("SELECT keep_alive FROM agents LIMIT 0")
             .is_ok();
@@ -299,7 +293,6 @@ impl Database {
             )?;
         }
 
-        // Supervision columns (Task 1 of supervision-trees).
         let has_restart_policy: bool = conn
             .prepare("SELECT restart_policy FROM agents LIMIT 0")
             .is_ok();
@@ -343,7 +336,6 @@ impl Database {
             )?;
         }
 
-        // Workspace tables (shared-memory-workspaces v1).
         conn.execute_batch(
             "
             CREATE TABLE IF NOT EXISTS workspaces (
@@ -379,7 +371,7 @@ impl Database {
             CREATE INDEX IF NOT EXISTS workspace_assignments_by_agent
                 ON workspace_assignments (agent_id);
 
-            -- Federation (Task 3): peer link metadata, outbox, inbox, topic federations.
+            -- Federation: peer link metadata, outbox, inbox, topic federations.
             CREATE TABLE IF NOT EXISTS peers (
                 id                  TEXT PRIMARY KEY,
                 daemon_id           TEXT NOT NULL,
@@ -432,7 +424,7 @@ impl Database {
             CREATE INDEX IF NOT EXISTS topic_federations_by_topic
                 ON topic_federations(topic);
 
-            -- F2: federated namespace memory. A namespace is a string-named KV
+            -- Federated namespace memory. A namespace is a string-named KV
             -- store decoupled from git workspaces; it can replicate to peers.
             -- Conflict resolution is last-write-wins on the (lamport,
             -- origin_daemon_id) tuple. Deletes are tombstones (deleted=1) so
@@ -504,11 +496,9 @@ impl Database {
             conn.execute_batch("ALTER TABLE agents ADD COLUMN workspace_id TEXT;")?;
         }
 
-        // F3a: workspaces gain `kind` (Local | Shadow) + home pointers so a
-        // peer daemon can store a thin "shadow" row pointing at a workspace
-        // homed on another daemon. Shadows have no on-disk worktree — the
-        // path column is filled with a sentinel `shadow://<home-id>/<ws-id>`
-        // so the existing UNIQUE constraint still holds.
+        // Shadow workspaces have no on-disk worktree — the path column is
+        // filled with a sentinel `shadow://<home-id>/<ws-id>` so the
+        // existing UNIQUE constraint still holds.
         let has_kind: bool = conn.prepare("SELECT kind FROM workspaces LIMIT 0").is_ok();
         if !has_kind {
             conn.execute_batch(
@@ -517,10 +507,6 @@ impl Database {
                  ALTER TABLE workspaces ADD COLUMN home_workspace_id TEXT;",
             )?;
         }
-        // F3a: per-peer federation rows. The home daemon owns the
-        // `Outbound`-direction rows (it ships events out); a peer with an
-        // `Inbound` row is allowed to apply incoming events to its local
-        // shadow. Direction follows the topic_federations precedent.
         conn.execute_batch(
             "CREATE TABLE IF NOT EXISTS workspace_federations (
                 id           TEXT PRIMARY KEY,
@@ -1357,9 +1343,9 @@ impl Database {
         Ok(())
     }
 
-    /// Per-agent token-bucket row used by the rate limiter (Task 6).
-    /// Returns `(tokens, last_refill_at, capacity, refill_per_sec)`. If the
-    /// row doesn't exist yet, it is created at full capacity.
+    /// Per-agent token-bucket row used by the rate limiter. Returns
+    /// `(tokens, last_refill_at, capacity, refill_per_sec)`. If the row
+    /// doesn't exist yet, it is created at full capacity.
     pub fn get_or_init_rate_limit(&self, agent_id: &str, now: i64) -> Result<(f64, i64, i64, f64)> {
         let mut conn = self.conn.lock();
         let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
@@ -1565,10 +1551,10 @@ impl Database {
     }
 
     /// Insert multiple mail rows + per-peer `peer_outbox` fanout rows in a
-    /// single IMMEDIATE transaction (federation Task 12). Each `mail.seq`
-    /// is computed per recipient; each outbox `sender_seq` is computed
-    /// per `peer_id`. Returns the list of `(peer_id, outbox_id)` pairs
-    /// inserted so callers can emit per-row events.
+    /// single IMMEDIATE transaction. Each `mail.seq` is computed per
+    /// recipient; each outbox `sender_seq` is computed per `peer_id`.
+    /// Returns the list of `(peer_id, outbox_id)` pairs inserted so callers
+    /// can emit per-row events.
     pub fn insert_mail_batch_with_outbox(
         &self,
         mails: &[Mail],
@@ -1990,9 +1976,6 @@ impl Database {
     /// Used by boot replay to skip re-escalation.
     pub fn has_escalated_event_after_latest_history(&self, agent_id: &str) -> Result<bool> {
         let conn = self.conn.lock();
-        // Find the latest restart_history attempted_at; we'll compare to the
-        // event's `ts` (RFC3339 string). For determinism we lookup the most
-        // recent event by id rather than timestamp.
         let latest_history_ts: Option<String> = conn
             .query_row(
                 "SELECT MAX(attempted_at) FROM restart_history WHERE agent_id = ?1",
@@ -2719,7 +2702,6 @@ mod tests {
         let db = test_db();
         db.insert_agent(&make_agent("rse11111")).unwrap();
 
-        // A small mix: a state change, two stdout lines, a notification.
         let events = [
             StreamEvent::StateChange {
                 agent_id: "rse11111".into(),

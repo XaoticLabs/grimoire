@@ -93,7 +93,6 @@ pub async fn run(
 
     let (tx, rx) = mpsc::channel::<WorkerMessage>(64);
 
-    // Send Register first.
     tx.send(WorkerMessage {
         kind: Some(worker_message::Kind::Register(Register {
             worker_id: worker_id.clone(),

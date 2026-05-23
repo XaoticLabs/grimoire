@@ -1,7 +1,6 @@
-// GREEN tests for worker-pool spec, Task 4: `grimw` binary.
-//
-// Drives the `grimw` library entry against a fake daemon gRPC server
-// (in-process, see `tests/support/grimw_fake_daemon.rs`).
+// Tests for the `grimw` binary: drives the `grimw` library entry against a
+// fake daemon gRPC server (in-process, see
+// `tests/support/grimw_fake_daemon.rs`).
 
 #[path = "support/grimw_fake_daemon.rs"]
 mod grimw_fake_daemon;

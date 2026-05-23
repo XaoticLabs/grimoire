@@ -1,4 +1,4 @@
-//! Federation Task 9: inbox dedupe + local mail insert.
+//! Inbox dedupe + local mail insert.
 //!
 //! Drives `InboxHandler::handle_mail_deliver` with synthetic
 //! `MailDeliver` messages and asserts that replays are no-ops at the

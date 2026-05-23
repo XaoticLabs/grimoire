@@ -1,4 +1,4 @@
-//! Task 1 contract tests: new StreamEvent variants.
+//! Contract tests for the new StreamEvent variants.
 
 use grimoire::shared::protocol::StreamEvent;
 

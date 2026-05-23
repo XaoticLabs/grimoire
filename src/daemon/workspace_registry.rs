@@ -283,7 +283,6 @@ impl WorkspaceRegistry {
         // Shell out remove (tolerate failure).
         let _ = self.git.worktree_remove(&ws.repo_path, &ws.path).await;
 
-        // Delete row (cascade).
         self.db
             .delete_workspace_row(id)
             .map_err(|e| WorkspaceError(format!("db:{e}")))?;
