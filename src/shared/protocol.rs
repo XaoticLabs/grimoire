@@ -1020,6 +1020,65 @@ pub struct TopicUnfederateResult {
     pub removed: bool,
 }
 
+// --- F3a: workspace federation ---
+
+/// Home-daemon side: opt a local workspace into cross-daemon file event
+/// federation with a peer.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkspaceFederateParams {
+    pub workspace: String,
+    pub peer: String,
+    /// `inbound` | `outbound` | `both`
+    pub direction: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkspaceFederateResult {
+    pub workspace: String,
+    pub direction: String,
+}
+
+/// Consumer-daemon side: create a local shadow workspace pointing at a
+/// remote home, and pre-record the inbound federation row so events
+/// from that peer are authorized when F3b/F3c ship.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkspaceFederateSubscribeParams {
+    /// `<home-daemon-id>/<home-workspace-id>` — the canonical address of
+    /// the remote workspace this shadow tracks.
+    pub home: String,
+    pub peer: String,
+    /// Optional local alias. Defaults to `<home-workspace>-shadow`.
+    #[serde(default)]
+    pub alias: Option<String>,
+    /// Optional branch label (display only — no worktree on disk).
+    #[serde(default = "default_shadow_branch")]
+    pub branch: String,
+}
+
+fn default_shadow_branch() -> String {
+    "main".into()
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[allow(clippy::struct_field_names)] // all three fields legitimately end in `_id`
+pub struct WorkspaceFederateSubscribeResult {
+    /// Local workspace id assigned to the new shadow row.
+    pub local_workspace_id: String,
+    pub home_daemon_id: String,
+    pub home_workspace_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkspaceUnfederateParams {
+    pub workspace: String,
+    pub peer: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkspaceUnfederateResult {
+    pub removed: bool,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

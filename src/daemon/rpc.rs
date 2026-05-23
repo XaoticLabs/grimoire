@@ -108,6 +108,11 @@ pub async fn handle_rpc(
         "workspace.list" => handle_workspace_list(workspace_registry, req),
         "workspace.destroy" => handle_workspace_destroy(workspace_registry, req).await,
         "workspace.assign" => handle_workspace_assign(workspace_registry, req).await,
+        "workspace.federate" => handle_workspace_federate(peer_registry, req).await,
+        "workspace.federate-subscribe" => {
+            handle_workspace_federate_subscribe(peer_registry, req).await
+        }
+        "workspace.unfederate" => handle_workspace_unfederate(peer_registry, req).await,
         "memory.put" => handle_memory_put(db, bus, req),
         "memory.get" => handle_memory_get(db, req),
         "memory.list" => handle_memory_list(db, req),
@@ -1724,6 +1729,159 @@ async fn handle_topic_unfederate(
             }
             RpcResponse::success_json(req.id, &TopicUnfederateResult { removed })
         }
+        Err(e) => RpcResponse::error(req.id, -32000, format!("unfederate: {e}")),
+    }
+}
+
+// --- F3a: workspace federation ---
+
+/// Home-daemon-side opt-in: this workspace's file events will fan out
+/// to `peer` per `direction`. The drainer + producer (F3b) is not yet
+/// wired — this slice only records the intent so cross-machine subscribe
+/// can be set up ahead of the event flow landing.
+async fn handle_workspace_federate(
+    peer_registry: &Arc<PeerRegistry>,
+    req: RpcRequest,
+) -> RpcResponse {
+    use crate::shared::types::{FederationDirection, WorkspaceKind};
+    let params: WorkspaceFederateParams = match parse_params(&req) {
+        Ok(p) => p,
+        Err(e) => return e,
+    };
+    let direction: FederationDirection = match params.direction.parse() {
+        Ok(d) => d,
+        Err(_) => return rpc_err(req.id, "invalid_direction"),
+    };
+    let ws = match peer_registry.db.get_workspace(&params.workspace) {
+        Ok(Some(w)) => w,
+        Ok(None) => return rpc_err(req.id, "workspace_not_found"),
+        Err(e) => return RpcResponse::error(req.id, -32000, format!("db: {e}")),
+    };
+    // Only the *home* of a workspace can opt it into outbound federation —
+    // shadows already point at a remote home and would re-export events
+    // they don't originate.
+    if matches!(ws.kind, WorkspaceKind::Shadow) {
+        return rpc_err(req.id, "workspace_is_shadow_cannot_federate");
+    }
+    let peer = match peer_registry.db.get_peer_by_name(&params.peer) {
+        Ok(Some(p)) => p,
+        Ok(None) => return rpc_err(req.id, "peer_not_found"),
+        Err(e) => return RpcResponse::error(req.id, -32000, format!("db: {e}")),
+    };
+    let id = crate::shared::constants::generate_short_id();
+    let now = unix_now();
+    let final_dir = match peer_registry.db.upsert_workspace_federation(
+        &id,
+        &peer.id,
+        &params.workspace,
+        direction,
+        now,
+    ) {
+        Ok(d) => d,
+        Err(e) => return RpcResponse::error(req.id, -32000, format!("federate: {e}")),
+    };
+    RpcResponse::success_json(
+        req.id,
+        &WorkspaceFederateResult {
+            workspace: params.workspace,
+            direction: final_dir.as_str().to_string(),
+        },
+    )
+}
+
+/// Consumer-daemon-side: create a local shadow workspace pointing at a
+/// remote home, and pre-record an Inbound federation row so events from
+/// that peer are authorized on arrival (F3c). Caller supplies the
+/// `<home-daemon-id>/<home-ws-id>` pair as a single `home` field
+/// matching the `agent://`-style address shape.
+async fn handle_workspace_federate_subscribe(
+    peer_registry: &Arc<PeerRegistry>,
+    req: RpcRequest,
+) -> RpcResponse {
+    use crate::shared::types::FederationDirection;
+    let params: WorkspaceFederateSubscribeParams = match parse_params(&req) {
+        Ok(p) => p,
+        Err(e) => return e,
+    };
+    let Some((home_daemon_id, home_workspace_id)) = params.home.split_once('/') else {
+        return rpc_err(req.id, "invalid_home_address_expected_daemon/workspace");
+    };
+    if !crate::shared::types::validate_daemon_id(home_daemon_id) {
+        return rpc_err(req.id, "invalid_home_daemon_id");
+    }
+    if home_workspace_id.is_empty() {
+        return rpc_err(req.id, "invalid_home_workspace_id");
+    }
+    let peer = match peer_registry.db.get_peer_by_name(&params.peer) {
+        Ok(Some(p)) => p,
+        Ok(None) => return rpc_err(req.id, "peer_not_found"),
+        Err(e) => return RpcResponse::error(req.id, -32000, format!("db: {e}")),
+    };
+
+    let local_id = params
+        .alias
+        .unwrap_or_else(|| format!("{home_workspace_id}-shadow"));
+
+    // Insert the shadow row first so an existing-id collision fails before
+    // we touch the federations table.
+    if let Err(e) = peer_registry.db.insert_shadow_workspace(
+        &local_id,
+        home_daemon_id,
+        home_workspace_id,
+        &params.branch,
+        chrono::Utc::now(),
+    ) {
+        // SQLite UNIQUE violation (id or path) surfaces as a clear error.
+        return RpcResponse::error(req.id, -32000, format!("insert_shadow: {e}"));
+    }
+
+    let fed_id = crate::shared::constants::generate_short_id();
+    if let Err(e) = peer_registry.db.upsert_workspace_federation(
+        &fed_id,
+        &peer.id,
+        &local_id,
+        FederationDirection::Inbound,
+        unix_now(),
+    ) {
+        // Best-effort rollback so we don't leave a dangling shadow row.
+        let _ = peer_registry.db.delete_workspace_row(&local_id);
+        return RpcResponse::error(req.id, -32000, format!("federate_subscribe: {e}"));
+    }
+    RpcResponse::success_json(
+        req.id,
+        &WorkspaceFederateSubscribeResult {
+            local_workspace_id: local_id,
+            home_daemon_id: home_daemon_id.to_string(),
+            home_workspace_id: home_workspace_id.to_string(),
+        },
+    )
+}
+
+/// Symmetric to `topic.unfederate`: run on each side independently to
+/// drop the federation row. Does *not* delete the shadow workspace row
+/// — that's an explicit `workspace destroy` so an operator doesn't lose
+/// historical chronicle attribution by accident.
+async fn handle_workspace_unfederate(
+    peer_registry: &Arc<PeerRegistry>,
+    req: RpcRequest,
+) -> RpcResponse {
+    let params: WorkspaceUnfederateParams = match parse_params(&req) {
+        Ok(p) => p,
+        Err(e) => return e,
+    };
+    let peer = match peer_registry.db.get_peer_by_name(&params.peer) {
+        Ok(Some(p)) => p,
+        Ok(None) => return rpc_err(req.id, "peer_not_found"),
+        Err(e) => return RpcResponse::error(req.id, -32000, format!("db: {e}")),
+    };
+    match peer_registry
+        .db
+        .delete_workspace_federation(&peer.id, &params.workspace)
+    {
+        Ok(n) => RpcResponse::success_json(
+            req.id,
+            &WorkspaceUnfederateResult { removed: n > 0 },
+        ),
         Err(e) => RpcResponse::error(req.id, -32000, format!("unfederate: {e}")),
     }
 }
