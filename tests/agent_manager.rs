@@ -372,6 +372,7 @@ async fn invoke_context_replay_prepends_transcript_and_no_native_resume() {
             args_template: vec!["{task}".to_string()],
             env: HashMap::new(),
             sandbox: None,
+                pricing: None,
         },
     );
 

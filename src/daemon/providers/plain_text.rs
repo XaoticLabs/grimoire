@@ -111,6 +111,7 @@ mod tests {
                 args_template: vec!["--msg".to_string(), "{task}".to_string()],
                 env: HashMap::new(),
                 sandbox: None,
+                pricing: None,
             },
         )
     }

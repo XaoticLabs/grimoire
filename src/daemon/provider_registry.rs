@@ -124,6 +124,7 @@ impl ProviderRegistry {
                     args_template: vec![],
                     env: HashMap::new(),
                 sandbox: None,
+                pricing: None,
                 },
             )),
         );
@@ -159,6 +160,7 @@ mod tests {
                 args_template: vec!["--message".to_string(), "{task}".to_string()],
                 env: HashMap::new(),
                 sandbox: None,
+                pricing: None,
             },
         );
 
@@ -187,6 +189,7 @@ mod tests {
                 args_template: vec!["{task}".to_string()],
                 env: HashMap::new(),
                 sandbox: None,
+                pricing: None,
             },
         );
 
@@ -213,6 +216,7 @@ mod tests {
                 args_template: vec![],
                 env: HashMap::new(),
                 sandbox: None,
+                pricing: None,
             },
         );
 

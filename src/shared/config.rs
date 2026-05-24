@@ -26,6 +26,15 @@ pub struct Config {
     /// the webhook surface closed.
     #[serde(default)]
     pub webhooks: HashMap<String, WebhookConfig>,
+    /// Per-budget daily USD caps gated at agent dispatch. Keyed by budget
+    /// name (e.g. `team-frontend`). Empty (default) leaves spend unbounded.
+    #[serde(default)]
+    pub budgets: HashMap<String, BudgetConfig>,
+    /// Allow/deny rules enforced at `agent.summon`. None (default) permits
+    /// every provider and every cwd; a missing field inside the struct
+    /// likewise means "no restriction on this dimension."
+    #[serde(default)]
+    pub policy: Option<PolicyConfig>,
 }
 
 /// One inbound webhook → mail bridge. Each entry exposes one endpoint at
@@ -174,6 +183,87 @@ pub struct ProviderConfig {
     /// rather than fail if they are not.
     #[serde(default)]
     pub sandbox: Option<SandboxConfig>,
+    /// Token → USD pricing used to attribute spend to `[budgets.*]`. When
+    /// unset, runs through this provider record token usage but do not
+    /// charge a budget — useful for free local models.
+    #[serde(default)]
+    pub pricing: Option<ProviderPricing>,
+}
+
+/// Price list for one provider, in USD per million tokens. Mirrors the
+/// numbers vendors publish on their pricing pages so operators can paste
+/// them in. Cache-hit and cache-creation prices fall back to `input` when
+/// omitted (most callers don't care to distinguish at config time).
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ProviderPricing {
+    /// USD per 1 000 000 input tokens.
+    pub input_per_mtok: f64,
+    /// USD per 1 000 000 output tokens.
+    pub output_per_mtok: f64,
+    /// USD per 1 000 000 cache-read tokens. Defaults to `input_per_mtok / 10`
+    /// (the typical 90% cache-read discount) when unset.
+    #[serde(default)]
+    pub cache_read_per_mtok: Option<f64>,
+    /// USD per 1 000 000 cache-creation tokens. Defaults to
+    /// `input_per_mtok * 1.25` (the typical creation premium) when unset.
+    #[serde(default)]
+    pub cache_creation_per_mtok: Option<f64>,
+}
+
+impl ProviderPricing {
+    /// Resolve cache prices, applying the documented defaults.
+    pub fn cache_read(&self) -> f64 {
+        self.cache_read_per_mtok
+            .unwrap_or(self.input_per_mtok / 10.0)
+    }
+    pub fn cache_creation(&self) -> f64 {
+        self.cache_creation_per_mtok
+            .unwrap_or(self.input_per_mtok * 1.25)
+    }
+}
+
+/// One daily-windowed USD spend cap shared across an arbitrary set of
+/// providers. Each completed agent attributes its run cost to *every*
+/// budget whose `providers` list includes the run's provider; at dispatch
+/// time, any matching budget whose today's spend has reached `daily_usd`
+/// refuses new work (`hard`) or just warns (`soft`).
+///
+/// "Day" boundaries are UTC midnight today — calendar-day windows are
+/// what operators reason about for monthly bills.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BudgetConfig {
+    /// Maximum USD that may be spent across this budget's providers in one
+    /// UTC day. Floats are accepted so operators can paste `0.50`.
+    pub daily_usd: f64,
+    /// Providers this budget governs. Empty = governs every provider.
+    #[serde(default)]
+    pub providers: Vec<String>,
+    /// `true` (default) → dispatch is refused once today's spend ≥ cap.
+    /// `false` → exceeding the cap just logs at WARN; useful for staging.
+    #[serde(default = "default_true")]
+    pub hard: bool,
+}
+
+/// Allow/deny rules enforced at `agent.summon`. Both `*_allow` and `*_deny`
+/// can be empty: an empty `allow` means "no allowlist (everything passes
+/// the allow check)"; an empty `deny` means "nothing is denied." When both
+/// are populated, `deny` wins on conflicts.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct PolicyConfig {
+    /// If non-empty, the agent's provider must be in this set.
+    #[serde(default)]
+    pub provider_allow: Vec<String>,
+    /// Providers explicitly forbidden, even if they are also allow-listed.
+    #[serde(default)]
+    pub provider_deny: Vec<String>,
+    /// If non-empty, the agent's `cwd` must lie under one of these prefixes
+    /// (compared as canonical absolute paths).
+    #[serde(default)]
+    pub cwd_allow_prefixes: Vec<PathBuf>,
+    /// `cwd` prefixes that may never host an agent (e.g. `/etc`, `/`,
+    /// `infra/`). Deny wins on conflict with `cwd_allow_prefixes`.
+    #[serde(default)]
+    pub cwd_deny_prefixes: Vec<PathBuf>,
 }
 
 /// Per-agent resource and capability limits, modelled after the parts of
