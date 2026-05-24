@@ -33,8 +33,8 @@ pub async fn run(json: bool) -> Result<()> {
     }
 
     println!(
-        "{:<14} {:<8} {:<10} {:<6} {}",
-        "AGENT", "PID", "STATE", "ALIVE", "TASK"
+        "{:<14} {:<8} {:<10} {:<6} TASK",
+        "AGENT", "PID", "STATE", "ALIVE"
     );
     for p in result.processes {
         let agent = p.agent_id.chars().take(12).collect::<String>();
@@ -45,7 +45,12 @@ pub async fn run(json: bool) -> Result<()> {
             p.pid,
             p.state,
             alive,
-            p.task.as_deref().unwrap_or("").chars().take(60).collect::<String>(),
+            p.task
+                .as_deref()
+                .unwrap_or("")
+                .chars()
+                .take(60)
+                .collect::<String>(),
         );
         if p.stuck {
             println!("{} {}", row.yellow(), "STUCK".red().bold());

@@ -40,7 +40,9 @@ pub async fn run(cmd: TopicCommand) -> Result<()> {
 
 async fn run_federations() -> Result<()> {
     let mut client = DaemonClient::connect().await?;
-    let resp = client.call("topic.federations", serde_json::json!({})).await?;
+    let resp = client
+        .call("topic.federations", serde_json::json!({}))
+        .await?;
     if let Some(err) = resp.error {
         return Err(anyhow!("topic federations failed: {}", err.message));
     }

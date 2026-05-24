@@ -18,10 +18,10 @@ pub fn format_text(resp: &StatusResponse) -> String {
         resp.max_concurrent_agents,
         resp.workers.len(),
     );
+    let _ = writeln!(out, "Workers ({})", resp.workers.len());
     if resp.workers.is_empty() {
-        out.push_str("Workers: 0 (running local-only).\n");
+        out.push_str("  (running local-only)\n");
     } else {
-        let _ = writeln!(out, "Workers ({})", resp.workers.len());
         for w in &resp.workers {
             let id_short: String = w.worker_id.chars().take(6).collect();
             let _ = writeln!(

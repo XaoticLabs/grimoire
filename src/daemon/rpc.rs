@@ -2018,10 +2018,7 @@ async fn handle_ns_delete(
     RpcResponse::success_json(req.id, &crate::shared::protocol::NsDeleteResult::default())
 }
 
-async fn handle_ns_unfederate(
-    peer_registry: &Arc<PeerRegistry>,
-    req: RpcRequest,
-) -> RpcResponse {
+async fn handle_ns_unfederate(peer_registry: &Arc<PeerRegistry>, req: RpcRequest) -> RpcResponse {
     let params: crate::shared::protocol::NsUnfederateParams = try_params!(req);
     let peer = try_rpc!(resolve_peer(req.id, peer_registry, &params.peer).await);
     let peer_id = peer.id.clone();
@@ -2339,7 +2336,7 @@ async fn handle_topic_federations(
 ) -> RpcResponse {
     match peer_registry
         .db
-        .run(|db| db.list_topic_federations())
+        .run(super::persistence::Database::list_topic_federations)
         .await
     {
         Ok(federations) => RpcResponse::success_json(
@@ -2350,13 +2347,10 @@ async fn handle_topic_federations(
     }
 }
 
-async fn handle_ns_federations(
-    peer_registry: &Arc<PeerRegistry>,
-    req: RpcRequest,
-) -> RpcResponse {
+async fn handle_ns_federations(peer_registry: &Arc<PeerRegistry>, req: RpcRequest) -> RpcResponse {
     match peer_registry
         .db
-        .run(|db| db.list_namespace_federations())
+        .run(super::persistence::Database::list_namespace_federations)
         .await
     {
         Ok(federations) => RpcResponse::success_json(
@@ -2373,7 +2367,7 @@ async fn handle_workspace_federations(
 ) -> RpcResponse {
     match peer_registry
         .db
-        .run(|db| db.list_workspace_federations())
+        .run(super::persistence::Database::list_workspace_federations)
         .await
     {
         Ok(federations) => RpcResponse::success_json(
