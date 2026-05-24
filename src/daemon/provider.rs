@@ -4,6 +4,7 @@ use std::path::Path;
 use tokio::process::Command;
 
 use super::process_manager::SpawnedAgent;
+use crate::shared::config::SandboxConfig;
 
 /// Identity injected into a spawned agent's environment so the agent can call
 /// back into `grim` (mail, memory, notify) knowing who it is — without the
@@ -13,6 +14,10 @@ use super::process_manager::SpawnedAgent;
 #[derive(Debug, Clone, Default)]
 pub struct AgentContext {
     pub agent_id: String,
+    /// Optional per-spawn confinement (cgroup limits, fs jail, budgets).
+    /// Providers should call [`crate::daemon::sandbox::apply_resource_limits`]
+    /// on the built `Command` so any resource caps are enforced.
+    pub sandbox: Option<SandboxConfig>,
 }
 
 impl AgentContext {
@@ -102,6 +107,7 @@ mod tests {
     fn apply_env_sets_agent_id() {
         let ctx = AgentContext {
             agent_id: "abc12345".to_string(),
+            ..AgentContext::default()
         };
         let mut cmd = Command::new("true");
         ctx.apply_env(&mut cmd);

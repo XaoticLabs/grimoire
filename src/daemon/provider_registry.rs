@@ -10,6 +10,7 @@ use super::providers::plain_text::PlainTextProvider;
 
 pub struct ProviderRegistry {
     providers: HashMap<String, Arc<dyn Provider>>,
+    sandboxes: HashMap<String, crate::shared::config::SandboxConfig>,
     default: String,
 }
 
@@ -19,6 +20,17 @@ impl ProviderRegistry {
         const RESERVED: [&str; 2] = ["claude", "pi"];
 
         let mut providers: HashMap<String, Arc<dyn Provider>> = HashMap::new();
+        let mut sandboxes: HashMap<String, crate::shared::config::SandboxConfig> = HashMap::new();
+
+        // `[providers.claude.sandbox]` / `[providers.pi.sandbox]` may configure
+        // the built-in adapters even though those aren't built from `ProviderConfig`.
+        for name in RESERVED {
+            if let Some(pc) = config.providers.get(name)
+                && let Some(sb) = &pc.sandbox
+            {
+                sandboxes.insert(name.to_string(), sb.clone());
+            }
+        }
 
         // Always register the built-in native-resume adapters. Their names
         // are reserved: a `[providers.*]` config entry may not shadow them
@@ -50,6 +62,9 @@ impl ProviderRegistry {
                     provider_config.clone(),
                 )),
             );
+            if let Some(sb) = &provider_config.sandbox {
+                sandboxes.insert(name.clone(), sb.clone());
+            }
         }
 
         let default = config
@@ -58,7 +73,18 @@ impl ProviderRegistry {
             .clone()
             .unwrap_or_else(|| "claude".to_string());
 
-        Self { providers, default }
+        Self {
+            providers,
+            sandboxes,
+            default,
+        }
+    }
+
+    /// Per-provider [`SandboxConfig`] resolved from `[providers.<name>.sandbox]`.
+    /// Returns `None` when the provider isn't sandbox-configured, leaving the
+    /// agent unconfined (current default).
+    pub fn sandbox_for(&self, name: &str) -> Option<crate::shared::config::SandboxConfig> {
+        self.sandboxes.get(name).cloned()
     }
 
     pub fn get(&self, name: &str) -> Option<Arc<dyn Provider>> {
@@ -103,6 +129,7 @@ impl ProviderRegistry {
         );
         Self {
             providers,
+            sandboxes: HashMap::new(),
             default: "true_provider".to_string(),
         }
     }

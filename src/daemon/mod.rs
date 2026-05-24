@@ -20,6 +20,7 @@ pub mod provider;
 pub mod provider_registry;
 pub mod providers;
 pub mod rpc;
+pub mod sandbox;
 pub mod scheduler;
 pub mod scroll_keeper;
 pub mod scroll_parser;
