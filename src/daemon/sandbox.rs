@@ -31,9 +31,27 @@ fn systemd_run_available() -> bool {
     *CACHED.get_or_init(|| binary_on_path("systemd-run"))
 }
 
+/// True iff `bwrap` is on `PATH`. Memoized — probed once per process.
+fn bwrap_available() -> bool {
+    static CACHED: OnceLock<bool> = OnceLock::new();
+    *CACHED.get_or_init(|| binary_on_path("bwrap"))
+}
+
 /// True iff the sandbox has any cgroup-enforced cap that systemd-run can apply.
 const fn has_cgroup_limits(s: &SandboxConfig) -> bool {
     s.memory_max.is_some() || s.cpu_quota_percent.is_some()
+}
+
+/// Apply every layer of the sandbox config to `cmd`:
+///   1. Filesystem / network jail via `bwrap` (when `fs_jail` is set).
+///   2. Resource caps (memory, CPU) via `systemd-run --user --scope`.
+///
+/// Layers compose inside-out: bwrap rewrites first (so the resource scope
+/// wraps the jailed binary), then systemd-run is layered on the outside.
+/// Each layer no-ops cleanly when its host tool is missing.
+pub fn apply(cmd: Command, sandbox: Option<&SandboxConfig>) -> Command {
+    let cmd = apply_fs_jail(cmd, sandbox);
+    apply_resource_limits(cmd, sandbox)
 }
 
 /// Wrap `cmd` so the underlying binary runs inside a transient systemd
@@ -111,6 +129,122 @@ fn wrap_with_systemd_run(cmd: Command, s: &SandboxConfig) -> Command {
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped());
 
+    wrapped
+}
+
+/// Wrap `cmd` in `bwrap` so the binary sees only an allow-listed view of the
+/// filesystem and (optionally) no network. Off unless `sandbox.fs_jail` is set;
+/// no-ops with a one-shot warning if `bwrap` isn't on `PATH`.
+///
+/// The jail mounts:
+///   * `/usr`, `/etc`, `/lib`, `/lib64`, `/bin`, `/sbin` read-only (when they
+///     exist on the host) — enough to exec a typical CLI and read system certs.
+///   * `/proc` and `/dev` from fresh kernel filesystems.
+///   * `tmpfs` at `/tmp` and `/run`.
+///   * The agent's `current_dir` read-write.
+///   * Each `sandbox.ro_paths` entry read-only and each `sandbox.rw_paths`
+///     entry read-write.
+///
+/// `--die-with-parent` ties the jailed process to the daemon lifetime so a
+/// crashed supervisor doesn't leak running children.
+pub fn apply_fs_jail(cmd: Command, sandbox: Option<&SandboxConfig>) -> Command {
+    let Some(s) = sandbox else { return cmd };
+    if !s.fs_jail {
+        return cmd;
+    }
+    if !bwrap_available() {
+        static WARNED: OnceLock<()> = OnceLock::new();
+        WARNED.get_or_init(|| {
+            warn!(
+                "sandbox: fs_jail requested but `bwrap` not found on PATH; \
+                 spawning agent without filesystem isolation"
+            );
+        });
+        return cmd;
+    }
+    wrap_with_bwrap(cmd, s)
+}
+
+fn wrap_with_bwrap(cmd: Command, s: &SandboxConfig) -> Command {
+    let std_cmd = cmd.as_std();
+    let program = std_cmd.get_program().to_os_string();
+    let args: Vec<_> = std_cmd
+        .get_args()
+        .map(std::ffi::OsStr::to_os_string)
+        .collect();
+    let envs: Vec<(std::ffi::OsString, Option<std::ffi::OsString>)> = std_cmd
+        .get_envs()
+        .map(|(k, v)| (k.to_os_string(), v.map(std::ffi::OsStr::to_os_string)))
+        .collect();
+    let cwd = std_cmd.get_current_dir().map(std::path::Path::to_path_buf);
+
+    let mut wrapped = Command::new("bwrap");
+    wrapped.arg("--die-with-parent").arg("--new-session");
+
+    // Network namespace: deny by default, share-net opts in.
+    if s.allow_network {
+        wrapped.arg("--share-net");
+    } else {
+        wrapped.arg("--unshare-net");
+    }
+
+    // System libs / config: bind read-only when present on host.
+    for sys in ["/usr", "/etc", "/lib", "/lib64", "/bin", "/sbin"] {
+        if std::path::Path::new(sys).exists() {
+            wrapped.arg("--ro-bind").arg(sys).arg(sys);
+        }
+    }
+    wrapped
+        .arg("--proc")
+        .arg("/proc")
+        .arg("--dev")
+        .arg("/dev")
+        .arg("--tmpfs")
+        .arg("/tmp")
+        .arg("--tmpfs")
+        .arg("/run");
+
+    // Agent CWD is always read-write — the agent has to be able to do work.
+    if let Some(dir) = &cwd {
+        wrapped.arg("--bind").arg(dir).arg(dir);
+        wrapped.arg("--chdir").arg(dir);
+    }
+
+    for p in &s.ro_paths {
+        wrapped.arg("--ro-bind").arg(p).arg(p);
+    }
+    for p in &s.rw_paths {
+        wrapped.arg("--bind").arg(p).arg(p);
+    }
+
+    // Pass env vars through with --setenv so they survive bwrap's env clear.
+    for (k, v) in &envs {
+        if let Some(val) = v {
+            wrapped.arg("--setenv").arg(k).arg(val);
+        }
+    }
+
+    wrapped.arg("--").arg(program).args(args);
+
+    // Re-apply env on the outer Command too so any downstream wrapper
+    // (systemd-run) inherits the same set.
+    for (k, v) in envs {
+        match v {
+            Some(val) => {
+                wrapped.env(k, val);
+            }
+            None => {
+                wrapped.env_remove(k);
+            }
+        }
+    }
+    if let Some(dir) = cwd {
+        wrapped.current_dir(dir);
+    }
+    wrapped
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
     wrapped
 }
 

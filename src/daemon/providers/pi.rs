@@ -74,7 +74,7 @@ impl Provider for PiProvider {
 
         ctx.apply_env(&mut cmd);
 
-        let mut cmd = crate::daemon::sandbox::apply_resource_limits(cmd, ctx.sandbox.as_ref());
+        let mut cmd = crate::daemon::sandbox::apply(cmd, ctx.sandbox.as_ref());
         let child = cmd.spawn()?;
         let pid = child.id().unwrap_or(0);
         Ok(SpawnedAgent { child, pid })
@@ -103,7 +103,7 @@ impl Provider for PiProvider {
 
         ctx.apply_env(&mut cmd);
 
-        let mut cmd = crate::daemon::sandbox::apply_resource_limits(cmd, ctx.sandbox.as_ref());
+        let mut cmd = crate::daemon::sandbox::apply(cmd, ctx.sandbox.as_ref());
         let child = cmd.spawn()?;
         let pid = child.id().unwrap_or(0);
         Ok(SpawnedAgent { child, pid })
