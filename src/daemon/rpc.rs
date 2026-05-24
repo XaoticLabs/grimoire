@@ -88,12 +88,11 @@ fn compute_mail_state(
     }
 }
 
-/// Build a freshly-stamped local outbound `Mail` row. `seq` is set by the
-/// insert path; `delivered_at` is derived from `state` so all send paths
-/// agree on the invariants.
-#[allow(clippy::too_many_arguments)]
-fn new_outbound_mail(
-    mail_id: String,
+/// Operator-facing fields of a freshly-built outbound mail row, before the
+/// daemon mints the `id` and `created_at`. Replaces what used to be ten
+/// positional arguments to `new_outbound_mail` — every call site now reads
+/// like prose and a new field doesn't ripple through every caller.
+struct MailDraft {
     recipient_id: String,
     sender: Option<String>,
     topic: Option<String>,
@@ -101,27 +100,31 @@ fn new_outbound_mail(
     state: MailState,
     fail_reason: Option<&'static str>,
     wake_eligible: bool,
-    now: i64,
     in_reply_to: Option<String>,
-) -> Mail {
-    let delivered_at = if state == MailState::Pending {
+}
+
+/// Stamp a [`MailDraft`] with `mail_id` and `now`, deriving `delivered_at`
+/// from `state` so every send path agrees on the invariants. `seq` is set
+/// by the insert path.
+fn new_outbound_mail(draft: MailDraft, mail_id: String, now: i64) -> Mail {
+    let delivered_at = if draft.state == MailState::Pending {
         None
     } else {
         Some(now)
     };
     Mail {
         id: mail_id,
-        recipient_id,
-        sender_id: sender,
-        topic,
-        body,
-        in_reply_to,
-        state,
-        fail_reason: fail_reason.map(str::to_string),
+        recipient_id: draft.recipient_id,
+        sender_id: draft.sender,
+        topic: draft.topic,
+        body: draft.body,
+        in_reply_to: draft.in_reply_to,
+        state: draft.state,
+        fail_reason: draft.fail_reason.map(str::to_string),
         created_at: now,
         delivered_at,
         seq: 0,
-        wake_eligible,
+        wake_eligible: draft.wake_eligible,
     }
 }
 
@@ -1158,16 +1161,18 @@ fn handle_direct_send(
     let now = unix_now();
     let (state, fail_reason) = compute_mail_state(agent.as_ref());
     let mail = new_outbound_mail(
+        MailDraft {
+            recipient_id,
+            sender: params.sender.clone(),
+            topic: None,
+            body: params.body.clone(),
+            state,
+            fail_reason,
+            wake_eligible,
+            in_reply_to: params.in_reply_to.clone(),
+        },
         mail_id.clone(),
-        recipient_id,
-        params.sender.clone(),
-        None,
-        params.body.clone(),
-        state,
-        fail_reason,
-        wake_eligible,
         now,
-        params.in_reply_to.clone(),
     );
 
     if let Err(e) = db.insert_mail(&mail) {
@@ -1231,16 +1236,18 @@ async fn handle_topic_send(
             delivered += 1;
         }
         mails.push(new_outbound_mail(
+            MailDraft {
+                recipient_id: sub.subscriber_id.clone(),
+                sender: params.sender.clone(),
+                topic: Some(topic.clone()),
+                body: params.body.clone(),
+                state,
+                fail_reason,
+                wake_eligible,
+                in_reply_to: params.in_reply_to.clone(),
+            },
             crate::shared::constants::generate_short_id(),
-            sub.subscriber_id.clone(),
-            params.sender.clone(),
-            Some(topic.clone()),
-            params.body.clone(),
-            state,
-            fail_reason,
-            wake_eligible,
             now,
-            params.in_reply_to.clone(),
         ));
     }
 
@@ -1824,16 +1831,18 @@ async fn handle_federated_direct_send(
     let recipient_addr = format!("agent://grimd-{target_daemon}/{agent_id}");
 
     let mail = new_outbound_mail(
+        MailDraft {
+            recipient_id: recipient_addr.clone(),
+            sender: params.sender.clone(),
+            topic: None,
+            body: params.body.clone(),
+            state: MailState::Pending,
+            fail_reason: None,
+            wake_eligible,
+            in_reply_to: params.in_reply_to.clone(),
+        },
         mail_id.clone(),
-        recipient_addr.clone(),
-        params.sender.clone(),
-        None,
-        params.body.clone(),
-        MailState::Pending,
-        None,
-        wake_eligible,
         now,
-        params.in_reply_to.clone(),
     );
 
     if let Err(e) =
