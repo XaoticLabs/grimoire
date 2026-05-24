@@ -261,6 +261,7 @@ pub async fn handle_rpc(
         "scroll.abandon" => handle_scroll_abandon(scroll_keeper, req).await,
         "daemon.status" => handle_status(manager, daemon_id, req).await,
         "agent.queue.list" => handle_queue_list(db, req),
+        "budget.list" => handle_budget_list(manager, db, req),
         "mail.send" => handle_mail_send(db, bus, peer_registry, daemon_id, req).await,
         "mail.ask" => handle_mail_ask(db, bus, peer_registry, daemon_id, req).await,
         "mail.tender" => handle_mail_tender(db, bus, peer_registry, daemon_id, req).await,
@@ -798,6 +799,34 @@ fn handle_replay(db: &Arc<Database>, req: RpcRequest) -> RpcResponse {
 /// `unknown_recipient`, …) as the message text so callers can match on it.
 fn rpc_err(req_id: u64, code: &str) -> RpcResponse {
     RpcResponse::error(req_id, -32000, code.to_string())
+}
+
+/// Snapshot every configured budget with its USD cap and today's running
+/// spend. Read-only; runs against the same `budget_spend` rows the
+/// dispatch-time gate consults.
+fn handle_budget_list(
+    manager: &Arc<AgentManager>,
+    db: &Arc<Database>,
+    req: RpcRequest,
+) -> RpcResponse {
+    let today = chrono::Utc::now().format("%Y-%m-%d").to_string();
+    let mut budgets: Vec<crate::shared::protocol::BudgetStatus> = manager
+        .budgets()
+        .iter()
+        .map(|(name, b)| crate::shared::protocol::BudgetStatus {
+            name: name.clone(),
+            daily_usd: b.daily_usd,
+            spent_usd: db.get_budget_spend(name, &today).unwrap_or(0.0),
+            providers: b.providers.clone(),
+            hard: b.hard,
+        })
+        .collect();
+    budgets.sort_by(|a, b| a.name.cmp(&b.name));
+    let result = crate::shared::protocol::BudgetListResult {
+        day: today,
+        budgets,
+    };
+    RpcResponse::success_json(req.id, &result)
 }
 
 pub async fn handle_mail_send(

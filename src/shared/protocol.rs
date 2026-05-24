@@ -316,6 +316,21 @@ pub struct MailTenderParams {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BudgetStatus {
+    pub name: String,
+    pub daily_usd: f64,
+    pub spent_usd: f64,
+    pub providers: Vec<String>,
+    pub hard: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BudgetListResult {
+    pub day: String,
+    pub budgets: Vec<BudgetStatus>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MailTenderResult {
     /// Mail ids of the original tender posts (one per topic subscriber when
     /// `to` was a topic, otherwise one).

@@ -163,6 +163,13 @@ impl AgentManager {
         self.config.policy.as_ref()
     }
 
+    /// Read-only accessor on the loaded `[budgets.*]` blocks. Used by
+    /// `budget.list` to enumerate caps alongside today's spend.
+    pub fn budgets(&self) -> &std::collections::HashMap<String, crate::shared::config::BudgetConfig>
+    {
+        &self.config.budgets
+    }
+
     /// Provider name a summon without `--provider` would default to.
     /// Exposed for the policy gate so we can match the resolved name, not
     /// `None`.

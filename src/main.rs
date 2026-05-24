@@ -258,6 +258,12 @@ enum Commands {
     /// Open the web dashboard
     Scry,
 
+    /// Inspect daily USD budgets configured under `[budgets.*]`.
+    Budget {
+        #[command(subcommand)]
+        cmd: cli::commands::budget::BudgetCommand,
+    },
+
     /// Agent-to-agent messaging (send/list/ack/subscribe/unsubscribe/topics).
     Mail {
         #[command(subcommand)]
@@ -491,6 +497,7 @@ async fn main() {
                 Commands::Queue { json } => cli::commands::queue::run(json).await,
                 Commands::Tome { key, value } => cli::commands::tome::run(key, value).await,
                 Commands::Scry => cli::commands::scry::run().await,
+                Commands::Budget { cmd } => cli::commands::budget::run(cmd).await,
                 Commands::Mail { cmd } => cli::commands::mail::run(cmd).await,
                 Commands::Ask {
                     addr,
