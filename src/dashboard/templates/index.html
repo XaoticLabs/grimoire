@@ -439,6 +439,8 @@
         <a href="#/workspaces" data-route="workspaces">Workspaces</a>
         <a href="#/mail" data-route="mail">Mail</a>
         <a href="#/scrolls" data-route="scrolls">Scrolls</a>
+        <a href="#/pacts" data-route="pacts">Pacts</a>
+        <a href="#/evals" data-route="evals">Evals</a>
         <a href="#/health" data-route="health">Health</a>
         <a href="#/federation" data-route="federation">Federation</a>
         <a href="#/chronicle" data-route="chronicle">Chronicle</a>
@@ -487,6 +489,8 @@
         <div data-page="workspaces" hidden></div>
         <div data-page="mail" hidden></div>
         <div data-page="scrolls" hidden></div>
+        <div data-page="pacts" hidden></div>
+        <div data-page="evals" hidden></div>
         <div data-page="health" hidden></div>
         <div data-page="federation" hidden></div>
         <div data-page="chronicle" hidden></div>
@@ -531,6 +535,8 @@
             workspaces: { render: renderWorkspacesPage },
             mail:       { render: renderMailPage },
             scrolls:    { render: renderScrollsPage },
+            pacts:      { render: renderPactsPage },
+            evals:      { render: renderEvalsPage },
             health:     { render: renderHealthPage },
             federation: { render: renderFederationPage },
             chronicle:  { render: renderChroniclePage },
@@ -1535,6 +1541,214 @@
             refreshWorkspaces();
         }
 
+        // --- Pacts page -------------------------------------------------
+        // A pact is a parametric task template owned by a source agent that
+        // can fire to spawn a target. RPCs: pact.create, pact.list.
+        function pactStateColor(s) {
+            return ({
+                Armed:  'var(--green)',
+                Fired:  'var(--blue)',
+                Expired:'var(--text-dim)',
+            })[s] || 'var(--text-dim)';
+        }
+
+        async function refreshPacts() {
+            const tbody = document.getElementById('pact-tbody');
+            if (!tbody) return;
+            const filter = document.getElementById('pact-filter').value.trim();
+            const params = {};
+            if (filter) params.source_id = filter;
+            try {
+                const r = await grim('pact.list', params);
+                const pacts = r.pacts || [];
+                tbody.innerHTML = pacts.length
+                    ? pacts.map(p => `
+                        <tr>
+                            <td><code>${esc(p.id||'')}</code></td>
+                            <td>${esc(p.name || '')}</td>
+                            <td><code>${esc((p.source_id||'').slice(0,12))}</code></td>
+                            <td><span style="color:${pactStateColor(p.state)}">${esc(p.state||'')}</span></td>
+                            <td>${p.target_id ? '<code>' + esc(p.target_id.slice(0,12)) + '</code>' : '<span class="muted">—</span>'}</td>
+                            <td class="muted" style="font-size:0.75rem">${p.fired_at ? new Date(p.fired_at).toLocaleString() : '—'}</td>
+                            <td><code style="font-family:inherit">${esc((p.task_tpl||'').slice(0, 80))}</code></td>
+                        </tr>`).join('')
+                    : `<tr><td colspan="7" class="muted" style="text-align:center;padding:2rem">no pacts</td></tr>`;
+            } catch (e) {
+                tbody.innerHTML = `<tr><td colspan="7" class="muted">pact.list failed: ${esc(e.message)}</td></tr>`;
+            }
+        }
+
+        async function submitPactCreate() {
+            const source_id = document.getElementById('pact-source').value.trim();
+            const task_tpl = document.getElementById('pact-tpl').value.trim();
+            const name = document.getElementById('pact-name').value.trim();
+            if (!source_id || !task_tpl) { toast('source_id and task_tpl required', 'err'); return; }
+            const params = { source_id, task_tpl };
+            if (name) params.name = name;
+            try {
+                const r = await grim('pact.create', params);
+                toast('pact ' + (r?.id || 'created'), 'ok');
+                document.getElementById('pact-tpl').value = '';
+                document.getElementById('pact-name').value = '';
+                refreshPacts();
+            } catch (e) {
+                toast('pact.create failed: ' + e.message, 'err');
+            }
+        }
+
+        function renderPactsPage() {
+            const el = document.querySelector('[data-page="pacts"]');
+            if (!el.dataset.rendered) {
+                el.innerHTML = `
+                    <div class="card">
+                        <h3>Create pact</h3>
+                        <div class="form-grid">
+                            <label for="pact-source">Source agent</label>
+                            <input id="pact-source" type="text" placeholder="agent-xxxxxx (owner)">
+                            <label for="pact-name">Name</label>
+                            <input id="pact-name" type="text" placeholder="(optional)">
+                            <label for="pact-tpl">Task template</label>
+                            <textarea id="pact-tpl" rows="3" placeholder="task text — fires later as a fresh agent" style="font-family:inherit;resize:vertical"></textarea>
+                            <div class="form-actions">
+                                <button class="btn" onclick="submitPactCreate()">Create</button>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="card">
+                        <h3>Pacts</h3>
+                        <div style="display:flex;gap:0.5rem;margin-bottom:0.75rem;align-items:center">
+                            <label class="muted" style="font-size:0.8rem">Filter by source:</label>
+                            <input id="pact-filter" type="text" placeholder="agent-xxxxxx (blank = all)" style="background:var(--bg);border:1px solid var(--border);border-radius:4px;padding:0.4rem 0.6rem;color:var(--text);font-family:inherit;font-size:0.85rem;flex:1;max-width:24rem">
+                            <button class="btn btn-sm" onclick="refreshPacts()">Refresh</button>
+                        </div>
+                        <table class="grid-table">
+                            <thead><tr><th>ID</th><th>Name</th><th>Source</th><th>State</th><th>Target</th><th>Fired</th><th>Template</th></tr></thead>
+                            <tbody id="pact-tbody"></tbody>
+                        </table>
+                    </div>
+                    <p class="muted" style="font-size:0.8rem;color:var(--text-dim);margin-top:1rem">
+                        Equivalent CLI: <code>grim pact create</code>, <code>grim pact list</code>.
+                    </p>
+                `;
+                el.dataset.rendered = '1';
+            }
+            refreshPacts();
+        }
+
+        // --- Evals page -------------------------------------------------
+        // eval.list is per-target. Take an agent id, show all verdicts.
+        function evalScoreColor(s) {
+            if (s == null) return 'var(--text-dim)';
+            if (s >= 0.8) return 'var(--green)';
+            if (s >= 0.5) return 'var(--yellow)';
+            return 'var(--red)';
+        }
+
+        async function loadEvals() {
+            const target_id = document.getElementById('eval-target').value.trim();
+            const body = document.getElementById('eval-body');
+            if (!target_id) { toast('target id required', 'err'); return; }
+            body.innerHTML = '<div class="muted">loading…</div>';
+            try {
+                const r = await grim('eval.list', { target_id });
+                const results = r.results || [];
+                if (!results.length) {
+                    body.innerHTML = '<div class="muted">no evals recorded for this agent</div>';
+                    return;
+                }
+                const avg = results.reduce((a, x) => a + (x.score || 0), 0) / results.length;
+                body.innerHTML = `
+                    <div class="muted" style="margin-bottom:0.75rem">${results.length} verdict${results.length===1?'':'s'} · mean score <strong style="color:${evalScoreColor(avg)}">${avg.toFixed(2)}</strong></div>
+                    <table class="grid-table">
+                        <thead><tr><th>When</th><th>Evaluator</th><th>Score</th><th>Verdict</th><th>Rationale</th></tr></thead>
+                        <tbody>${results.map(e => `
+                            <tr>
+                                <td class="muted" style="font-size:0.75rem">${new Date(e.created_at*1000).toLocaleString()}</td>
+                                <td><code>${esc((e.evaluator_id||'').slice(0,12))}</code></td>
+                                <td><span style="color:${evalScoreColor(e.score)};font-weight:500">${(e.score ?? 0).toFixed(2)}</span></td>
+                                <td>${e.verdict ? '<span class="badge">' + esc(e.verdict) + '</span>' : '<span class="muted">—</span>'}</td>
+                                <td><code style="font-family:inherit">${esc((e.rationale||'').slice(0,200))}</code></td>
+                            </tr>`).join('')}</tbody>
+                    </table>
+                `;
+            } catch (e) {
+                body.innerHTML = `<div class="muted">eval.list failed: ${esc(e.message)}</div>`;
+            }
+        }
+
+        async function submitEvalRecord() {
+            const target_id = document.getElementById('ev-target').value.trim();
+            const evaluator_id = document.getElementById('ev-eval').value.trim();
+            const scoreStr = document.getElementById('ev-score').value.trim();
+            const verdict = document.getElementById('ev-verdict').value.trim();
+            const rationale = document.getElementById('ev-rationale').value;
+            const score = parseFloat(scoreStr);
+            if (!target_id || !evaluator_id || isNaN(score)) {
+                toast('target, evaluator, and numeric score are required', 'err');
+                return;
+            }
+            const params = { target_id, evaluator_id, score };
+            if (verdict) params.verdict = verdict;
+            if (rationale.trim()) params.rationale = rationale;
+            try {
+                await grim('eval.record', params);
+                toast('recorded', 'ok');
+                document.getElementById('ev-score').value = '';
+                document.getElementById('ev-verdict').value = '';
+                document.getElementById('ev-rationale').value = '';
+                // If the user is currently viewing this target, refresh
+                if (document.getElementById('eval-target').value.trim() === target_id) loadEvals();
+            } catch (e) {
+                toast('eval.record failed: ' + e.message, 'err');
+            }
+        }
+
+        function renderEvalsPage(rest) {
+            const el = document.querySelector('[data-page="evals"]');
+            if (!el.dataset.rendered) {
+                el.innerHTML = `
+                    <div class="card">
+                        <h3>List verdicts for an agent</h3>
+                        <div class="form-grid" style="grid-template-columns: 90px 1fr auto">
+                            <label for="eval-target">Target ID</label>
+                            <input id="eval-target" type="text" placeholder="agent-xxxxxx">
+                            <button class="btn btn-sm" onclick="loadEvals()">Load</button>
+                        </div>
+                    </div>
+                    <div class="card" id="eval-body">
+                        <div class="muted">enter a target agent id above and click Load</div>
+                    </div>
+                    <div class="card">
+                        <h3>Record verdict</h3>
+                        <div class="form-grid">
+                            <label for="ev-target">Target</label>
+                            <input id="ev-target" type="text" placeholder="agent being judged">
+                            <label for="ev-eval">Evaluator</label>
+                            <input id="ev-eval" type="text" placeholder="agent doing the judging">
+                            <label for="ev-score">Score</label>
+                            <input id="ev-score" type="number" step="0.01" placeholder="0.0 – 1.0">
+                            <label for="ev-verdict">Verdict</label>
+                            <input id="ev-verdict" type="text" placeholder="(optional, e.g. pass/fail/regress)">
+                            <label for="ev-rationale">Rationale</label>
+                            <textarea id="ev-rationale" rows="3" placeholder="(optional)" style="font-family:inherit;resize:vertical"></textarea>
+                            <div class="form-actions">
+                                <button class="btn" onclick="submitEvalRecord()">Record</button>
+                            </div>
+                        </div>
+                    </div>
+                    <p class="muted" style="font-size:0.8rem;color:var(--text-dim);margin-top:1rem">
+                        Equivalent CLI: <code>grim eval --list &lt;target&gt;</code>, <code>grim eval record …</code>.
+                    </p>
+                `;
+                el.dataset.rendered = '1';
+            }
+            const id = rest && rest[0];
+            if (id) {
+                document.getElementById('eval-target').value = id;
+                loadEvals();
+            }
+        }
+
         // --- Federation page --------------------------------------------
         // Peers + cross-daemon federations (namespaces, workspaces, topics).
         // RPCs: peer.add/list/remove/ping/local-cert, ns.list, ns.federate,
@@ -2045,7 +2259,7 @@
                         ? `<div class="agent-card-live" style="color:var(--blue)">${esc(latest)}</div>`
                         : '');
                 return `
-                    <div class="agent-card" onclick="showAgent('${esc(a.id)}')">
+                    <div class="agent-card" onclick="location.hash='#/agents/${esc(a.id)}'">
                         <div class="agent-card-top">
                             <span class="agent-id">${esc(a.id)}</span>
                             <span class="agent-state state-${esc(a.state)}">${esc(a.state)}</span>
@@ -2078,7 +2292,38 @@
             } else {
                 invokeSection.style.display = 'none';
             }
+            // Deep links to other pages scoped to this agent.
+            if (currentAgentId) {
+                const id = currentAgentId;
+                html += `
+                    <a class="btn btn-sm" style="background:var(--surface2);color:var(--text);text-decoration:none;margin-left:0.5rem" href="#/chronicle/${encodeURIComponent(id)}">Chronicle</a>
+                    <a class="btn btn-sm" style="background:var(--surface2);color:var(--text);text-decoration:none" href="#/evals/${encodeURIComponent(id)}">Evals</a>
+                    <button class="btn btn-sm" style="background:var(--surface2);color:var(--text)" onclick="goToMailFor('${escAttr(id)}')">Mail</button>`;
+            }
             detailActions.innerHTML = html;
+        }
+
+        // Switch to the Mail tab with this agent pre-selected as the inbox.
+        async function goToMailFor(agent_id) {
+            location.hash = '#/mail';
+            // wait one tick for the page to render its <select>
+            setTimeout(async () => {
+                await refreshMailAgents();
+                const sel = document.getElementById('mail-agent');
+                if (sel) {
+                    // Ensure the option exists (the agent may not be in the
+                    // "circle" if it's already complete).
+                    if (![...sel.options].some(o => o.value === agent_id)) {
+                        const opt = document.createElement('option');
+                        opt.value = agent_id;
+                        opt.textContent = agent_id + ' (deep link)';
+                        sel.appendChild(opt);
+                    }
+                    sel.value = agent_id;
+                    currentMailAgent = agent_id;
+                    refreshMailInbox();
+                }
+            }, 50);
         }
 
         function showList() {
