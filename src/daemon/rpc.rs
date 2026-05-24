@@ -263,6 +263,8 @@ pub async fn handle_rpc(
         "agent.queue.list" => handle_queue_list(db, req),
         "agent.result" => handle_agent_result(manager, db, req).await,
         "budget.list" => handle_budget_list(manager, db, req),
+        "eval.record" => handle_eval_record(db, req),
+        "eval.list" => handle_eval_list(db, req),
         "mail.send" => handle_mail_send(db, bus, peer_registry, daemon_id, req).await,
         "mail.ask" => handle_mail_ask(db, bus, peer_registry, daemon_id, req).await,
         "mail.tender" => handle_mail_tender(db, bus, peer_registry, daemon_id, req).await,
@@ -800,6 +802,53 @@ fn handle_replay(db: &Arc<Database>, req: RpcRequest) -> RpcResponse {
 /// `unknown_recipient`, …) as the message text so callers can match on it.
 fn rpc_err(req_id: u64, code: &str) -> RpcResponse {
     RpcResponse::error(req_id, -32000, code.to_string())
+}
+
+/// Persist one rubric-scored evaluation, attributing the verdict from
+/// `evaluator_id` to `target_id`. Idempotency is per-call (each insert
+/// mints a new row id); callers that want dedupe should do so client-side.
+fn handle_eval_record(db: &Arc<Database>, req: RpcRequest) -> RpcResponse {
+    let params: crate::shared::protocol::EvalRecordParams = try_params!(req);
+    if db.get_agent(&params.target_id).ok().flatten().is_none() {
+        return rpc_err(req.id, "target_not_found");
+    }
+    match db.insert_eval_result(
+        &params.target_id,
+        &params.evaluator_id,
+        params.score,
+        params.verdict.as_deref(),
+        params.rationale.as_deref(),
+    ) {
+        Ok(id) => RpcResponse::success_json(
+            req.id,
+            &crate::shared::protocol::EvalRecordResult { id },
+        ),
+        Err(e) => RpcResponse::error(req.id, -32000, format!("insert_eval_result: {e}")),
+    }
+}
+
+fn handle_eval_list(db: &Arc<Database>, req: RpcRequest) -> RpcResponse {
+    let params: crate::shared::protocol::EvalListParams = try_params!(req);
+    let rows = match db.list_eval_results(&params.target_id) {
+        Ok(r) => r,
+        Err(e) => return RpcResponse::error(req.id, -32000, format!("list_eval_results: {e}")),
+    };
+    let results = rows
+        .into_iter()
+        .map(|r| crate::shared::protocol::EvalRecord {
+            id: r.id,
+            target_id: r.target_id,
+            evaluator_id: r.evaluator_id,
+            score: r.score,
+            verdict: r.verdict,
+            rationale: r.rationale,
+            created_at: r.created_at,
+        })
+        .collect();
+    RpcResponse::success_json(
+        req.id,
+        &crate::shared::protocol::EvalListResult { results },
+    )
 }
 
 /// Return the provider-extracted final result text for an agent. Mirrors

@@ -103,9 +103,9 @@ enum Commands {
         /// Target agent ID (or prefix) to evaluate
         id: String,
 
-        /// Path to the rubric markdown file
+        /// Path to the rubric markdown file. Required unless `--list` is set.
         #[arg(short, long)]
-        rubric: String,
+        rubric: Option<String>,
 
         /// Override the evaluator's provider. Defaults to the daemon default.
         #[arg(short, long)]
@@ -127,6 +127,11 @@ enum Commands {
         /// How long to wait for the evaluator to finish, in seconds.
         #[arg(long, default_value_t = 300)]
         timeout: u64,
+
+        /// List recorded evaluations for the target instead of running a
+        /// new one. Mutually exclusive with `--rubric` in practice.
+        #[arg(long)]
+        list: bool,
     },
 
     /// Fork an agent at a point in its history: spawn a new agent seeded
@@ -463,12 +468,24 @@ async fn main() {
                     name,
                     no_wait,
                     timeout,
+                    list,
                 } => {
                     let id = resolve_id(&id).await;
-                    cli::commands::eval::run(
-                        &id, &rubric, provider, model, name, !no_wait, timeout,
-                    )
-                    .await
+                    if list {
+                        cli::commands::eval::run_list(&id).await
+                    } else {
+                        match rubric {
+                            Some(rubric) => {
+                                cli::commands::eval::run(
+                                    &id, &rubric, provider, model, name, !no_wait, timeout,
+                                )
+                                .await
+                            }
+                            None => Err(anyhow::anyhow!(
+                                "--rubric is required unless --list is set"
+                            )),
+                        }
+                    }
                 }
                 Commands::Fork {
                     id,

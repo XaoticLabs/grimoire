@@ -2,7 +2,9 @@ use anyhow::{Context, Result, anyhow};
 use colored::Colorize;
 
 use crate::cli::client::DaemonClient;
-use crate::shared::protocol::{ReplayResponse, StreamEvent, SummonResult};
+use crate::shared::protocol::{
+    EvalListResult, EvalRecordResult, ReplayResponse, StreamEvent, SummonResult,
+};
 
 /// Maximum bytes of folded transcript we send to the evaluator. Tail-keep
 /// the most recent output (latest behavior dominates most rubric calls) and
@@ -139,8 +141,68 @@ pub async fn run(
     // identical to the rest of `grim`; eval runs are short-lived enough
     // that a 1 s tick is fine.
     let parsed = wait_for_verdict(&mut client, &result.id, timeout_secs).await?;
+    let record_id = record_verdict(&mut client, target_id, &result.id, &parsed).await?;
     print_verdict(&result.id, &parsed);
+    println!(
+        "  {} recorded as eval {}",
+        "↳".dimmed(),
+        record_id.dimmed()
+    );
     Ok(())
+}
+
+/// `grim eval <id> --list` — print every recorded evaluation for the
+/// target, newest first. Mirrors `grim mail list` in shape so operators
+/// can scan an agent's full review history at a glance.
+pub async fn run_list(target_id: &str) -> Result<()> {
+    let mut client = DaemonClient::connect().await?;
+    let result: EvalListResult = client
+        .call_typed("eval.list", serde_json::json!({ "target_id": target_id }))
+        .await?;
+    if result.results.is_empty() {
+        println!("no evaluations recorded for {target_id}");
+        return Ok(());
+    }
+    println!(
+        "{:<10} {:>6}  {:<8}  {:<10}  RATIONALE",
+        "EVAL".bold(),
+        "SCORE".bold(),
+        "VERDICT".bold(),
+        "EVALUATOR".bold(),
+    );
+    for r in &result.results {
+        let short_id = &r.id[..8.min(r.id.len())];
+        let short_eval = &r.evaluator_id[..8.min(r.evaluator_id.len())];
+        let verdict = r.verdict.as_deref().unwrap_or("-");
+        let rationale = r.rationale.as_deref().unwrap_or("").replace('\n', " ");
+        let trimmed: String = rationale.chars().take(80).collect();
+        println!(
+            "{:<10} {:>6.2}  {:<8}  {:<10}  {}",
+            short_id, r.score, verdict, short_eval, trimmed
+        );
+    }
+    Ok(())
+}
+
+async fn record_verdict(
+    client: &mut DaemonClient,
+    target_id: &str,
+    evaluator_id: &str,
+    v: &EvalVerdict,
+) -> Result<String> {
+    let resp: EvalRecordResult = client
+        .call_typed(
+            "eval.record",
+            serde_json::json!({
+                "target_id": target_id,
+                "evaluator_id": evaluator_id,
+                "score": v.score,
+                "verdict": v.verdict,
+                "rationale": v.rationale,
+            }),
+        )
+        .await?;
+    Ok(resp.id)
 }
 
 #[derive(Debug, serde::Deserialize, serde::Serialize)]

@@ -27,6 +27,21 @@ pub struct QueueRow {
     pub block_reason: Option<String>,
 }
 
+/// One row in the `eval_results` table — a single rubric-scored verdict
+/// from `evaluator_id` against `target_id`. Multiple verdicts per target
+/// are allowed (different rubrics / evaluators); look-ups go through
+/// `Database::list_eval_results`.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct EvalResultRow {
+    pub id: String,
+    pub target_id: String,
+    pub evaluator_id: String,
+    pub score: f64,
+    pub verdict: Option<String>,
+    pub rationale: Option<String>,
+    pub created_at: i64,
+}
+
 /// One row of the durable `events` stream log, with its payload already
 /// deserialized back into a `StreamEvent`. Returned by `read_stream_events`
 /// and consumed by the replay/chronicle path.
@@ -377,6 +392,23 @@ impl Database {
                 usd         REAL NOT NULL DEFAULT 0,
                 PRIMARY KEY (budget_name, day)
             );",
+        )?;
+        // Rubric-scored evaluations of one agent's transcript by another.
+        // Many-per-target (a target can be eval'd against different rubrics
+        // or by different evaluators), keyed by a synthetic id so callers
+        // can reference / ack a specific verdict.
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS eval_results (
+                id           TEXT PRIMARY KEY,
+                target_id    TEXT NOT NULL,
+                evaluator_id TEXT NOT NULL,
+                score        REAL NOT NULL,
+                verdict      TEXT,
+                rationale    TEXT,
+                created_at   INTEGER NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_eval_results_target
+                ON eval_results(target_id, created_at);",
         )?;
 
         conn.execute_batch(
@@ -744,6 +776,65 @@ impl Database {
             .filter_map(Result::ok)
             .collect();
         Ok(ids)
+    }
+
+    /// Insert one rubric-scored evaluation row, returning its id.
+    pub fn insert_eval_result(
+        &self,
+        target_id: &str,
+        evaluator_id: &str,
+        score: f64,
+        verdict: Option<&str>,
+        rationale: Option<&str>,
+    ) -> Result<String> {
+        let id = crate::shared::constants::generate_short_id();
+        let now = chrono::Utc::now().timestamp();
+        let conn = self.conn.lock();
+        conn.execute(
+            "INSERT INTO eval_results(id, target_id, evaluator_id, score, verdict, rationale, created_at) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            params![id, target_id, evaluator_id, score, verdict, rationale, now],
+        )?;
+        Ok(id)
+    }
+
+    /// All evals for `target_id`, newest first.
+    pub fn list_eval_results(&self, target_id: &str) -> Result<Vec<EvalResultRow>> {
+        let conn = self.conn.lock();
+        let mut stmt = conn.prepare(
+            "SELECT id, target_id, evaluator_id, score, verdict, rationale, created_at \
+             FROM eval_results WHERE target_id = ?1 ORDER BY created_at DESC",
+        )?;
+        let rows = stmt
+            .query_map(params![target_id], |r| {
+                Ok(EvalResultRow {
+                    id: r.get(0)?,
+                    target_id: r.get(1)?,
+                    evaluator_id: r.get(2)?,
+                    score: r.get(3)?,
+                    verdict: r.get(4)?,
+                    rationale: r.get(5)?,
+                    created_at: r.get(6)?,
+                })
+            })?
+            .filter_map(Result::ok)
+            .collect();
+        Ok(rows)
+    }
+
+    /// Highest score recorded for `target_id`, used by `grim circle --eval`
+    /// to surface a single representative number per agent.
+    pub fn latest_eval_score(&self, target_id: &str) -> Result<Option<f64>> {
+        let conn = self.conn.lock();
+        let row: Option<f64> = conn
+            .query_row(
+                "SELECT score FROM eval_results WHERE target_id = ?1 \
+                 ORDER BY created_at DESC LIMIT 1",
+                params![target_id],
+                |r| r.get(0),
+            )
+            .ok();
+        Ok(row)
     }
 
     /// Add `usd` to the agent's lifetime spend, returning the new total.
