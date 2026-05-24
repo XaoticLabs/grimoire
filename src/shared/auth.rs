@@ -150,12 +150,7 @@ fn read_token_file(path: &Path) -> Result<Option<String>> {
 }
 
 fn write_token_file(path: &Path, token: &str) -> Result<()> {
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-    std::fs::write(path, token)?;
-    super::fs_util::set_owner_only(path)?;
-    Ok(())
+    super::fs_util::write_secret(path, token)
 }
 
 /// 32 random bytes (256 bits) rendered as 64 lowercase hex chars, sourced

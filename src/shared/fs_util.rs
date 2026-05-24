@@ -23,3 +23,16 @@ pub fn set_owner_only(path: &Path) -> Result<()> {
 pub fn set_owner_only(_path: &Path) -> Result<()> {
     Ok(())
 }
+
+/// Persist `contents` to `path` and immediately tighten its mode to `0600`.
+/// Creates the parent directory if missing. Used for every on-disk secret
+/// (auth token, TLS cert/key, daemon id) so the permission step can't be
+/// forgotten at a call site.
+pub fn write_secret(path: &Path, contents: impl AsRef<[u8]>) -> Result<()> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(path, contents)?;
+    set_owner_only(path)?;
+    Ok(())
+}

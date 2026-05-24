@@ -175,13 +175,10 @@ pub fn load_or_init(
     }
 
     let id = generate(name)?;
-    std::fs::create_dir_all(&dir).with_context(|| format!("creating tls dir {}", dir.display()))?;
-    std::fs::write(&cp, &id.cert_pem)
+    super::fs_util::write_secret(&cp, &id.cert_pem)
         .with_context(|| format!("writing tls cert to {}", cp.display()))?;
-    std::fs::write(&kp, &id.key_pem)
+    super::fs_util::write_secret(&kp, &id.key_pem)
         .with_context(|| format!("writing tls key to {}", kp.display()))?;
-    super::fs_util::set_owner_only(&cp)?;
-    super::fs_util::set_owner_only(&kp)?;
     Ok(id)
 }
 
