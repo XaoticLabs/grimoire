@@ -988,19 +988,65 @@ pub async fn handle_mail_ask(
 ) -> RpcResponse {
     let params: crate::shared::protocol::MailAskParams = try_params!(req);
     let timeout = std::time::Duration::from_millis(params.timeout_ms.unwrap_or(30_000));
-
-    // Subscribe BEFORE sending so a fast reply can't race past us.
-    let mut events = bus.subscribe();
-
     let req_id = req.id;
+
+    let posted = match post_request_for_reply(
+        db,
+        bus,
+        peer_registry,
+        daemon_id,
+        &req,
+        &params.to,
+        &params.body,
+        params.sender.clone(),
+    )
+    .await
+    {
+        Ok(p) => p,
+        Err(resp) => return resp,
+    };
+    if posted.request_ids.is_empty() {
+        return rpc_err(req_id, "ask_no_recipients");
+    }
+
+    let replies = collect_mail_replies(db, posted.events, &posted.request_ids, timeout, 1).await;
+    match replies.into_iter().next() {
+        Some(reply) => RpcResponse::success_json(
+            req_id,
+            &crate::shared::protocol::MailAskResult { reply },
+        ),
+        None => rpc_err(req_id, "ask_timeout"),
+    }
+}
+
+/// Subscribe to the bus, send the request mail, and return the
+/// subscription handle + posted mail ids. Holding the subscriber *before*
+/// the send is the load-bearing detail: a fast reply must not race past us.
+struct PostedRequest {
+    events: tokio::sync::broadcast::Receiver<StreamEvent>,
+    request_ids: std::collections::HashSet<String>,
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn post_request_for_reply(
+    db: &Arc<Database>,
+    bus: &EventBus,
+    peer_registry: &Arc<PeerRegistry>,
+    daemon_id: &str,
+    req: &RpcRequest,
+    to: &str,
+    body: &str,
+    sender: Option<String>,
+) -> Result<PostedRequest, RpcResponse> {
+    let events = bus.subscribe();
     let send_req = RpcRequest {
-        id: req_id,
+        id: req.id,
         protocol_version: req.protocol_version,
         method: "mail.send".to_string(),
         params: serde_json::to_value(MailSendParams {
-            to: params.to.clone(),
-            body: params.body.clone(),
-            sender: params.sender.clone(),
+            to: to.to_string(),
+            body: body.to_string(),
+            sender,
             wake_eligible: Some(true),
             in_reply_to: None,
         })
@@ -1009,51 +1055,65 @@ pub async fn handle_mail_ask(
     };
     let send_resp = handle_mail_send(db, bus, peer_registry, daemon_id, send_req).await;
     if send_resp.error.is_some() {
-        return send_resp;
+        return Err(send_resp);
     }
-    let send_result: MailSendResult = match send_resp
-        .result
-        .as_ref()
-        .and_then(|v| serde_json::from_value(v.clone()).ok())
-    {
-        Some(r) => r,
-        None => return rpc_err(req_id, "mail_send_no_result"),
-    };
-    // Topic fan-out yields multiple ids; correlate on any of them.
-    let sent_ids: std::collections::HashSet<String> =
-        send_result.mail_ids.into_iter().collect();
-    if sent_ids.is_empty() {
-        return rpc_err(req_id, "ask_no_recipients");
-    }
+    let send_result: MailSendResult = serde_json::from_value(
+        send_resp
+            .result
+            .ok_or_else(|| rpc_err(req.id, "mail_send_no_result"))?,
+    )
+    .map_err(|_| rpc_err(req.id, "mail_send_no_result"))?;
+    Ok(PostedRequest {
+        events,
+        request_ids: send_result.mail_ids.into_iter().collect(),
+    })
+}
 
+/// Drain `events` until `stop_after_n` distinct replies have arrived whose
+/// `in_reply_to` matches one of `request_ids`, or `timeout` elapses. The
+/// caller decides whether zero matches is a failure (`mail.ask`) or a
+/// legitimate empty result (`mail.tender`).
+async fn collect_mail_replies(
+    db: &Database,
+    mut events: tokio::sync::broadcast::Receiver<StreamEvent>,
+    request_ids: &std::collections::HashSet<String>,
+    timeout: std::time::Duration,
+    stop_after_n: usize,
+) -> Vec<Mail> {
+    let mut out: Vec<Mail> = Vec::new();
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
     let deadline = tokio::time::Instant::now() + timeout;
-    loop {
+    while out.len() < stop_after_n {
         let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
         if remaining.is_zero() {
-            return rpc_err(req_id, "ask_timeout");
+            break;
         }
         let recv = match tokio::time::timeout(remaining, events.recv()).await {
             Ok(Ok(ev)) => ev,
-            Ok(Err(_lagged_or_closed)) => continue,
-            Err(_) => return rpc_err(req_id, "ask_timeout"),
+            // Lagged subscribers can still catch later events; closed bus
+            // means no more replies will ever arrive — both treated the
+            // same here, with the deadline as the real exit condition.
+            Ok(Err(_)) => continue,
+            Err(_) => break,
         };
         let mail_id = match &recv {
             StreamEvent::MailReceived { mail_id, .. }
             | StreamEvent::MailDelivered { mail_id, .. } => mail_id.clone(),
             _ => continue,
         };
-        let mail = match db.get_mail(&mail_id) {
-            Ok(Some(m)) => m,
-            _ => continue,
+        if !seen.insert(mail_id.clone()) {
+            continue;
+        }
+        let Ok(Some(mail)) = db.get_mail(&mail_id) else {
+            continue;
         };
-        match &mail.in_reply_to {
-            Some(rt) if sent_ids.contains(rt) => {
-                let result = crate::shared::protocol::MailAskResult { reply: mail };
-                return RpcResponse::success_json(req_id, &result);
-            }
-            _ => continue,
+        if let Some(rt) = &mail.in_reply_to
+            && request_ids.contains(rt)
+        {
+            out.push(mail);
         }
     }
+    out
 }
 
 /// Multi-bid auction over the mailbox. Posts `params.body` to `params.to`
@@ -1070,74 +1130,30 @@ pub async fn handle_mail_tender(
 ) -> RpcResponse {
     let params: crate::shared::protocol::MailTenderParams = try_params!(req);
     let deadline = std::time::Duration::from_millis(params.deadline_ms.unwrap_or(30_000));
-
-    let mut events = bus.subscribe();
-
     let req_id = req.id;
-    let send_req = RpcRequest {
-        id: req_id,
-        protocol_version: req.protocol_version,
-        method: "mail.send".to_string(),
-        params: serde_json::to_value(MailSendParams {
-            to: params.to.clone(),
-            body: params.body.clone(),
-            sender: params.sender.clone(),
-            wake_eligible: Some(true),
-            in_reply_to: None,
-        })
-        .unwrap(),
-        auth_token: req.auth_token.clone(),
-    };
-    let send_resp = handle_mail_send(db, bus, peer_registry, daemon_id, send_req).await;
-    if send_resp.error.is_some() {
-        return send_resp;
-    }
-    let send_result: MailSendResult = match send_resp
-        .result
-        .as_ref()
-        .and_then(|v| serde_json::from_value(v.clone()).ok())
-    {
-        Some(r) => r,
-        None => return rpc_err(req_id, "mail_send_no_result"),
-    };
-    let request_ids: std::collections::HashSet<String> =
-        send_result.mail_ids.iter().cloned().collect();
 
-    let mut bids: Vec<Mail> = Vec::new();
-    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
-    let deadline_at = tokio::time::Instant::now() + deadline;
-    loop {
-        let remaining = deadline_at.saturating_duration_since(tokio::time::Instant::now());
-        if remaining.is_zero() {
-            break;
-        }
-        let recv = match tokio::time::timeout(remaining, events.recv()).await {
-            Ok(Ok(ev)) => ev,
-            Ok(Err(_)) => continue,
-            Err(_) => break,
-        };
-        let mail_id = match &recv {
-            StreamEvent::MailReceived { mail_id, .. }
-            | StreamEvent::MailDelivered { mail_id, .. } => mail_id.clone(),
-            _ => continue,
-        };
-        if seen.contains(&mail_id) {
-            continue;
-        }
-        let mail = match db.get_mail(&mail_id) {
-            Ok(Some(m)) => m,
-            _ => continue,
-        };
-        if let Some(rt) = &mail.in_reply_to
-            && request_ids.contains(rt)
-        {
-            seen.insert(mail_id);
-            bids.push(mail);
-        }
-    }
+    let posted = match post_request_for_reply(
+        db,
+        bus,
+        peer_registry,
+        daemon_id,
+        &req,
+        &params.to,
+        &params.body,
+        params.sender.clone(),
+    )
+    .await
+    {
+        Ok(p) => p,
+        Err(resp) => return resp,
+    };
+    let request_mail_ids: Vec<String> = posted.request_ids.iter().cloned().collect();
+
+    let bids =
+        collect_mail_replies(db, posted.events, &posted.request_ids, deadline, usize::MAX).await;
 
     let result = crate::shared::protocol::MailTenderResult {
-        request_mail_ids: send_result.mail_ids,
+        request_mail_ids,
         bids,
     };
     RpcResponse::success_json(req_id, &result)
