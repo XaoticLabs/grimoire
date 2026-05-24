@@ -104,6 +104,39 @@ pub trait Provider: Send + Sync {
     fn extract_usage(&self, _stdout_lines: &[String]) -> Option<u64> {
         None
     }
+
+    /// Per-bucket token counts (input / output / cache-read / cache-creation)
+    /// used to attribute USD spend against `[providers.<name>.pricing]`.
+    /// Optional — providers that only report a total return `None` here and
+    /// budgets fall back to charging at `input_per_mtok` for the whole run.
+    fn extract_token_breakdown(&self, _stdout_lines: &[String]) -> Option<TokenBreakdown> {
+        None
+    }
+}
+
+/// Per-bucket token usage for one agent run. Fields match the pricing axes
+/// vendors publish; missing buckets stay at zero.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct TokenBreakdown {
+    pub input: u64,
+    pub output: u64,
+    pub cache_read: u64,
+    pub cache_creation: u64,
+}
+
+impl TokenBreakdown {
+    pub const fn total(&self) -> u64 {
+        self.input + self.output + self.cache_read + self.cache_creation
+    }
+
+    /// Apply `pricing` (USD per 1 000 000 tokens) and return the spend in USD.
+    pub fn cost_usd(&self, pricing: &crate::shared::config::ProviderPricing) -> f64 {
+        let m = 1_000_000.0_f64;
+        (self.input as f64) * pricing.input_per_mtok / m
+            + (self.output as f64) * pricing.output_per_mtok / m
+            + (self.cache_read as f64) * pricing.cache_read() / m
+            + (self.cache_creation as f64) * pricing.cache_creation() / m
+    }
 }
 
 #[cfg(test)]

@@ -80,6 +80,7 @@ impl Executor for StubExecutor {
                 session_id: None,
                 error_reason: None,
                 tokens_used: None,
+                token_breakdown: None,
             }
         });
         Ok(ExecutorHandle {

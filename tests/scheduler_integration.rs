@@ -57,6 +57,7 @@ impl ControlledExecutor {
                 session_id: None,
                 error_reason: None,
                 tokens_used: None,
+                token_breakdown: None,
             });
         }
     }
@@ -83,6 +84,7 @@ impl Executor for ControlledExecutor {
                 session_id: None,
                 error_reason: Some("test executor dropped".into()),
                 tokens_used: None,
+                token_breakdown: None,
             })
         });
         Ok(ExecutorHandle {

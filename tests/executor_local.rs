@@ -97,6 +97,7 @@ async fn agent_manager_summon_uses_executor() {
                     session_id: None,
                     error_reason: None,
                     tokens_used: None,
+                    token_breakdown: None,
                 }
             });
             Ok(ExecutorHandle {
@@ -174,6 +175,7 @@ async fn agent_manager_invoke_passes_resume_session_id() {
                     session_id: None,
                     error_reason: None,
                     tokens_used: None,
+                    token_breakdown: None,
                 }
             });
             Ok(ExecutorHandle {

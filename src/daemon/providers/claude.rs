@@ -4,7 +4,9 @@ use std::process::Stdio;
 use tokio::process::Command;
 
 use crate::daemon::process_manager::SpawnedAgent;
-use crate::daemon::provider::{AgentContext, OutputFormat, Provider, ProviderCapabilities};
+use crate::daemon::provider::{
+    AgentContext, OutputFormat, Provider, ProviderCapabilities, TokenBreakdown,
+};
 
 pub struct ClaudeProvider {
     pub binary: String,
@@ -128,6 +130,15 @@ impl Provider for ClaudeProvider {
     /// `result` event of a stream-json run (also tolerates the older
     /// `usage` shape on `message_stop`).
     fn extract_usage(&self, stdout_lines: &[String]) -> Option<u64> {
+        self.extract_token_breakdown(stdout_lines)
+            .map(|b| b.total())
+            .filter(|t| *t > 0)
+    }
+
+    /// Per-bucket breakdown from the same `usage` block. Used by the
+    /// daemon's budget layer to attribute USD spend accurately across
+    /// input / output / cache-read / cache-creation prices.
+    fn extract_token_breakdown(&self, stdout_lines: &[String]) -> Option<TokenBreakdown> {
         for line in stdout_lines.iter().rev() {
             let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else {
                 continue;
@@ -136,20 +147,26 @@ impl Provider for ClaudeProvider {
                 .get("usage")
                 .or_else(|| v.get("message").and_then(|m| m.get("usage")));
             if let Some(u) = usage {
-                let inp = u.get("input_tokens").and_then(serde_json::Value::as_u64);
-                let out = u.get("output_tokens").and_then(serde_json::Value::as_u64);
-                let cache_r = u
-                    .get("cache_read_input_tokens")
-                    .and_then(serde_json::Value::as_u64);
-                let cache_c = u
-                    .get("cache_creation_input_tokens")
-                    .and_then(serde_json::Value::as_u64);
-                let total = inp.unwrap_or(0)
-                    + out.unwrap_or(0)
-                    + cache_r.unwrap_or(0)
-                    + cache_c.unwrap_or(0);
-                if total > 0 {
-                    return Some(total);
+                let b = TokenBreakdown {
+                    input: u
+                        .get("input_tokens")
+                        .and_then(serde_json::Value::as_u64)
+                        .unwrap_or(0),
+                    output: u
+                        .get("output_tokens")
+                        .and_then(serde_json::Value::as_u64)
+                        .unwrap_or(0),
+                    cache_read: u
+                        .get("cache_read_input_tokens")
+                        .and_then(serde_json::Value::as_u64)
+                        .unwrap_or(0),
+                    cache_creation: u
+                        .get("cache_creation_input_tokens")
+                        .and_then(serde_json::Value::as_u64)
+                        .unwrap_or(0),
+                };
+                if b.total() > 0 {
+                    return Some(b);
                 }
             }
         }

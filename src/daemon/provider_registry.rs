@@ -11,6 +11,7 @@ use super::providers::plain_text::PlainTextProvider;
 pub struct ProviderRegistry {
     providers: HashMap<String, Arc<dyn Provider>>,
     sandboxes: HashMap<String, crate::shared::config::SandboxConfig>,
+    pricings: HashMap<String, crate::shared::config::ProviderPricing>,
     default: String,
 }
 
@@ -21,14 +22,18 @@ impl ProviderRegistry {
 
         let mut providers: HashMap<String, Arc<dyn Provider>> = HashMap::new();
         let mut sandboxes: HashMap<String, crate::shared::config::SandboxConfig> = HashMap::new();
+        let mut pricings: HashMap<String, crate::shared::config::ProviderPricing> = HashMap::new();
 
         // `[providers.claude.sandbox]` / `[providers.pi.sandbox]` may configure
         // the built-in adapters even though those aren't built from `ProviderConfig`.
         for name in RESERVED {
-            if let Some(pc) = config.providers.get(name)
-                && let Some(sb) = &pc.sandbox
-            {
-                sandboxes.insert(name.to_string(), sb.clone());
+            if let Some(pc) = config.providers.get(name) {
+                if let Some(sb) = &pc.sandbox {
+                    sandboxes.insert(name.to_string(), sb.clone());
+                }
+                if let Some(p) = &pc.pricing {
+                    pricings.insert(name.to_string(), p.clone());
+                }
             }
         }
 
@@ -65,6 +70,9 @@ impl ProviderRegistry {
             if let Some(sb) = &provider_config.sandbox {
                 sandboxes.insert(name.clone(), sb.clone());
             }
+            if let Some(p) = &provider_config.pricing {
+                pricings.insert(name.clone(), p.clone());
+            }
         }
 
         let default = config
@@ -76,6 +84,7 @@ impl ProviderRegistry {
         Self {
             providers,
             sandboxes,
+            pricings,
             default,
         }
     }
@@ -85,6 +94,13 @@ impl ProviderRegistry {
     /// agent unconfined (current default).
     pub fn sandbox_for(&self, name: &str) -> Option<crate::shared::config::SandboxConfig> {
         self.sandboxes.get(name).cloned()
+    }
+
+    /// Per-provider USD pricing resolved from `[providers.<name>.pricing]`.
+    /// `None` means the provider is unpriced — agents still record token
+    /// usage but contribute zero USD to budgets.
+    pub fn pricing_for(&self, name: &str) -> Option<crate::shared::config::ProviderPricing> {
+        self.pricings.get(name).cloned()
     }
 
     pub fn get(&self, name: &str) -> Option<Arc<dyn Provider>> {
@@ -131,6 +147,7 @@ impl ProviderRegistry {
         Self {
             providers,
             sandboxes: HashMap::new(),
+            pricings: HashMap::new(),
             default: "true_provider".to_string(),
         }
     }

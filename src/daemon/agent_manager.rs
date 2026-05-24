@@ -187,6 +187,7 @@ impl AgentManager {
                         session_id: None,
                         error_reason: Some(format!("completion_panicked: {e}")),
                         tokens_used: None,
+                        token_breakdown: None,
                     }
                 }
             };
@@ -241,6 +242,57 @@ impl AgentManager {
                     }
                     Err(e) => {
                         error!(agent_id = %agent_id, error = %e, "Failed to record token usage");
+                    }
+                }
+            }
+
+            // USD attribution. Compute spend from the breakdown × provider
+            // pricing, then charge the agent's lifetime spend AND every
+            // budget whose `providers` list matches this run's provider.
+            // No pricing or no breakdown → no charge, by design (free models
+            // and providers without usage telemetry are silently
+            // un-budget-able).
+            if let Some(provider_name) = db
+                .get_agent(&agent_id)
+                .ok()
+                .flatten()
+                .and_then(|a| a.provider)
+                && let Some(pricing) = manager.registry.pricing_for(&provider_name)
+            {
+                let breakdown = result.token_breakdown.unwrap_or_else(|| {
+                    // No breakdown but we may still have a total — charge it
+                    // as input tokens (conservative; vendors price input
+                    // cheaper than output, so this *under*-bills slightly).
+                    crate::daemon::provider::TokenBreakdown {
+                        input: result.tokens_used.unwrap_or(0),
+                        ..Default::default()
+                    }
+                });
+                let usd = breakdown.cost_usd(&pricing);
+                if usd > 0.0 {
+                    if let Err(e) = db.add_agent_usd(&agent_id, usd) {
+                        error!(agent_id = %agent_id, error = %e, "Failed to record USD spend");
+                    }
+                    let today = chrono::Utc::now().format("%Y-%m-%d").to_string();
+                    for (name, b) in &manager.config.budgets {
+                        let matches =
+                            b.providers.is_empty() || b.providers.contains(&provider_name);
+                        if !matches {
+                            continue;
+                        }
+                        match db.add_budget_spend(name, &today, usd) {
+                            Ok(total) => tracing::info!(
+                                budget = %name,
+                                provider = %provider_name,
+                                charged_usd = usd,
+                                day_total_usd = total,
+                                daily_cap_usd = b.daily_usd,
+                                "Charged budget"
+                            ),
+                            Err(e) => {
+                                error!(budget = %name, error = %e, "Failed to charge budget");
+                            }
+                        }
                     }
                 }
             }

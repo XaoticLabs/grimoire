@@ -357,6 +357,27 @@ impl Database {
         conn.execute_batch(
             "CREATE INDEX IF NOT EXISTS idx_agents_parent ON agents(parent_agent_id);",
         )?;
+        // USD spend attributed to this agent across its life, computed at
+        // each run-completion from `tokens_used` × `[providers.<name>.pricing]`.
+        // Stored as REAL (cents-precision is fine; vendor pricing is dollars
+        // per million tokens).
+        add_column_if_missing(
+            &conn,
+            "agents",
+            "usd_spent",
+            "usd_spent REAL NOT NULL DEFAULT 0",
+        )?;
+        // Per-budget, per-UTC-day spend ledger. Primary key is composite so
+        // a budget can spend across many days and the `today` lookup is a
+        // single indexed row read.
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS budget_spend (
+                budget_name TEXT NOT NULL,
+                day         TEXT NOT NULL,
+                usd         REAL NOT NULL DEFAULT 0,
+                PRIMARY KEY (budget_name, day)
+            );",
+        )?;
 
         conn.execute_batch(
             "
@@ -723,6 +744,69 @@ impl Database {
             .filter_map(Result::ok)
             .collect();
         Ok(ids)
+    }
+
+    /// Add `usd` to the agent's lifetime spend, returning the new total.
+    pub fn add_agent_usd(&self, id: &str, usd: f64) -> Result<f64> {
+        if usd <= 0.0 {
+            return self.get_agent_usd(id);
+        }
+        let conn = self.conn.lock();
+        conn.execute(
+            "UPDATE agents SET usd_spent = usd_spent + ?1, updated_at = ?2 WHERE id = ?3",
+            params![usd, chrono::Utc::now().to_rfc3339(), id],
+        )?;
+        let total: f64 = conn.query_row(
+            "SELECT usd_spent FROM agents WHERE id = ?1",
+            params![id],
+            |r| r.get(0),
+        )?;
+        Ok(total.max(0.0))
+    }
+
+    pub fn get_agent_usd(&self, id: &str) -> Result<f64> {
+        let conn = self.conn.lock();
+        let total: f64 = conn
+            .query_row(
+                "SELECT usd_spent FROM agents WHERE id = ?1",
+                params![id],
+                |r| r.get(0),
+            )
+            .unwrap_or(0.0);
+        Ok(total.max(0.0))
+    }
+
+    /// Increment `budget_spend.usd` for `(budget_name, day)` by `usd`,
+    /// inserting the row on first write. Returns the new running total
+    /// for that day.
+    pub fn add_budget_spend(&self, budget_name: &str, day: &str, usd: f64) -> Result<f64> {
+        if usd <= 0.0 {
+            return self.get_budget_spend(budget_name, day);
+        }
+        let conn = self.conn.lock();
+        conn.execute(
+            "INSERT INTO budget_spend(budget_name, day, usd) VALUES (?1, ?2, ?3) \
+             ON CONFLICT(budget_name, day) DO UPDATE SET usd = usd + excluded.usd",
+            params![budget_name, day, usd],
+        )?;
+        let total: f64 = conn.query_row(
+            "SELECT usd FROM budget_spend WHERE budget_name = ?1 AND day = ?2",
+            params![budget_name, day],
+            |r| r.get(0),
+        )?;
+        Ok(total.max(0.0))
+    }
+
+    pub fn get_budget_spend(&self, budget_name: &str, day: &str) -> Result<f64> {
+        let conn = self.conn.lock();
+        let total: f64 = conn
+            .query_row(
+                "SELECT usd FROM budget_spend WHERE budget_name = ?1 AND day = ?2",
+                params![budget_name, day],
+                |r| r.get(0),
+            )
+            .unwrap_or(0.0);
+        Ok(total.max(0.0))
     }
 
     pub fn get_agent_tokens(&self, id: &str) -> Result<u64> {

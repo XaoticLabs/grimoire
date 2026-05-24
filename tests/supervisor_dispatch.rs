@@ -182,6 +182,7 @@ async fn restart_dispatch_passes_session_id() {
                     session_id: None,
                     error_reason: None,
                     tokens_used: None,
+                    token_breakdown: None,
                 }
             });
             Ok(ExecutorHandle {
@@ -235,6 +236,7 @@ async fn restart_dispatch_emits_restarted_event() {
                     session_id: None,
                     error_reason: None,
                     tokens_used: None,
+                    token_breakdown: None,
                 }
             });
             Ok(ExecutorHandle {

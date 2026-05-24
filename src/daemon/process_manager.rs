@@ -29,6 +29,10 @@ pub struct MonitorResult {
     /// for providers that don't (the agent is then unbillable against
     /// `SandboxConfig.token_budget`).
     pub tokens_used: Option<u64>,
+    /// Per-bucket breakdown used to attribute USD spend through
+    /// `[providers.<name>.pricing]`. `None` for providers that only report
+    /// a total — budgets then attribute the total at `input_per_mtok`.
+    pub token_breakdown: Option<super::provider::TokenBreakdown>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -170,6 +174,9 @@ pub async fn monitor_agent(
     let tokens_used = provider_for_usage
         .as_ref()
         .and_then(|p| p.extract_usage(&consumed.stdout_lines));
+    let token_breakdown = provider_for_usage
+        .as_ref()
+        .and_then(|p| p.extract_token_breakdown(&consumed.stdout_lines));
 
     match exit_status {
         Ok(status) => {
@@ -182,6 +189,7 @@ pub async fn monitor_agent(
                     session_id: captured_session_id,
                     error_reason: None,
                     tokens_used,
+                    token_breakdown,
                 }
             } else {
                 warn!(agent_id = %agent_id, code = ?code, "Agent failed");
@@ -191,6 +199,7 @@ pub async fn monitor_agent(
                     session_id: captured_session_id,
                     error_reason: None,
                     tokens_used,
+                    token_breakdown,
                 }
             }
         }
@@ -202,6 +211,7 @@ pub async fn monitor_agent(
                 session_id: captured_session_id,
                 error_reason: Some(format!("wait_failed: {e}")),
                 tokens_used,
+                token_breakdown,
             }
         }
     }
