@@ -263,6 +263,7 @@ pub async fn handle_rpc(
         "agent.queue.list" => handle_queue_list(db, req),
         "mail.send" => handle_mail_send(db, bus, peer_registry, daemon_id, req).await,
         "mail.ask" => handle_mail_ask(db, bus, peer_registry, daemon_id, req).await,
+        "mail.tender" => handle_mail_tender(db, bus, peer_registry, daemon_id, req).await,
         "mail.list" => handle_mail_list(db, req),
         "mail.ack" => handle_mail_ack(db, bus, req),
         "mail.subscribe" => handle_mail_subscribe(db, req),
@@ -890,6 +891,93 @@ pub async fn handle_mail_ask(
             _ => continue,
         }
     }
+}
+
+/// Multi-bid auction over the mailbox. Posts `params.body` to `params.to`
+/// (typically a `topic://...`), then collects every reply mail whose
+/// `in_reply_to` matches one of the posted ids until `deadline_ms` elapses.
+/// Unlike [`handle_mail_ask`], this returns *all* bids — picking the winner
+/// is the caller's job — and does not error when zero bids arrive.
+pub async fn handle_mail_tender(
+    db: &Arc<Database>,
+    bus: &EventBus,
+    peer_registry: &Arc<PeerRegistry>,
+    daemon_id: &str,
+    req: RpcRequest,
+) -> RpcResponse {
+    let params: crate::shared::protocol::MailTenderParams = try_params!(req);
+    let deadline = std::time::Duration::from_millis(params.deadline_ms.unwrap_or(30_000));
+
+    let mut events = bus.subscribe();
+
+    let req_id = req.id;
+    let send_req = RpcRequest {
+        id: req_id,
+        protocol_version: req.protocol_version,
+        method: "mail.send".to_string(),
+        params: serde_json::to_value(MailSendParams {
+            to: params.to.clone(),
+            body: params.body.clone(),
+            sender: params.sender.clone(),
+            wake_eligible: Some(true),
+            in_reply_to: None,
+        })
+        .unwrap(),
+        auth_token: req.auth_token.clone(),
+    };
+    let send_resp = handle_mail_send(db, bus, peer_registry, daemon_id, send_req).await;
+    if send_resp.error.is_some() {
+        return send_resp;
+    }
+    let send_result: MailSendResult = match send_resp
+        .result
+        .as_ref()
+        .and_then(|v| serde_json::from_value(v.clone()).ok())
+    {
+        Some(r) => r,
+        None => return rpc_err(req_id, "mail_send_no_result"),
+    };
+    let request_ids: std::collections::HashSet<String> =
+        send_result.mail_ids.iter().cloned().collect();
+
+    let mut bids: Vec<Mail> = Vec::new();
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let deadline_at = tokio::time::Instant::now() + deadline;
+    loop {
+        let remaining = deadline_at.saturating_duration_since(tokio::time::Instant::now());
+        if remaining.is_zero() {
+            break;
+        }
+        let recv = match tokio::time::timeout(remaining, events.recv()).await {
+            Ok(Ok(ev)) => ev,
+            Ok(Err(_)) => continue,
+            Err(_) => break,
+        };
+        let mail_id = match &recv {
+            StreamEvent::MailReceived { mail_id, .. }
+            | StreamEvent::MailDelivered { mail_id, .. } => mail_id.clone(),
+            _ => continue,
+        };
+        if seen.contains(&mail_id) {
+            continue;
+        }
+        let mail = match db.get_mail(&mail_id) {
+            Ok(Some(m)) => m,
+            _ => continue,
+        };
+        if let Some(rt) = &mail.in_reply_to
+            && request_ids.contains(rt)
+        {
+            seen.insert(mail_id);
+            bids.push(mail);
+        }
+    }
+
+    let result = crate::shared::protocol::MailTenderResult {
+        request_mail_ids: send_result.mail_ids,
+        bids,
+    };
+    RpcResponse::success_json(req_id, &result)
 }
 
 fn handle_direct_send(

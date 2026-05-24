@@ -273,6 +273,21 @@ enum Commands {
         timeout: u64,
     },
 
+    /// Post a tender (auction) to a topic or agent and collect every bid
+    /// received within the deadline. Subscribers reply with
+    /// `grim mail send --in-reply-to <id>`; this command lists the bids in
+    /// arrival order so the caller can pick a winner.
+    Tender {
+        /// Recipient address (`agent://<id>` or `topic://<name>`).
+        addr: String,
+        /// Body — trailing args are joined with single spaces.
+        #[arg(trailing_var_arg = true, num_args = 1..)]
+        body: Vec<String>,
+        /// How long to collect bids, in seconds. Defaults to 30.
+        #[arg(long, default_value_t = 30)]
+        deadline: u64,
+    },
+
     /// Manage agent wake sources (cron / file-watch / parent-completion).
     Wake {
         #[command(subcommand)]
@@ -475,6 +490,11 @@ async fn main() {
                     body,
                     timeout,
                 } => cli::commands::mail::run_ask(&addr, &body.join(" "), timeout).await,
+                Commands::Tender {
+                    addr,
+                    body,
+                    deadline,
+                } => cli::commands::mail::run_tender(&addr, &body.join(" "), deadline).await,
                 Commands::Wake { cmd } => cli::commands::wake::run(cmd).await,
                 Commands::Workspace { cmd } => cli::commands::workspace::run(cmd).await,
                 Commands::Memory { cmd } => cli::commands::memory::run(cmd).await,

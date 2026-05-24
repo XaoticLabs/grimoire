@@ -296,6 +296,29 @@ pub struct MailAskResult {
     pub reply: Mail,
 }
 
+/// Post a task to a topic (or single agent) and collect replies for a
+/// fixed window. Used to gather bids from a fleet — typical pattern is
+/// "fan out a job to `topic://workers`, take the first/best bid."
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MailTenderParams {
+    pub to: String,
+    pub body: String,
+    #[serde(default)]
+    pub sender: Option<AgentId>,
+    /// How long to wait for bids, in milliseconds. Defaults to 30 000.
+    #[serde(default)]
+    pub deadline_ms: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MailTenderResult {
+    /// Mail ids of the original tender posts (one per topic subscriber when
+    /// `to` was a topic, otherwise one).
+    pub request_mail_ids: Vec<String>,
+    /// Bids collected during the window, in arrival order.
+    pub bids: Vec<Mail>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MailSendResult {
     pub delivered: u32,

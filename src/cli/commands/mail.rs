@@ -247,3 +247,34 @@ pub async fn run_ask(addr: &str, body: &str, timeout_secs: u64) -> Result<()> {
     println!("{}", result.reply.body);
     Ok(())
 }
+
+/// Post a tender and print each bid (one per line) as it arrived. Caller
+/// composes the response — e.g. `head -1` to take the first bidder.
+pub async fn run_tender(addr: &str, body: &str, deadline_secs: u64) -> Result<()> {
+    use crate::shared::protocol::MailTenderResult;
+    let mut client = DaemonClient::connect().await?;
+    let params = serde_json::json!({
+        "to": addr,
+        "body": body,
+        "deadline_ms": deadline_secs * 1000,
+    });
+    let response = client.call("mail.tender", params).await?;
+    if let Some(error) = response.error {
+        eprintln!("{} {}", "Error:".red(), error.message);
+        std::process::exit(1);
+    }
+    let result: MailTenderResult = serde_json::from_value(
+        response
+            .result
+            .context("daemon returned `ok` with empty result payload")?,
+    )?;
+    if result.bids.is_empty() {
+        eprintln!("{} no bids (deadline {}s)", "✗".yellow(), deadline_secs);
+        std::process::exit(1);
+    }
+    for bid in &result.bids {
+        let from = bid.sender_id.as_deref().unwrap_or("?");
+        println!("{}\t{}\t{}", bid.id, from, bid.body);
+    }
+    Ok(())
+}
