@@ -118,6 +118,15 @@ enum Commands {
         /// Optional name for the evaluator agent. Defaults to `eval:<short-target-id>`.
         #[arg(short, long)]
         name: Option<String>,
+
+        /// Return immediately after summoning the evaluator. Default is to
+        /// block until the evaluator finishes and print its parsed score.
+        #[arg(long)]
+        no_wait: bool,
+
+        /// How long to wait for the evaluator to finish, in seconds.
+        #[arg(long, default_value_t = 300)]
+        timeout: u64,
     },
 
     /// Fork an agent at a point in its history: spawn a new agent seeded
@@ -452,9 +461,14 @@ async fn main() {
                     provider,
                     model,
                     name,
+                    no_wait,
+                    timeout,
                 } => {
                     let id = resolve_id(&id).await;
-                    cli::commands::eval::run(&id, &rubric, provider, model, name).await
+                    cli::commands::eval::run(
+                        &id, &rubric, provider, model, name, !no_wait, timeout,
+                    )
+                    .await
                 }
                 Commands::Fork {
                     id,

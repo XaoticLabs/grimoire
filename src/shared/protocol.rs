@@ -316,6 +316,19 @@ pub struct MailTenderParams {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentResultParams {
+    pub id: AgentId,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentResultResponse {
+    /// Provider-extracted final result text, or `None` if the agent has no
+    /// usable result yet (still running, no stdout, provider declined).
+    pub result: Option<String>,
+    pub state: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BudgetStatus {
     pub name: String,
     pub daily_usd: f64,

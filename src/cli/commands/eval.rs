@@ -68,6 +68,8 @@ pub async fn run(
     provider: Option<String>,
     model: Option<String>,
     name: Option<String>,
+    wait: bool,
+    timeout_secs: u64,
 ) -> Result<()> {
     let rubric = std::fs::read_to_string(rubric_path)
         .with_context(|| format!("reading rubric file {rubric_path}"))?;
@@ -121,13 +123,106 @@ pub async fn run(
         target_id.dimmed(),
         result.state
     );
-    println!(
-        "  {} grim chronicle {} {}",
-        "→".dimmed(),
-        result.id,
-        "# JSON verdict lands as the evaluator's last output".dimmed()
-    );
+
+    if !wait {
+        println!(
+            "  {} grim chronicle {} {}",
+            "→".dimmed(),
+            result.id,
+            "# JSON verdict lands as the evaluator's last output".dimmed()
+        );
+        return Ok(());
+    }
+
+    // Block until the evaluator reaches a terminal state, then parse its
+    // last-result JSON. Polling — not subscribing — keeps the CLI hops
+    // identical to the rest of `grim`; eval runs are short-lived enough
+    // that a 1 s tick is fine.
+    let parsed = wait_for_verdict(&mut client, &result.id, timeout_secs).await?;
+    print_verdict(&result.id, &parsed);
     Ok(())
+}
+
+#[derive(Debug, serde::Deserialize, serde::Serialize)]
+struct EvalVerdict {
+    score: f64,
+    #[serde(default)]
+    verdict: Option<String>,
+    #[serde(default)]
+    rationale: Option<String>,
+}
+
+async fn wait_for_verdict(
+    client: &mut DaemonClient,
+    evaluator_id: &str,
+    timeout_secs: u64,
+) -> Result<EvalVerdict> {
+    use crate::shared::protocol::AgentResultResponse;
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(timeout_secs);
+    loop {
+        let resp: AgentResultResponse = client
+            .call_typed(
+                "agent.result",
+                serde_json::json!({ "id": evaluator_id }),
+            )
+            .await?;
+        let terminal = matches!(
+            resp.state.as_str(),
+            "Complete" | "Failed" | "Banished" | "Dormant"
+        );
+        if terminal {
+            let text = resp.result.ok_or_else(|| {
+                anyhow!("evaluator {evaluator_id} finished as {} with no result", resp.state)
+            })?;
+            return parse_verdict(&text);
+        }
+        if std::time::Instant::now() >= deadline {
+            return Err(anyhow!(
+                "evaluator {evaluator_id} did not finish within {timeout_secs}s (last state {})",
+                resp.state
+            ));
+        }
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+    }
+}
+
+/// Pull the score JSON out of the evaluator's free-form reply. We accept
+/// either a bare JSON object (the strict path requested by the prompt) or
+/// a JSON object embedded anywhere in the result — agents reliably drift
+/// from "JSON only" and rejecting that drift would make eval brittle.
+fn parse_verdict(text: &str) -> Result<EvalVerdict> {
+    if let Ok(v) = serde_json::from_str::<EvalVerdict>(text.trim()) {
+        return Ok(v);
+    }
+    let start = text.find('{').ok_or_else(|| anyhow!("no JSON object in evaluator reply"))?;
+    let end = text.rfind('}').ok_or_else(|| anyhow!("unterminated JSON in evaluator reply"))?;
+    if end <= start {
+        return Err(anyhow!("malformed JSON range in evaluator reply"));
+    }
+    serde_json::from_str::<EvalVerdict>(&text[start..=end])
+        .with_context(|| "parsing evaluator score JSON")
+}
+
+fn print_verdict(evaluator_id: &str, v: &EvalVerdict) {
+    let score_str = format!("{:.2}", v.score);
+    let colored_score = if v.score >= 0.8 {
+        score_str.green().to_string()
+    } else if v.score >= 0.5 {
+        score_str.yellow().to_string()
+    } else {
+        score_str.red().to_string()
+    };
+    let verdict_str = v.verdict.as_deref().unwrap_or("(none)");
+    println!(
+        "{} score: {}  verdict: {}  (evaluator {})",
+        "★".bold(),
+        colored_score,
+        verdict_str.bold(),
+        evaluator_id.dimmed()
+    );
+    if let Some(r) = &v.rationale {
+        println!("  {}", r.trim());
+    }
 }
 
 #[cfg(test)]
@@ -186,6 +281,28 @@ mod tests {
         assert!(prompt.contains("\"score\""));
         assert!(prompt.contains("\"verdict\""));
         assert!(prompt.contains("\"pass\""));
+    }
+
+    #[test]
+    fn parse_verdict_accepts_bare_json() {
+        let v = parse_verdict(r#"{"score":0.9,"verdict":"pass","rationale":"good"}"#).unwrap();
+        assert!((v.score - 0.9).abs() < 1e-6);
+        assert_eq!(v.verdict.as_deref(), Some("pass"));
+    }
+
+    #[test]
+    fn parse_verdict_extracts_embedded_json() {
+        let v = parse_verdict(
+            "Here is my evaluation:\n{\"score\":0.4,\"verdict\":\"partial\"}\nThank you.",
+        )
+        .unwrap();
+        assert!((v.score - 0.4).abs() < 1e-6);
+        assert_eq!(v.verdict.as_deref(), Some("partial"));
+    }
+
+    #[test]
+    fn parse_verdict_rejects_no_object() {
+        assert!(parse_verdict("nothing useful here").is_err());
     }
 
     #[test]

@@ -261,6 +261,7 @@ pub async fn handle_rpc(
         "scroll.abandon" => handle_scroll_abandon(scroll_keeper, req).await,
         "daemon.status" => handle_status(manager, daemon_id, req).await,
         "agent.queue.list" => handle_queue_list(db, req),
+        "agent.result" => handle_agent_result(manager, db, req).await,
         "budget.list" => handle_budget_list(manager, db, req),
         "mail.send" => handle_mail_send(db, bus, peer_registry, daemon_id, req).await,
         "mail.ask" => handle_mail_ask(db, bus, peer_registry, daemon_id, req).await,
@@ -799,6 +800,29 @@ fn handle_replay(db: &Arc<Database>, req: RpcRequest) -> RpcResponse {
 /// `unknown_recipient`, …) as the message text so callers can match on it.
 fn rpc_err(req_id: u64, code: &str) -> RpcResponse {
     RpcResponse::error(req_id, -32000, code.to_string())
+}
+
+/// Return the provider-extracted final result text for an agent. Mirrors
+/// `manager.agent_result()` (the in-process accessor used by pact
+/// `{output}` injection) over the RPC, so the CLI can read an evaluator's
+/// score JSON without scraping the chronicle.
+async fn handle_agent_result(
+    manager: &Arc<AgentManager>,
+    db: &Arc<Database>,
+    req: RpcRequest,
+) -> RpcResponse {
+    let params: crate::shared::protocol::AgentResultParams = try_params!(req);
+    let agent = match db.get_agent(&params.id) {
+        Ok(Some(a)) => a,
+        Ok(None) => return rpc_err(req.id, "agent_not_found"),
+        Err(e) => return RpcResponse::error(req.id, -32000, format!("db error: {e}")),
+    };
+    let result = manager.agent_result(&params.id);
+    let resp = crate::shared::protocol::AgentResultResponse {
+        result,
+        state: agent.state.to_string(),
+    };
+    RpcResponse::success_json(req.id, &resp)
 }
 
 /// Snapshot every configured budget with its USD cap and today's running
