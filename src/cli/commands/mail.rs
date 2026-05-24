@@ -18,6 +18,10 @@ pub enum MailCommand {
         /// Body — trailing args are joined with single spaces.
         #[arg(trailing_var_arg = true, num_args = 1..)]
         body: Vec<String>,
+        /// Correlation id of the mail this one replies to. Pairs with
+        /// `grim ask` for synchronous request/reply.
+        #[arg(long)]
+        in_reply_to: Option<String>,
     },
     /// List a recipient's mailbox.
     List {
@@ -45,9 +49,13 @@ pub enum MailCommand {
 
 pub async fn run(cmd: MailCommand) -> Result<()> {
     match cmd {
-        MailCommand::Send { addr, body } => {
+        MailCommand::Send {
+            addr,
+            body,
+            in_reply_to,
+        } => {
             let body = body.join(" ");
-            run_send(&addr, &body).await
+            run_send(&addr, &body, in_reply_to).await
         }
         MailCommand::List {
             agent_id,
@@ -62,11 +70,13 @@ pub async fn run(cmd: MailCommand) -> Result<()> {
     }
 }
 
-async fn run_send(addr: &str, body: &str) -> Result<()> {
+async fn run_send(addr: &str, body: &str, in_reply_to: Option<String>) -> Result<()> {
     let mut client = DaemonClient::connect().await?;
-    let response = client
-        .call("mail.send", serde_json::json!({ "to": addr, "body": body }))
-        .await?;
+    let mut params = serde_json::json!({ "to": addr, "body": body });
+    if let Some(rt) = in_reply_to {
+        params["in_reply_to"] = serde_json::Value::String(rt);
+    }
+    let response = client.call("mail.send", params).await?;
 
     if let Some(error) = response.error {
         eprintln!("{} {}", "Error:".red(), error.message);
@@ -210,5 +220,30 @@ async fn run_topics() -> Result<()> {
     for t in &result.topics {
         println!("{}  {}", t.topic, t.subscriber_count);
     }
+    Ok(())
+}
+
+/// Block until a mail with `in_reply_to` matching this send arrives, or the
+/// timeout expires. Pairs with `grim mail send --in-reply-to <id>` on the
+/// replier side.
+pub async fn run_ask(addr: &str, body: &str, timeout_secs: u64) -> Result<()> {
+    use crate::shared::protocol::MailAskResult;
+    let mut client = DaemonClient::connect().await?;
+    let params = serde_json::json!({
+        "to": addr,
+        "body": body,
+        "timeout_ms": timeout_secs * 1000,
+    });
+    let response = client.call("mail.ask", params).await?;
+    if let Some(error) = response.error {
+        eprintln!("{} {}", "Error:".red(), error.message);
+        std::process::exit(1);
+    }
+    let result: MailAskResult = serde_json::from_value(
+        response
+            .result
+            .context("daemon returned `ok` with empty result payload")?,
+    )?;
+    println!("{}", result.reply.body);
     Ok(())
 }

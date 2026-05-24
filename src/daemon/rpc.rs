@@ -102,6 +102,7 @@ fn new_outbound_mail(
     fail_reason: Option<&'static str>,
     wake_eligible: bool,
     now: i64,
+    in_reply_to: Option<String>,
 ) -> Mail {
     let delivered_at = if state == MailState::Pending {
         None
@@ -114,7 +115,7 @@ fn new_outbound_mail(
         sender_id: sender,
         topic,
         body,
-        in_reply_to: None,
+        in_reply_to,
         state,
         fail_reason: fail_reason.map(str::to_string),
         created_at: now,
@@ -261,6 +262,7 @@ pub async fn handle_rpc(
         "daemon.status" => handle_status(manager, daemon_id, req).await,
         "agent.queue.list" => handle_queue_list(db, req),
         "mail.send" => handle_mail_send(db, bus, peer_registry, daemon_id, req).await,
+        "mail.ask" => handle_mail_ask(db, bus, peer_registry, daemon_id, req).await,
         "mail.list" => handle_mail_list(db, req),
         "mail.ack" => handle_mail_ack(db, bus, req),
         "mail.subscribe" => handle_mail_subscribe(db, req),
@@ -803,6 +805,93 @@ pub async fn handle_mail_send(
     }
 }
 
+/// Synchronous request/reply over the mailbox. Sends `params.body` to
+/// `params.to`, then blocks until either:
+///   * an inbound `MailReceived` event names a mail whose `in_reply_to`
+///     equals the sent mail's id, in which case the full reply row is
+///     returned, or
+///   * `timeout_ms` elapses (default 30 000), returning `ask_timeout`.
+///
+/// Repliers acknowledge the request by sending an ordinary mail with
+/// `in_reply_to` set to the original mail id — there is no separate "reply"
+/// verb; ordinary `mail.send` carries the correlation.
+pub async fn handle_mail_ask(
+    db: &Arc<Database>,
+    bus: &EventBus,
+    peer_registry: &Arc<PeerRegistry>,
+    daemon_id: &str,
+    req: RpcRequest,
+) -> RpcResponse {
+    let params: crate::shared::protocol::MailAskParams = try_params!(req);
+    let timeout = std::time::Duration::from_millis(params.timeout_ms.unwrap_or(30_000));
+
+    // Subscribe BEFORE sending so a fast reply can't race past us.
+    let mut events = bus.subscribe();
+
+    let req_id = req.id;
+    let send_req = RpcRequest {
+        id: req_id,
+        protocol_version: req.protocol_version,
+        method: "mail.send".to_string(),
+        params: serde_json::to_value(MailSendParams {
+            to: params.to.clone(),
+            body: params.body.clone(),
+            sender: params.sender.clone(),
+            wake_eligible: Some(true),
+            in_reply_to: None,
+        })
+        .unwrap(),
+        auth_token: req.auth_token.clone(),
+    };
+    let send_resp = handle_mail_send(db, bus, peer_registry, daemon_id, send_req).await;
+    if send_resp.error.is_some() {
+        return send_resp;
+    }
+    let send_result: MailSendResult = match send_resp
+        .result
+        .as_ref()
+        .and_then(|v| serde_json::from_value(v.clone()).ok())
+    {
+        Some(r) => r,
+        None => return rpc_err(req_id, "mail_send_no_result"),
+    };
+    // Topic fan-out yields multiple ids; correlate on any of them.
+    let sent_ids: std::collections::HashSet<String> =
+        send_result.mail_ids.into_iter().collect();
+    if sent_ids.is_empty() {
+        return rpc_err(req_id, "ask_no_recipients");
+    }
+
+    let deadline = tokio::time::Instant::now() + timeout;
+    loop {
+        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+        if remaining.is_zero() {
+            return rpc_err(req_id, "ask_timeout");
+        }
+        let recv = match tokio::time::timeout(remaining, events.recv()).await {
+            Ok(Ok(ev)) => ev,
+            Ok(Err(_lagged_or_closed)) => continue,
+            Err(_) => return rpc_err(req_id, "ask_timeout"),
+        };
+        let mail_id = match &recv {
+            StreamEvent::MailReceived { mail_id, .. }
+            | StreamEvent::MailDelivered { mail_id, .. } => mail_id.clone(),
+            _ => continue,
+        };
+        let mail = match db.get_mail(&mail_id) {
+            Ok(Some(m)) => m,
+            _ => continue,
+        };
+        match &mail.in_reply_to {
+            Some(rt) if sent_ids.contains(rt) => {
+                let result = crate::shared::protocol::MailAskResult { reply: mail };
+                return RpcResponse::success_json(req_id, &result);
+            }
+            _ => continue,
+        }
+    }
+}
+
 fn handle_direct_send(
     db: &Arc<Database>,
     bus: &EventBus,
@@ -830,6 +919,7 @@ fn handle_direct_send(
         fail_reason,
         wake_eligible,
         now,
+        params.in_reply_to.clone(),
     );
 
     if let Err(e) = db.insert_mail(&mail) {
@@ -902,6 +992,7 @@ async fn handle_topic_send(
             fail_reason,
             wake_eligible,
             now,
+            params.in_reply_to.clone(),
         ));
     }
 
@@ -1494,6 +1585,7 @@ async fn handle_federated_direct_send(
         None,
         wake_eligible,
         now,
+        params.in_reply_to.clone(),
     );
 
     if let Err(e) =

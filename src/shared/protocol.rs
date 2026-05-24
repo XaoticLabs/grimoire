@@ -273,6 +273,27 @@ pub struct MailSendParams {
     pub sender: Option<AgentId>,
     #[serde(default)]
     pub wake_eligible: Option<bool>,
+    /// Correlation id of an earlier mail this one is a reply to. The id is
+    /// echoed back unchanged so request/reply (see `mail.ask`) can match.
+    #[serde(default)]
+    pub in_reply_to: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MailAskParams {
+    pub to: String,
+    pub body: String,
+    #[serde(default)]
+    pub sender: Option<AgentId>,
+    /// Max time to wait for a reply, in milliseconds. Defaults to 30 000.
+    #[serde(default)]
+    pub timeout_ms: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MailAskResult {
+    /// The full reply mail row.
+    pub reply: Mail,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

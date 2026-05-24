@@ -259,6 +259,20 @@ enum Commands {
         cmd: cli::commands::mail::MailCommand,
     },
 
+    /// Send a mail and block until a reply arrives (or the timeout fires).
+    /// The reply is any subsequent mail whose `in_reply_to` matches the id
+    /// of the mail sent here. Pairs with `grim mail send --in-reply-to <id>`.
+    Ask {
+        /// Recipient address (`agent://<id>` or `topic://<name>`).
+        addr: String,
+        /// Body — trailing args are joined with single spaces.
+        #[arg(trailing_var_arg = true, num_args = 1..)]
+        body: Vec<String>,
+        /// How long to wait for a reply, in seconds. Defaults to 30.
+        #[arg(long, default_value_t = 30)]
+        timeout: u64,
+    },
+
     /// Manage agent wake sources (cron / file-watch / parent-completion).
     Wake {
         #[command(subcommand)]
@@ -456,6 +470,11 @@ async fn main() {
                 Commands::Tome { key, value } => cli::commands::tome::run(key, value).await,
                 Commands::Scry => cli::commands::scry::run().await,
                 Commands::Mail { cmd } => cli::commands::mail::run(cmd).await,
+                Commands::Ask {
+                    addr,
+                    body,
+                    timeout,
+                } => cli::commands::mail::run_ask(&addr, &body.join(" "), timeout).await,
                 Commands::Wake { cmd } => cli::commands::wake::run(cmd).await,
                 Commands::Workspace { cmd } => cli::commands::workspace::run(cmd).await,
                 Commands::Memory { cmd } => cli::commands::memory::run(cmd).await,
