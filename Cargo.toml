@@ -55,7 +55,6 @@ tempfile = "3"
 parking_lot = "0.12"
 futures = "0.3"
 notify = "8"
-cron = "0.16"
 globset = "0.4"
 hyper = { version = "1", features = ["client", "http1"] }
 hyper-util = { version = "0.1", features = ["client", "client-legacy", "http1", "tokio"] }
