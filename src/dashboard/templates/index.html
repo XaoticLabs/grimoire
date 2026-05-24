@@ -246,16 +246,208 @@
         .ev-result .meta { color: var(--text-dim); margin-left: 0.5rem; }
 
         #invoke-section { margin-top: 1.5rem; }
+
+        /* Nav */
+        nav.tabs {
+            display: flex;
+            gap: 0.25rem;
+            padding: 0 2rem;
+            border-bottom: 1px solid var(--border);
+            background: var(--bg);
+            overflow-x: auto;
+        }
+        nav.tabs a {
+            color: var(--text-dim);
+            text-decoration: none;
+            padding: 0.7rem 1rem;
+            font-size: 0.8rem;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            border-bottom: 2px solid transparent;
+            white-space: nowrap;
+            transition: color 0.15s, border-color 0.15s;
+        }
+        nav.tabs a:hover { color: var(--text); }
+        nav.tabs a.active { color: var(--accent); border-bottom-color: var(--accent); }
+
+        /* Generic table styling for new pages */
+        .grid-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.85rem;
+        }
+        .grid-table th {
+            text-align: left;
+            font-weight: 500;
+            color: var(--text-dim);
+            text-transform: uppercase;
+            font-size: 0.7rem;
+            letter-spacing: 0.1em;
+            padding: 0.5rem 0.75rem;
+            border-bottom: 1px solid var(--border);
+        }
+        .grid-table td {
+            padding: 0.7rem 0.75rem;
+            border-bottom: 1px solid var(--border);
+            vertical-align: top;
+        }
+        .grid-table tr:hover td { background: var(--surface); }
+        .grid-table .actions { text-align: right; white-space: nowrap; }
+        .grid-table .muted { color: var(--text-dim); }
+        .grid-table code {
+            font-family: inherit;
+            background: var(--surface);
+            padding: 0.1rem 0.4rem;
+            border-radius: 3px;
+            font-size: 0.8rem;
+        }
+
+        .card {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 1.5rem;
+            margin-bottom: 1.5rem;
+        }
+        .card h3 {
+            font-size: 0.8rem;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            color: var(--text-dim);
+            margin-bottom: 1rem;
+            font-weight: 500;
+        }
+
+        .form-grid {
+            display: grid;
+            grid-template-columns: 130px 1fr;
+            gap: 0.6rem 1rem;
+            align-items: center;
+        }
+        .form-grid label { font-size: 0.8rem; color: var(--text-dim); }
+        .form-grid input, .form-grid select, .form-grid textarea {
+            background: var(--bg);
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            padding: 0.5rem 0.75rem;
+            color: var(--text);
+            font-family: inherit;
+            font-size: 0.85rem;
+            outline: none;
+        }
+        .form-grid input:focus, .form-grid select:focus, .form-grid textarea:focus {
+            border-color: var(--accent);
+        }
+        .form-grid .form-actions {
+            grid-column: 2;
+            display: flex;
+            gap: 0.5rem;
+        }
+
+        .toast {
+            position: fixed;
+            bottom: 1.5rem;
+            right: 1.5rem;
+            padding: 0.7rem 1.2rem;
+            background: var(--surface2);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            font-size: 0.85rem;
+            opacity: 0;
+            transform: translateY(0.5rem);
+            transition: opacity 0.2s, transform 0.2s;
+            pointer-events: none;
+            max-width: 28rem;
+        }
+        .toast.show { opacity: 1; transform: translateY(0); }
+        .toast.err { border-color: var(--red); color: var(--red); }
+        .toast.ok { border-color: var(--green); color: var(--green); }
+
+        .badge {
+            display: inline-block;
+            padding: 0.15rem 0.5rem;
+            border-radius: 3px;
+            font-size: 0.7rem;
+            background: var(--surface2);
+            color: var(--text-dim);
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+        .badge-cron { background: rgba(96, 165, 250, 0.15); color: var(--blue); }
+        .badge-file { background: rgba(74, 222, 128, 0.15); color: var(--green); }
+        .badge-mail { background: rgba(167, 139, 250, 0.15); color: var(--purple); }
+        .badge-parent { background: rgba(251, 191, 36, 0.15); color: var(--yellow); }
+        .badge-local { background: rgba(74, 222, 128, 0.15); color: var(--green); }
+        .badge-shadow { background: rgba(167, 139, 250, 0.15); color: var(--purple); }
+
+        /* Modal */
+        .modal-backdrop {
+            position: fixed; inset: 0;
+            background: rgba(0, 0, 0, 0.6);
+            display: none;
+            align-items: center;
+            justify-content: center;
+            z-index: 100;
+        }
+        .modal-backdrop.show { display: flex; }
+        .modal {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 1.5rem;
+            min-width: 32rem;
+            max-width: 60rem;
+            max-height: 80vh;
+            overflow: auto;
+        }
+        .modal h2 {
+            font-size: 0.9rem;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            color: var(--text-dim);
+            margin-bottom: 1rem;
+            font-weight: 500;
+        }
+        .modal pre {
+            background: var(--bg);
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            padding: 1rem;
+            font-size: 0.8rem;
+            white-space: pre-wrap;
+            word-break: break-all;
+            max-height: 50vh;
+            overflow: auto;
+        }
+        .modal-actions {
+            display: flex;
+            gap: 0.5rem;
+            justify-content: flex-end;
+            margin-top: 1rem;
+        }
     </style>
 </head>
 <body>
     <header>
-        <h1 onclick="showList()">grimoire</h1>
+        <h1 onclick="location.hash='#/agents'">grimoire</h1>
         <span class="breadcrumb" id="breadcrumb"></span>
         <span class="status"><span class="dot" id="status-dot"></span><span id="status-text">connecting...</span></span>
     </header>
+    <nav class="tabs" id="tabs">
+        <a href="#/agents" data-route="agents">Agents</a>
+        <a href="#/wake" data-route="wake">Wake</a>
+        <a href="#/workspaces" data-route="workspaces">Workspaces</a>
+        <a href="#/mail" data-route="mail">Mail</a>
+        <a href="#/scrolls" data-route="scrolls">Scrolls</a>
+        <a href="#/health" data-route="health">Health</a>
+        <a href="#/federation" data-route="federation">Federation</a>
+        <a href="#/chronicle" data-route="chronicle">Chronicle</a>
+        <a href="#/webhooks" data-route="webhooks">Webhooks</a>
+    </nav>
 
     <main>
+        <!-- Page: Agents (list + detail) -->
+        <div data-page="agents">
         <div id="list-view">
             <div class="section-title">Summon Agent</div>
             <div class="form-row">
@@ -289,9 +481,1426 @@
                 </div>
             </div>
         </div>
+        </div><!-- /page agents -->
+
+        <div data-page="wake" hidden></div>
+        <div data-page="workspaces" hidden></div>
+        <div data-page="mail" hidden></div>
+        <div data-page="scrolls" hidden></div>
+        <div data-page="health" hidden></div>
+        <div data-page="federation" hidden></div>
+        <div data-page="chronicle" hidden></div>
+        <div data-page="webhooks" hidden></div>
     </main>
+    <div class="toast" id="toast"></div>
+    <div class="modal-backdrop" id="modal-backdrop" onclick="if(event.target===this)closeModal()">
+        <div class="modal" id="modal"></div>
+    </div>
 
     <script>
+        // --- RPC bridge ---------------------------------------------------
+        // Single client-side door to every CLI-equivalent daemon method.
+        // Server-side: POST /api/rpc → handle_rpc dispatcher.
+        async function grim(method, params) {
+            const res = await fetch('/api/rpc', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ method, params: params || {}, id: Date.now() & 0xffffffff }),
+            });
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            const env = await res.json();
+            if (env.error) throw new Error(env.error.message || JSON.stringify(env.error));
+            return env.result;
+        }
+
+        // --- Toast --------------------------------------------------------
+        function toast(msg, kind) {
+            const t = document.getElementById('toast');
+            t.textContent = msg;
+            t.className = 'toast show ' + (kind || '');
+            clearTimeout(toast._t);
+            toast._t = setTimeout(() => { t.className = 'toast ' + (kind || ''); }, 3000);
+        }
+
+        // --- Router -------------------------------------------------------
+        // Hash routes drive which <div data-page="…"> is visible. Each route
+        // calls its render function which fills its page container.
+        const routes = {
+            agents:     { render: renderAgentsPage,     refresh: fetchAgents },
+            wake:       { render: renderWakePage,       refresh: refreshWake },
+            workspaces: { render: renderWorkspacesPage },
+            mail:       { render: renderMailPage },
+            scrolls:    { render: renderScrollsPage },
+            health:     { render: renderHealthPage },
+            federation: { render: renderFederationPage },
+            chronicle:  { render: renderChroniclePage },
+            webhooks:   { render: renderWebhooksPage },
+        };
+
+        function parseHash() {
+            const h = (location.hash || '#/agents').replace(/^#\/?/, '');
+            const [name, ...rest] = h.split('/');
+            return { name: routes[name] ? name : 'agents', rest };
+        }
+
+        function route() {
+            const { name, rest } = parseHash();
+            for (const el of document.querySelectorAll('[data-page]')) {
+                el.hidden = el.dataset.page !== name;
+            }
+            for (const a of document.querySelectorAll('nav.tabs a')) {
+                a.classList.toggle('active', a.dataset.route === name);
+            }
+            const r = routes[name];
+            if (r && r.render) r.render(rest);
+        }
+
+        function renderStubPage(name) {
+            return function() {
+                const el = document.querySelector(`[data-page="${name}"]`);
+                if (el.dataset.rendered) return;
+                el.innerHTML = `<div class="empty"><div class="icon">&#x2728;</div><div>${name} page — coming next</div></div>`;
+                el.dataset.rendered = '1';
+            };
+        }
+
+        // Agents page is rendered ambiently by the existing list/detail JS
+        // below; this hook decides whether to show the detail view for a
+        // specific agent based on the hash (e.g. #/agents/abc123).
+        function renderAgentsPage(rest) {
+            const id = rest && rest[0];
+            if (id) {
+                showAgent(id);
+            } else if (currentAgentId) {
+                showList();
+            } else {
+                fetchAgents();
+            }
+        }
+
+        window.addEventListener('hashchange', route);
+
+        // --- Wake Sources page -------------------------------------------
+        // Wake sources attach a trigger (cron / file_watch / parent_completion)
+        // to an *existing* agent. Backend protocol: `wake.add` expects
+        //   { agent_id, kind, config }
+        // where `config` is kind-specific JSON (mirrors the CLI in
+        // src/cli/commands/wake.rs).
+        function escAttr(s) { return String(s).replace(/"/g, '&quot;'); }
+
+        async function refreshWake() {
+            const tbody = document.getElementById('wake-tbody');
+            if (!tbody) return;
+            try {
+                const result = await grim('wake.list', {});
+                renderWakeTable(result.sources || []);
+            } catch (e) {
+                tbody.innerHTML = `<tr><td colspan="6" class="muted">wake.list failed: ${esc(e.message)}</td></tr>`;
+            }
+        }
+
+        async function refreshWakeAgentOptions() {
+            const sel = document.getElementById('wake-agent');
+            if (!sel) return;
+            try {
+                const result = await grim('agent.circle', {});
+                const agents = result.agents || [];
+                const cur = sel.value;
+                sel.innerHTML = agents.length
+                    ? agents.map(a => `<option value="${escAttr(a.id)}">${esc(a.id)} — ${esc((a.task || '').slice(0, 60))}</option>`).join('')
+                    : `<option value="">no agents — summon one from the Agents tab first</option>`;
+                if (cur && agents.some(a => a.id === cur)) sel.value = cur;
+            } catch (e) {
+                sel.innerHTML = `<option value="">agent.circle failed: ${esc(e.message)}</option>`;
+            }
+        }
+
+        function wakeKindBadge(kind) {
+            const cls = {
+                cron: 'badge-cron',
+                file_watch: 'badge-file',
+                parent_completion: 'badge-parent',
+            }[kind] || '';
+            return `<span class="badge ${cls}">${esc(kind)}</span>`;
+        }
+
+        function wakeStateColor(state) {
+            return {
+                armed: 'var(--green)',
+                failed: 'var(--red)',
+                disabled: 'var(--text-dim)',
+            }[state] || 'var(--text-dim)';
+        }
+
+        function renderWakeTable(sources) {
+            const tbody = document.getElementById('wake-tbody');
+            if (!tbody) return;
+            if (!sources.length) {
+                tbody.innerHTML = `<tr><td colspan="6" class="muted" style="text-align:center;padding:2rem">no wake sources yet — add one above</td></tr>`;
+                return;
+            }
+            tbody.innerHTML = sources.map(s => {
+                const cfg = (s.config_json || '').slice(0, 60);
+                const last = s.last_fired_at
+                    ? new Date(s.last_fired_at * 1000).toLocaleString()
+                    : '—';
+                return `
+                    <tr>
+                        <td><code>${esc(s.id || '')}</code></td>
+                        <td>${wakeKindBadge(s.kind || '')}</td>
+                        <td><code>${esc((s.agent_id || '').slice(0, 12))}</code></td>
+                        <td><code>${esc(cfg)}</code></td>
+                        <td>
+                            <span style="color:${wakeStateColor(s.state)}">${esc(s.state || '')}</span>
+                            <span class="muted"> · ${s.fire_count || 0} fires</span>
+                            <div class="muted" style="font-size:0.75rem">${esc(last)}</div>
+                            ${s.fail_reason ? `<div style="color:var(--red);font-size:0.75rem">${esc(s.fail_reason)}</div>` : ''}
+                        </td>
+                        <td class="actions">
+                            <button class="btn btn-sm" onclick="testWake('${escAttr(s.id)}')">Test</button>
+                            <button class="btn btn-sm btn-danger" onclick="removeWake('${escAttr(s.id)}')">Remove</button>
+                        </td>
+                    </tr>`;
+            }).join('');
+        }
+
+        async function testWake(wake_id) {
+            try {
+                const r = await grim('wake.test', { wake_id });
+                toast('fired · mail ' + (r?.mail_id || ''), 'ok');
+                refreshWake();
+            } catch (e) {
+                toast('wake.test failed: ' + e.message, 'err');
+            }
+        }
+
+        async function removeWake(wake_id) {
+            if (!confirm(`Remove wake source ${wake_id}?`)) return;
+            try {
+                await grim('wake.remove', { wake_id });
+                toast('removed', 'ok');
+                refreshWake();
+            } catch (e) {
+                toast('wake.remove failed: ' + e.message, 'err');
+            }
+        }
+
+        function updateWakeFormFields() {
+            const kind = document.getElementById('wake-kind').value;
+            for (const row of document.querySelectorAll('.wake-field')) {
+                row.hidden = !row.dataset.kinds.split(',').includes(kind);
+            }
+        }
+
+        async function submitWake() {
+            const agent_id = document.getElementById('wake-agent').value;
+            const kind = document.getElementById('wake-kind').value;
+            if (!agent_id) { toast('select an agent first', 'err'); return; }
+            let config;
+            if (kind === 'cron') {
+                const expr = document.getElementById('wake-cron').value.trim();
+                if (!expr) { toast('cron expr is required', 'err'); return; }
+                config = { expr };
+            } else if (kind === 'file_watch') {
+                const globs = document.getElementById('wake-globs').value
+                    .split(/\s+/).filter(Boolean);
+                const ignore = document.getElementById('wake-ignore').value
+                    .split(/\s+/).filter(Boolean);
+                const root = document.getElementById('wake-root').value.trim();
+                if (!globs.length) { toast('at least one glob is required', 'err'); return; }
+                if (!root) { toast('root path is required', 'err'); return; }
+                config = { globs, ignore, root };
+            } else if (kind === 'parent_completion') {
+                const parent_id = document.getElementById('wake-parent').value.trim();
+                const states = document.getElementById('wake-states').value
+                    .split(',').map(s => s.trim()).filter(Boolean);
+                if (!parent_id) { toast('parent agent id is required', 'err'); return; }
+                config = { parent_id, states: states.length ? states : ['complete'] };
+            }
+            try {
+                const r = await grim('wake.add', { agent_id, kind, config });
+                toast('added ' + (r?.wake_id || ''), 'ok');
+                refreshWake();
+            } catch (e) {
+                toast('wake.add failed: ' + e.message, 'err');
+            }
+        }
+
+        function renderWakePage() {
+            const el = document.querySelector('[data-page="wake"]');
+            if (!el.dataset.rendered) {
+                el.innerHTML = `
+                    <div class="card">
+                        <h3>Add wake source</h3>
+                        <div class="form-grid">
+                            <label for="wake-agent">Agent</label>
+                            <select id="wake-agent"></select>
+                            <label for="wake-kind">Kind</label>
+                            <select id="wake-kind" onchange="updateWakeFormFields()">
+                                <option value="cron">cron — fire on a schedule</option>
+                                <option value="file_watch">file_watch — fire when matching files change</option>
+                                <option value="parent_completion">parent_completion — fire when another agent finishes</option>
+                            </select>
+
+                            <label class="wake-field" data-kinds="cron" for="wake-cron">Cron expr</label>
+                            <input class="wake-field" data-kinds="cron" id="wake-cron" type="text" placeholder="*/15 * * * *  (5 fields, UTC)">
+
+                            <label class="wake-field" data-kinds="file_watch" for="wake-globs">Globs</label>
+                            <input class="wake-field" data-kinds="file_watch" id="wake-globs" type="text" placeholder="**/*.rs   (space-separated)">
+                            <label class="wake-field" data-kinds="file_watch" for="wake-ignore">Ignore</label>
+                            <input class="wake-field" data-kinds="file_watch" id="wake-ignore" type="text" placeholder="target/** node_modules/**   (optional)">
+                            <label class="wake-field" data-kinds="file_watch" for="wake-root">Root</label>
+                            <input class="wake-field" data-kinds="file_watch" id="wake-root" type="text" placeholder="/abs/path/to/watch">
+
+                            <label class="wake-field" data-kinds="parent_completion" for="wake-parent">Parent id</label>
+                            <input class="wake-field" data-kinds="parent_completion" id="wake-parent" type="text" placeholder="agent-xxxx (full id)">
+                            <label class="wake-field" data-kinds="parent_completion" for="wake-states">States</label>
+                            <input class="wake-field" data-kinds="parent_completion" id="wake-states" type="text" placeholder="complete   (comma-separated; default: complete)">
+
+                            <div class="form-actions">
+                                <button class="btn" onclick="submitWake()">Add wake source</button>
+                                <button class="btn btn-sm" style="background:var(--surface2);color:var(--text)" onclick="refreshWakeAgentOptions(); refreshWake();">Refresh</button>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="card">
+                        <h3>Active wake sources</h3>
+                        <table class="grid-table">
+                            <thead><tr>
+                                <th>ID</th><th>Kind</th><th>Agent</th><th>Config</th><th>State</th><th></th>
+                            </tr></thead>
+                            <tbody id="wake-tbody"></tbody>
+                        </table>
+                    </div>
+                    <p class="muted" style="font-size:0.8rem;color:var(--text-dim);margin-top:1rem">
+                        Equivalent CLI: <code>grim wake add &lt;agent&gt; --cron …</code>, <code>grim wake list</code>, <code>grim wake test &lt;wake_id&gt;</code>, <code>grim wake remove &lt;wake_id&gt;</code>.
+                    </p>
+                `;
+                el.dataset.rendered = '1';
+                updateWakeFormFields();
+            }
+            refreshWakeAgentOptions();
+            refreshWake();
+        }
+
+        // --- Modal helpers -----------------------------------------------
+        function openModal(html) {
+            const m = document.getElementById('modal');
+            m.innerHTML = html;
+            document.getElementById('modal-backdrop').classList.add('show');
+        }
+        function closeModal() {
+            document.getElementById('modal-backdrop').classList.remove('show');
+            document.getElementById('modal').innerHTML = '';
+        }
+        document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeModal(); });
+
+        // --- Workspaces + Memory page ------------------------------------
+        // Workspaces are git worktrees with a per-workspace shared KV store.
+        // RPC surface: workspace.list/create/destroy/assign + memory.list/get/put/delete.
+        let currentWorkspaceId = null;
+
+        async function refreshWorkspaces() {
+            const tbody = document.getElementById('ws-tbody');
+            if (!tbody) return;
+            try {
+                const result = await grim('workspace.list', { include_orphans: true });
+                renderWorkspacesTable(result.workspaces || [], result.orphans || []);
+            } catch (e) {
+                tbody.innerHTML = `<tr><td colspan="6" class="muted">workspace.list failed: ${esc(e.message)}</td></tr>`;
+            }
+        }
+
+        function workspaceKindBadge(kind) {
+            const cls = kind === 'Shadow' ? 'badge-shadow' : 'badge-local';
+            return `<span class="badge ${cls}">${esc(kind || 'Local')}</span>`;
+        }
+
+        function renderWorkspacesTable(workspaces, orphans) {
+            const tbody = document.getElementById('ws-tbody');
+            if (!tbody) return;
+            if (!workspaces.length) {
+                tbody.innerHTML = `<tr><td colspan="6" class="muted" style="text-align:center;padding:2rem">no workspaces yet — create one above</td></tr>`;
+            } else {
+                tbody.innerHTML = workspaces.map(w => `
+                    <tr>
+                        <td><code>${esc(w.id || '')}</code></td>
+                        <td>${workspaceKindBadge(w.kind)}</td>
+                        <td><code>${esc(w.path || '')}</code></td>
+                        <td><code>${esc(w.branch || '')}</code></td>
+                        <td><span class="badge">${esc(w.state || '')}</span> <span class="muted">${w.agent_count || 0} agent${w.agent_count===1?'':'s'}</span></td>
+                        <td class="actions">
+                            <button class="btn btn-sm" onclick="openWorkspaceMemory('${escAttr(w.id)}')">Memory</button>
+                            <button class="btn btn-sm" onclick="openWorkspaceAssign('${escAttr(w.id)}')">Assign</button>
+                            <button class="btn btn-sm btn-danger" onclick="destroyWorkspace('${escAttr(w.id)}')">Destroy</button>
+                        </td>
+                    </tr>`).join('');
+            }
+            const orphanEl = document.getElementById('ws-orphans');
+            if (orphanEl) {
+                orphanEl.innerHTML = orphans.length
+                    ? `<strong>Orphan worktrees:</strong> ${orphans.map(o => `<code>${esc(o)}</code>`).join(' ')}`
+                    : '';
+            }
+        }
+
+        async function submitWorkspaceCreate() {
+            const name = document.getElementById('ws-name').value.trim();
+            const repo_path = document.getElementById('ws-repo').value.trim();
+            const branch = document.getElementById('ws-branch').value.trim();
+            if (!name || !repo_path || !branch) {
+                toast('name, repo path, and branch are all required', 'err');
+                return;
+            }
+            try {
+                const r = await grim('workspace.create', { name, repo_path, branch });
+                toast('created ' + (r?.id || ''), 'ok');
+                document.getElementById('ws-name').value = '';
+                refreshWorkspaces();
+            } catch (e) {
+                toast('workspace.create failed: ' + e.message, 'err');
+            }
+        }
+
+        async function destroyWorkspace(id) {
+            if (!confirm(`Destroy workspace ${id}? This removes the worktree.`)) return;
+            try {
+                await grim('workspace.destroy', { id });
+                toast('destroyed', 'ok');
+                refreshWorkspaces();
+            } catch (e) {
+                toast('workspace.destroy failed: ' + e.message, 'err');
+            }
+        }
+
+        async function openWorkspaceAssign(workspace_id) {
+            let agents = [];
+            try { agents = (await grim('agent.circle', {})).agents || []; } catch (e) {}
+            const opts = agents.length
+                ? agents.map(a => `<option value="${escAttr(a.id)}">${esc(a.id)} — ${esc((a.task||'').slice(0,50))}</option>`).join('')
+                : `<option value="">no agents</option>`;
+            openModal(`
+                <h2>Assign agent to ${esc(workspace_id)}</h2>
+                <div class="form-grid">
+                    <label for="assign-agent">Agent</label>
+                    <select id="assign-agent">${opts}</select>
+                </div>
+                <div class="modal-actions">
+                    <button class="btn btn-sm" style="background:var(--surface2);color:var(--text)" onclick="closeModal()">Cancel</button>
+                    <button class="btn" onclick="confirmAssign('${escAttr(workspace_id)}')">Assign</button>
+                </div>
+            `);
+        }
+
+        async function confirmAssign(workspace_id) {
+            const agent_id = document.getElementById('assign-agent').value;
+            if (!agent_id) { toast('no agent selected', 'err'); return; }
+            try {
+                await grim('workspace.assign', { workspace_id, agent_id });
+                toast('assigned', 'ok');
+                closeModal();
+                refreshWorkspaces();
+            } catch (e) {
+                toast('workspace.assign failed: ' + e.message, 'err');
+            }
+        }
+
+        async function openWorkspaceMemory(workspace_id) {
+            currentWorkspaceId = workspace_id;
+            openModal(`
+                <h2>Memory · ${esc(workspace_id)}</h2>
+                <div class="form-grid" style="grid-template-columns: 90px 1fr auto auto">
+                    <label for="mem-key">Key</label>
+                    <input id="mem-key" type="text" placeholder="namespace/key">
+                    <button class="btn btn-sm" onclick="memGet()">Get</button>
+                    <button class="btn btn-sm btn-danger" onclick="memDelete()">Delete</button>
+                    <label for="mem-value">Value</label>
+                    <textarea id="mem-value" rows="4" placeholder='{"json": "or plain text"}' style="font-family:inherit;resize:vertical"></textarea>
+                    <div></div>
+                    <button class="btn btn-sm" onclick="memPut()">Put</button>
+                </div>
+                <h2 style="margin-top:1.5rem">Keys</h2>
+                <div style="margin-bottom:0.5rem">
+                    <input id="mem-prefix" type="text" placeholder="prefix (optional)" style="background:var(--bg);border:1px solid var(--border);border-radius:4px;padding:0.4rem 0.6rem;color:var(--text);font-family:inherit;font-size:0.85rem;width:14rem">
+                    <button class="btn btn-sm" onclick="memList()">List</button>
+                </div>
+                <table class="grid-table"><thead><tr><th>Key</th><th>Version</th><th>Size</th><th>Updated</th><th></th></tr></thead><tbody id="mem-tbody"><tr><td colspan="5" class="muted">click List</td></tr></tbody></table>
+                <div class="modal-actions"><button class="btn btn-sm" style="background:var(--surface2);color:var(--text)" onclick="closeModal()">Close</button></div>
+            `);
+            memList();
+        }
+
+        async function memList() {
+            const prefix = document.getElementById('mem-prefix').value.trim();
+            const params = { workspace_id: currentWorkspaceId };
+            if (prefix) params.prefix = prefix;
+            try {
+                const r = await grim('memory.list', params);
+                const entries = r.entries || [];
+                const tbody = document.getElementById('mem-tbody');
+                tbody.innerHTML = entries.length
+                    ? entries.map(e => `
+                        <tr onclick="document.getElementById('mem-key').value='${escAttr(e.key)}'; memGet()" style="cursor:pointer">
+                            <td><code>${esc(e.key)}</code></td>
+                            <td>${e.version}</td>
+                            <td class="muted">${e.value_size} B</td>
+                            <td class="muted">${new Date(e.updated_at * 1000).toLocaleString()}</td>
+                            <td class="actions"><button class="btn btn-sm" onclick="event.stopPropagation();document.getElementById('mem-key').value='${escAttr(e.key)}';memGet()">View</button></td>
+                        </tr>`).join('')
+                    : `<tr><td colspan="5" class="muted">no entries</td></tr>`;
+            } catch (e) {
+                toast('memory.list failed: ' + e.message, 'err');
+            }
+        }
+
+        async function memGet() {
+            const key = document.getElementById('mem-key').value.trim();
+            if (!key) return;
+            try {
+                const r = await grim('memory.get', { workspace_id: currentWorkspaceId, key });
+                document.getElementById('mem-value').value = typeof r.value === 'string'
+                    ? r.value : JSON.stringify(r.value, null, 2);
+                toast('version ' + r.version, 'ok');
+            } catch (e) {
+                toast('memory.get failed: ' + e.message, 'err');
+            }
+        }
+
+        async function memPut() {
+            const key = document.getElementById('mem-key').value.trim();
+            const raw = document.getElementById('mem-value').value;
+            if (!key) { toast('key is required', 'err'); return; }
+            let value;
+            try { value = JSON.parse(raw); } catch { value = raw; }
+            try {
+                const r = await grim('memory.put', { workspace_id: currentWorkspaceId, key, value });
+                toast('put → version ' + r.version, 'ok');
+                memList();
+            } catch (e) {
+                toast('memory.put failed: ' + e.message, 'err');
+            }
+        }
+
+        async function memDelete() {
+            const key = document.getElementById('mem-key').value.trim();
+            if (!key) return;
+            if (!confirm(`Delete key ${key}?`)) return;
+            try {
+                await grim('memory.delete', { workspace_id: currentWorkspaceId, key });
+                toast('deleted', 'ok');
+                document.getElementById('mem-value').value = '';
+                memList();
+            } catch (e) {
+                toast('memory.delete failed: ' + e.message, 'err');
+            }
+        }
+
+        // --- Health page -------------------------------------------------
+        // Aggregates daemon.status + agent.queue.list + budget.list +
+        // /metrics scrape. /metrics is Prometheus text — we surface a few
+        // headline numbers and expose the full body in a <details> block.
+        function formatUptime(secs) {
+            const d = Math.floor(secs / 86400);
+            const h = Math.floor((secs % 86400) / 3600);
+            const m = Math.floor((secs % 3600) / 60);
+            return [d && (d + 'd'), h && (h + 'h'), m && (m + 'm')].filter(Boolean).join(' ') || (secs + 's');
+        }
+
+        function statTile(label, value, sub) {
+            return `<div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:1rem;min-width:9rem;flex:1">
+                <div class="muted" style="font-size:0.7rem;text-transform:uppercase;letter-spacing:0.08em">${esc(label)}</div>
+                <div style="font-size:1.4rem;margin-top:0.3rem">${esc(String(value))}</div>
+                ${sub ? `<div class="muted" style="font-size:0.75rem;margin-top:0.2rem">${esc(sub)}</div>` : ''}
+            </div>`;
+        }
+
+        async function refreshHealth() {
+            try {
+                const s = await grim('daemon.status', {});
+                document.getElementById('health-tiles').innerHTML = [
+                    statTile('Daemon', s.daemon_id ? 'grimd-' + s.daemon_id : '—', 'id'),
+                    statTile('Uptime', formatUptime(s.uptime_secs || 0)),
+                    statTile('Agents', s.agent_count || 0, `${s.active_count || 0} active · ${s.queued_count || 0} queued`),
+                    statTile('Concurrency', s.max_concurrent_agents || 0, 'max concurrent'),
+                ].join('');
+            } catch (e) {
+                document.getElementById('health-tiles').innerHTML = `<div class="muted">daemon.status failed: ${esc(e.message)}</div>`;
+            }
+
+            try {
+                const q = await grim('agent.queue.list', {});
+                const entries = q.entries || q.queue || [];
+                const tbody = document.getElementById('queue-tbody');
+                tbody.innerHTML = entries.length
+                    ? entries.map(e => `
+                        <tr>
+                            <td><code>${esc((e.id||'').slice(0,12))}</code></td>
+                            <td><span class="badge">${esc(e.lane||'')}</span></td>
+                            <td class="muted">${formatAge(e.age_seconds||0)}</td>
+                            <td>${esc(e.provider||'')}</td>
+                            <td>${esc(e.model||'')}</td>
+                            <td>${e.block_reason ? '<span style="color:var(--red)">'+esc(e.block_reason)+'</span>' : '<span class="muted">—</span>'}</td>
+                            <td><code style="font-family:inherit">${esc((e.task_text||'').slice(0,60))}</code></td>
+                        </tr>`).join('')
+                    : `<tr><td colspan="7" class="muted" style="text-align:center;padding:1rem">queue empty</td></tr>`;
+            } catch (e) {
+                document.getElementById('queue-tbody').innerHTML = `<tr><td colspan="7" class="muted">queue.list failed: ${esc(e.message)}</td></tr>`;
+            }
+
+            try {
+                const b = await grim('budget.list', {});
+                const tbody = document.getElementById('budget-tbody');
+                const budgets = b.budgets || [];
+                tbody.innerHTML = budgets.length
+                    ? budgets.map(x => {
+                        const pct = x.daily_usd > 0 ? (x.spent_usd / x.daily_usd) * 100 : 0;
+                        const barColor = pct >= 90 ? 'var(--red)' : pct >= 70 ? 'var(--yellow)' : 'var(--green)';
+                        return `
+                        <tr>
+                            <td>${esc(x.name)}</td>
+                            <td>$${(x.spent_usd||0).toFixed(2)} / $${(x.daily_usd||0).toFixed(2)}</td>
+                            <td><div style="background:var(--surface2);height:8px;border-radius:4px;overflow:hidden;width:120px"><div style="background:${barColor};height:100%;width:${Math.min(100, pct).toFixed(0)}%"></div></div></td>
+                            <td class="muted">${(x.providers||[]).map(esc).join(', ')}</td>
+                            <td>${x.hard ? '<span class="badge" style="background:rgba(248,113,113,0.15);color:var(--red)">hard</span>' : '<span class="badge">soft</span>'}</td>
+                        </tr>`;
+                    }).join('')
+                    : `<tr><td colspan="5" class="muted">no budgets configured (day ${esc(b.day||'')})</td></tr>`;
+            } catch (e) {
+                document.getElementById('budget-tbody').innerHTML = `<tr><td colspan="5" class="muted">budget.list failed: ${esc(e.message)}</td></tr>`;
+            }
+
+            // /metrics is a Prometheus text exposition — fetch raw and show.
+            try {
+                const res = await fetch('/metrics');
+                const text = await res.text();
+                document.getElementById('metrics-raw').textContent = text;
+            } catch (e) {
+                document.getElementById('metrics-raw').textContent = 'fetch /metrics failed: ' + e.message;
+            }
+        }
+
+        function renderHealthPage() {
+            const el = document.querySelector('[data-page="health"]');
+            if (!el.dataset.rendered) {
+                el.innerHTML = `
+                    <div style="display:flex;gap:0.75rem;margin-bottom:1.5rem;flex-wrap:wrap" id="health-tiles"></div>
+                    <div class="card">
+                        <h3>Queue</h3>
+                        <table class="grid-table">
+                            <thead><tr><th>ID</th><th>Lane</th><th>Age</th><th>Provider</th><th>Model</th><th>Block reason</th><th>Task</th></tr></thead>
+                            <tbody id="queue-tbody"></tbody>
+                        </table>
+                    </div>
+                    <div class="card">
+                        <h3>Budgets</h3>
+                        <table class="grid-table">
+                            <thead><tr><th>Name</th><th>Spend</th><th></th><th>Providers</th><th>Mode</th></tr></thead>
+                            <tbody id="budget-tbody"></tbody>
+                        </table>
+                    </div>
+                    <div class="card">
+                        <details>
+                            <summary style="cursor:pointer"><strong style="color:var(--text-dim);text-transform:uppercase;letter-spacing:0.08em;font-size:0.8rem">Prometheus /metrics (raw)</strong></summary>
+                            <pre id="metrics-raw" style="background:var(--bg);border:1px solid var(--border);border-radius:4px;padding:1rem;margin-top:0.75rem;max-height:50vh;overflow:auto;font-size:0.75rem">loading…</pre>
+                        </details>
+                    </div>
+                    <p class="muted" style="font-size:0.8rem;color:var(--text-dim);margin-top:1rem">
+                        Equivalent CLI: <code>grim status</code>, <code>grim queue</code>, <code>grim budget</code>; metrics at <code>GET /metrics</code>.
+                    </p>
+                `;
+                el.dataset.rendered = '1';
+            }
+            refreshHealth();
+        }
+
+        // --- Scrolls page ------------------------------------------------
+        // List view → click → detail with task DAG + state counts + actions.
+        async function refreshScrollsList() {
+            const tbody = document.getElementById('scroll-tbody');
+            if (!tbody) return;
+            try {
+                const r = await grim('scroll.list', {});
+                const scrolls = r.scrolls || [];
+                tbody.innerHTML = scrolls.length
+                    ? scrolls.map(s => `
+                        <tr>
+                            <td><a href="#/scrolls/${escAttr(s.id)}" style="color:var(--accent);text-decoration:none">${esc(s.id || '')}</a></td>
+                            <td>${esc(s.name || '')}</td>
+                            <td><span class="badge">${esc(s.state || '')}</span></td>
+                            <td class="muted">${s.max_concurrency || ''}</td>
+                            <td class="muted">${s.source_path ? esc(s.source_path) : ''}</td>
+                        </tr>`).join('')
+                    : `<tr><td colspan="5" class="muted" style="text-align:center;padding:2rem">no scrolls inscribed</td></tr>`;
+            } catch (e) {
+                tbody.innerHTML = `<tr><td colspan="5" class="muted">scroll.list failed: ${esc(e.message)}</td></tr>`;
+            }
+        }
+
+        async function submitScrollInscribe() {
+            const spec_path = document.getElementById('scroll-spec').value.trim();
+            const maxc = document.getElementById('scroll-maxc').value.trim();
+            if (!spec_path) { toast('spec path is required', 'err'); return; }
+            const params = { spec_path };
+            if (maxc) params.max_concurrency = parseInt(maxc, 10);
+            try {
+                const r = await grim('scroll.inscribe', params);
+                toast(`inscribed ${r?.id || ''} (${r?.task_count || 0} tasks)`, 'ok');
+                document.getElementById('scroll-spec').value = '';
+                refreshScrollsList();
+            } catch (e) {
+                toast('scroll.inscribe failed: ' + e.message, 'err');
+            }
+        }
+
+        function taskStateColor(s) {
+            return ({
+                Complete: 'var(--green)', Active: 'var(--yellow)', Failed: 'var(--red)',
+                Blocked: 'var(--text-dim)', Ready: 'var(--blue)', Skipped: 'var(--purple)',
+            })[s] || 'var(--text-dim)';
+        }
+
+        async function showScrollDetail(id) {
+            const el = document.querySelector('[data-page="scrolls"]');
+            el.innerHTML = `<div class="muted">loading scroll ${esc(id)}…</div>`;
+            el.dataset.rendered = '1';
+            try {
+                const s = await grim('scroll.status', { id });
+                const counts = ['total','ready','active','blocked','complete','failed','skipped']
+                    .map(k => `<span class="badge" style="margin-right:0.4rem">${k} ${s[k]}</span>`).join('');
+                const tasks = (s.tasks || []).map(t => `
+                    <tr>
+                        <td><code>${esc(t.task.name)}</code></td>
+                        <td><span style="color:${taskStateColor(t.task.state)}">${esc(t.task.state)}</span></td>
+                        <td>${t.task.agent_id ? '<code>' + esc(t.task.agent_id.slice(0,12)) + '</code>' : '<span class="muted">—</span>'}</td>
+                        <td class="muted">${(t.depends_on_names||[]).map(n => esc(n)).join(', ') || '—'}</td>
+                        <td class="muted">${esc(t.task.model || '')}</td>
+                        <td><code style="font-family:inherit">${esc((t.task.prompt || '').slice(0, 60))}</code></td>
+                    </tr>`).join('');
+                const conflicts = (s.conflicts || []).length
+                    ? `<div class="card" style="border-color:var(--red)"><h3 style="color:var(--red)">Conflicts</h3><pre>${esc(JSON.stringify(s.conflicts, null, 2))}</pre></div>`
+                    : '';
+                el.innerHTML = `
+                    <div style="margin-bottom:1rem"><a href="#/scrolls" style="color:var(--text-dim);text-decoration:none">← all scrolls</a></div>
+                    <div class="card">
+                        <h3>${esc(s.scroll.name)} · <code>${esc(s.scroll.id)}</code> · <span class="badge">${esc(s.scroll.state)}</span></h3>
+                        <div style="margin:0.5rem 0 1rem">${counts}</div>
+                        <div class="modal-actions" style="justify-content:flex-start">
+                            <button class="btn btn-sm" onclick="actScroll('${escAttr(id)}', 'activate')">Activate</button>
+                            <button class="btn btn-sm btn-danger" onclick="actScroll('${escAttr(id)}', 'abandon')">Abandon</button>
+                            <button class="btn btn-sm" style="background:var(--surface2);color:var(--text)" onclick="showScrollDetail('${escAttr(id)}')">Refresh</button>
+                        </div>
+                    </div>
+                    ${conflicts}
+                    <div class="card">
+                        <h3>Tasks (${s.tasks?.length || 0})</h3>
+                        <table class="grid-table">
+                            <thead><tr><th>Name</th><th>State</th><th>Agent</th><th>Depends on</th><th>Model</th><th>Prompt</th></tr></thead>
+                            <tbody>${tasks || '<tr><td colspan="6" class="muted">no tasks</td></tr>'}</tbody>
+                        </table>
+                    </div>
+                `;
+            } catch (e) {
+                el.innerHTML = `<div style="margin-bottom:1rem"><a href="#/scrolls" style="color:var(--text-dim);text-decoration:none">← all scrolls</a></div>
+                    <div class="card"><h3>Error</h3><pre>${esc(e.message)}</pre></div>`;
+            }
+        }
+
+        async function actScroll(id, action) {
+            const method = action === 'activate' ? 'scroll.activate' : 'scroll.abandon';
+            if (action === 'abandon' && !confirm(`Abandon scroll ${id}?`)) return;
+            try {
+                await grim(method, { id });
+                toast(action + 'd', 'ok');
+                showScrollDetail(id);
+            } catch (e) {
+                toast(method + ' failed: ' + e.message, 'err');
+            }
+        }
+
+        function renderScrollsListPage() {
+            const el = document.querySelector('[data-page="scrolls"]');
+            el.innerHTML = `
+                <div class="card">
+                    <h3>Inscribe scroll</h3>
+                    <div class="form-grid">
+                        <label for="scroll-spec">Spec path</label>
+                        <input id="scroll-spec" type="text" placeholder="/abs/path/to/scroll.toml">
+                        <label for="scroll-maxc">Max concurrency</label>
+                        <input id="scroll-maxc" type="number" placeholder="(optional, default from spec)">
+                        <div class="form-actions">
+                            <button class="btn" onclick="submitScrollInscribe()">Inscribe</button>
+                            <button class="btn btn-sm" style="background:var(--surface2);color:var(--text)" onclick="refreshScrollsList()">Refresh</button>
+                        </div>
+                    </div>
+                </div>
+                <div class="card">
+                    <h3>Scrolls</h3>
+                    <table class="grid-table">
+                        <thead><tr><th>ID</th><th>Name</th><th>State</th><th>Max conc.</th><th>Source</th></tr></thead>
+                        <tbody id="scroll-tbody"></tbody>
+                    </table>
+                </div>
+                <p class="muted" style="font-size:0.8rem;color:var(--text-dim);margin-top:1rem">
+                    Equivalent CLI: <code>grim scroll inscribe</code>, <code>grim scroll list</code>, <code>grim scroll status</code>, <code>grim scroll activate</code>, <code>grim scroll abandon</code>.
+                </p>
+            `;
+            el.dataset.rendered = '1';
+            refreshScrollsList();
+        }
+
+        function renderScrollsPage(rest) {
+            const id = rest && rest[0];
+            if (id) {
+                showScrollDetail(id);
+            } else {
+                renderScrollsListPage();
+            }
+        }
+
+        // --- Mail page ---------------------------------------------------
+        // The mail bus is agent-scoped: mail.list needs an agent_id. We pick
+        // an "inbox agent" from the dropdown and the rest of the panel
+        // operates against that agent. mail.send `to` accepts either an
+        // agent id or `topic:<name>` for topic broadcasts.
+        let currentMailAgent = null;
+
+        async function refreshMailAgents() {
+            const sel = document.getElementById('mail-agent');
+            if (!sel) return;
+            try {
+                const result = await grim('agent.circle', {});
+                const agents = result.agents || [];
+                const cur = sel.value;
+                sel.innerHTML = agents.length
+                    ? agents.map(a => `<option value="${escAttr(a.id)}">${esc(a.id)} — ${esc((a.task||'').slice(0,60))}</option>`).join('')
+                    : `<option value="">no agents</option>`;
+                if (cur && agents.some(a => a.id === cur)) sel.value = cur;
+                currentMailAgent = sel.value || null;
+            } catch (e) {
+                sel.innerHTML = `<option value="">agent.circle failed</option>`;
+            }
+        }
+
+        async function refreshMailInbox() {
+            currentMailAgent = document.getElementById('mail-agent').value;
+            const tbody = document.getElementById('mail-tbody');
+            if (!tbody || !currentMailAgent) return;
+            const state = document.getElementById('mail-filter-state').value;
+            const params = { agent_id: currentMailAgent, limit: 100 };
+            if (state) params.state = state;
+            try {
+                const r = await grim('mail.list', params);
+                renderMailTable(r.mails || []);
+            } catch (e) {
+                tbody.innerHTML = `<tr><td colspan="6" class="muted">mail.list failed: ${esc(e.message)}</td></tr>`;
+            }
+        }
+
+        function mailStateColor(s) {
+            return ({
+                Pending: 'var(--yellow)',
+                Delivered: 'var(--green)',
+                Failed: 'var(--red)',
+                Acked: 'var(--blue)',
+            })[s] || 'var(--text-dim)';
+        }
+
+        function renderMailTable(mails) {
+            const tbody = document.getElementById('mail-tbody');
+            if (!mails.length) {
+                tbody.innerHTML = `<tr><td colspan="6" class="muted" style="text-align:center;padding:2rem">inbox empty</td></tr>`;
+                return;
+            }
+            tbody.innerHTML = mails.map(m => {
+                const preview = (m.body || '').slice(0, 80);
+                const from = m.sender_id ? esc(m.sender_id.slice(0, 8)) : '<span class="muted">—</span>';
+                const topic = m.topic ? `<span class="badge badge-mail">${esc(m.topic)}</span>` : '';
+                const reply = m.in_reply_to ? `<div class="muted" style="font-size:0.7rem">↳ ${esc(m.in_reply_to.slice(0,12))}</div>` : '';
+                return `
+                    <tr>
+                        <td><code>${esc(m.id.slice(0,12))}</code>${reply}</td>
+                        <td>${from}</td>
+                        <td>${topic}</td>
+                        <td><code style="font-family:inherit">${esc(preview)}</code></td>
+                        <td><span style="color:${mailStateColor(m.state)}">${esc(m.state)}</span><div class="muted" style="font-size:0.7rem">${new Date(m.created_at*1000).toLocaleString()}</div></td>
+                        <td class="actions">
+                            <button class="btn btn-sm" onclick="openMailView('${escAttr(m.id)}', ${JSON.stringify(m.body).replace(/'/g, '&#39;')}, '${escAttr(m.sender_id||'')}', '${escAttr(m.topic||'')}', '${escAttr(m.in_reply_to||'')}')">Open</button>
+                            <button class="btn btn-sm" onclick="ackMail('${escAttr(m.id)}')">Ack</button>
+                        </td>
+                    </tr>`;
+            }).join('');
+        }
+
+        function openMailView(id, body, sender, topic, inReplyTo) {
+            openModal(`
+                <h2>Mail ${esc(id)}</h2>
+                <div class="muted" style="font-size:0.8rem;margin-bottom:0.5rem">
+                    from: <code>${esc(sender || '—')}</code>
+                    ${topic ? ' · topic: <code>' + esc(topic) + '</code>' : ''}
+                    ${inReplyTo ? ' · reply to: <code>' + esc(inReplyTo) + '</code>' : ''}
+                </div>
+                <pre>${esc(body)}</pre>
+                <h2 style="margin-top:1.5rem">Reply</h2>
+                <textarea id="reply-body" rows="4" placeholder="reply body…" style="width:100%;background:var(--bg);border:1px solid var(--border);border-radius:4px;padding:0.6rem;color:var(--text);font-family:inherit;font-size:0.85rem;resize:vertical"></textarea>
+                <div class="modal-actions">
+                    <button class="btn btn-sm" style="background:var(--surface2);color:var(--text)" onclick="closeModal()">Close</button>
+                    <button class="btn" onclick="replyToMail('${escAttr(id)}', '${escAttr(sender)}')">Send reply</button>
+                </div>
+            `);
+        }
+
+        async function replyToMail(in_reply_to, to) {
+            const body = document.getElementById('reply-body').value;
+            if (!body.trim()) { toast('reply body is empty', 'err'); return; }
+            if (!to) { toast('original mail has no sender to reply to', 'err'); return; }
+            try {
+                await grim('mail.send', { to, body, sender: currentMailAgent, in_reply_to });
+                toast('reply sent', 'ok');
+                closeModal();
+                refreshMailInbox();
+            } catch (e) {
+                toast('mail.send failed: ' + e.message, 'err');
+            }
+        }
+
+        async function ackMail(mail_id) {
+            try {
+                await grim('mail.ack', { mail_id });
+                toast('acked', 'ok');
+                refreshMailInbox();
+            } catch (e) {
+                toast('mail.ack failed: ' + e.message, 'err');
+            }
+        }
+
+        async function submitMailSend() {
+            const to = document.getElementById('mail-to').value.trim();
+            const body = document.getElementById('mail-body').value;
+            if (!to || !body.trim()) { toast('to and body are required', 'err'); return; }
+            try {
+                const r = await grim('mail.send', { to, body, sender: currentMailAgent });
+                toast(`sent → ${r.delivered} recipient${r.delivered===1?'':'s'}`, 'ok');
+                document.getElementById('mail-body').value = '';
+                refreshMailInbox();
+            } catch (e) {
+                toast('mail.send failed: ' + e.message, 'err');
+            }
+        }
+
+        async function refreshTopics() {
+            const tbody = document.getElementById('topics-tbody');
+            if (!tbody) return;
+            try {
+                const r = await grim('mail.topics', {});
+                const topics = r.topics || [];
+                tbody.innerHTML = topics.length
+                    ? topics.map(t => `
+                        <tr>
+                            <td><code>${esc(t.topic)}</code></td>
+                            <td>${t.subscriber_count != null ? t.subscriber_count : (t.count || 0)}</td>
+                            <td class="actions">
+                                <button class="btn btn-sm" onclick="document.getElementById('mail-to').value='topic:${escAttr(t.topic)}'">Send to…</button>
+                            </td>
+                        </tr>`).join('')
+                    : `<tr><td colspan="3" class="muted">no topics</td></tr>`;
+            } catch (e) {
+                tbody.innerHTML = `<tr><td colspan="3" class="muted">mail.topics failed: ${esc(e.message)}</td></tr>`;
+            }
+        }
+
+        async function submitSubscribe() {
+            const topic = document.getElementById('sub-topic').value.trim();
+            if (!topic || !currentMailAgent) { toast('select agent + topic', 'err'); return; }
+            try {
+                const r = await grim('mail.subscribe', { agent_id: currentMailAgent, topic });
+                toast('subscribed · id ' + r.subscription_id, 'ok');
+                document.getElementById('sub-topic').value = '';
+                refreshTopics();
+            } catch (e) {
+                toast('mail.subscribe failed: ' + e.message, 'err');
+            }
+        }
+
+        async function submitUnsubscribe() {
+            const subscription_id = document.getElementById('unsub-id').value.trim();
+            if (!subscription_id) { toast('subscription id is required', 'err'); return; }
+            try {
+                await grim('mail.unsubscribe', { subscription_id });
+                toast('unsubscribed', 'ok');
+                document.getElementById('unsub-id').value = '';
+                refreshTopics();
+            } catch (e) {
+                toast('mail.unsubscribe failed: ' + e.message, 'err');
+            }
+        }
+
+        function renderMailPage() {
+            const el = document.querySelector('[data-page="mail"]');
+            if (!el.dataset.rendered) {
+                el.innerHTML = `
+                    <div class="card">
+                        <h3>Inbox</h3>
+                        <div style="display:flex;gap:0.6rem;align-items:center;flex-wrap:wrap;margin-bottom:1rem">
+                            <label class="muted" style="font-size:0.8rem">Agent:</label>
+                            <select id="mail-agent" onchange="refreshMailInbox()" style="background:var(--bg);border:1px solid var(--border);border-radius:4px;padding:0.4rem 0.6rem;color:var(--text);font-family:inherit;font-size:0.85rem"></select>
+                            <label class="muted" style="font-size:0.8rem">State:</label>
+                            <select id="mail-filter-state" onchange="refreshMailInbox()" style="background:var(--bg);border:1px solid var(--border);border-radius:4px;padding:0.4rem 0.6rem;color:var(--text);font-family:inherit;font-size:0.85rem">
+                                <option value="">all</option>
+                                <option value="Pending">Pending</option>
+                                <option value="Delivered">Delivered</option>
+                                <option value="Acked">Acked</option>
+                                <option value="Failed">Failed</option>
+                            </select>
+                            <button class="btn btn-sm" onclick="refreshMailInbox()">Refresh</button>
+                        </div>
+                        <table class="grid-table">
+                            <thead><tr><th>ID</th><th>From</th><th>Topic</th><th>Body</th><th>State</th><th></th></tr></thead>
+                            <tbody id="mail-tbody"></tbody>
+                        </table>
+                    </div>
+                    <div class="card">
+                        <h3>Send</h3>
+                        <div class="form-grid">
+                            <label for="mail-to">To</label>
+                            <input id="mail-to" type="text" placeholder="agent-id   or   topic:alerts">
+                            <label for="mail-body">Body</label>
+                            <textarea id="mail-body" rows="3" placeholder="message body" style="font-family:inherit;resize:vertical"></textarea>
+                            <div class="form-actions">
+                                <button class="btn" onclick="submitMailSend()">Send</button>
+                                <span class="muted" style="font-size:0.75rem;align-self:center">sender = current inbox agent</span>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="card">
+                        <h3>Topics</h3>
+                        <table class="grid-table">
+                            <thead><tr><th>Topic</th><th>Subscribers</th><th></th></tr></thead>
+                            <tbody id="topics-tbody"></tbody>
+                        </table>
+                        <div class="form-grid" style="margin-top:1rem">
+                            <label for="sub-topic">Subscribe</label>
+                            <input id="sub-topic" type="text" placeholder="alerts.deploy">
+                            <div class="form-actions">
+                                <button class="btn btn-sm" onclick="submitSubscribe()">Subscribe (current agent)</button>
+                            </div>
+                            <label for="unsub-id">Unsubscribe</label>
+                            <input id="unsub-id" type="text" placeholder="subscription id">
+                            <div class="form-actions">
+                                <button class="btn btn-sm btn-danger" onclick="submitUnsubscribe()">Unsubscribe</button>
+                            </div>
+                        </div>
+                    </div>
+                    <p class="muted" style="font-size:0.8rem;color:var(--text-dim);margin-top:1rem">
+                        Equivalent CLI: <code>grim mail send</code>, <code>grim mail list</code>, <code>grim mail ack</code>, <code>grim mail subscribe</code>, <code>grim mail topics</code>.
+                    </p>
+                `;
+                el.dataset.rendered = '1';
+            }
+            refreshMailAgents().then(() => { refreshMailInbox(); refreshTopics(); });
+        }
+
+        function renderWorkspacesPage() {
+            const el = document.querySelector('[data-page="workspaces"]');
+            if (!el.dataset.rendered) {
+                el.innerHTML = `
+                    <div class="card">
+                        <h3>Create workspace</h3>
+                        <div class="form-grid">
+                            <label for="ws-name">Name</label>
+                            <input id="ws-name" type="text" placeholder="feature-x">
+                            <label for="ws-repo">Repo path</label>
+                            <input id="ws-repo" type="text" placeholder="/abs/path/to/repo">
+                            <label for="ws-branch">Branch</label>
+                            <input id="ws-branch" type="text" placeholder="main">
+                            <div class="form-actions">
+                                <button class="btn" onclick="submitWorkspaceCreate()">Create</button>
+                                <button class="btn btn-sm" style="background:var(--surface2);color:var(--text)" onclick="refreshWorkspaces()">Refresh</button>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="card">
+                        <h3>Workspaces</h3>
+                        <table class="grid-table">
+                            <thead><tr><th>ID</th><th>Kind</th><th>Path</th><th>Branch</th><th>State</th><th></th></tr></thead>
+                            <tbody id="ws-tbody"></tbody>
+                        </table>
+                        <div id="ws-orphans" class="muted" style="margin-top:1rem;font-size:0.8rem"></div>
+                    </div>
+                    <p class="muted" style="font-size:0.8rem;color:var(--text-dim);margin-top:1rem">
+                        Equivalent CLI: <code>grim workspace create</code>, <code>grim workspace list</code>, <code>grim workspace assign</code>, <code>grim workspace destroy</code>, <code>grim memory put/get/list/delete</code>.
+                    </p>
+                `;
+                el.dataset.rendered = '1';
+            }
+            refreshWorkspaces();
+        }
+
+        // --- Federation page --------------------------------------------
+        // Peers + cross-daemon federations (namespaces, workspaces, topics).
+        // RPCs: peer.add/list/remove/ping/local-cert, ns.list, ns.federate,
+        // topic.federate/unfederate, workspace.federate/unfederate.
+        async function refreshPeers() {
+            const tbody = document.getElementById('peer-tbody');
+            if (!tbody) return;
+            try {
+                const r = await grim('peer.list', {});
+                const peers = r.peers || [];
+                tbody.innerHTML = peers.length
+                    ? peers.map(p => `
+                        <tr>
+                            <td><code>${esc(p.id || p.peer_id || '')}</code></td>
+                            <td><code>${esc(p.endpoint || p.address || '')}</code></td>
+                            <td>${p.fingerprint ? '<code style="font-size:0.7rem">' + esc((p.fingerprint||'').slice(0,24)) + '…</code>' : '<span class="muted">—</span>'}</td>
+                            <td><span class="badge">${esc(p.state || p.status || 'unknown')}</span></td>
+                            <td class="actions">
+                                <button class="btn btn-sm" onclick="pingPeer('${escAttr(p.id || p.peer_id)}')">Ping</button>
+                                <button class="btn btn-sm btn-danger" onclick="removePeer('${escAttr(p.id || p.peer_id)}')">Remove</button>
+                            </td>
+                        </tr>`).join('')
+                    : `<tr><td colspan="5" class="muted" style="text-align:center;padding:2rem">no peers configured</td></tr>`;
+            } catch (e) {
+                tbody.innerHTML = `<tr><td colspan="5" class="muted">peer.list failed: ${esc(e.message)}</td></tr>`;
+            }
+        }
+
+        async function pingPeer(id) {
+            try {
+                const r = await grim('peer.ping', { peer_id: id });
+                toast('pong · rtt ' + (r?.rtt_ms ?? '?') + 'ms', 'ok');
+            } catch (e) {
+                toast('peer.ping failed: ' + e.message, 'err');
+            }
+        }
+
+        async function removePeer(id) {
+            if (!confirm(`Remove peer ${id}?`)) return;
+            try {
+                await grim('peer.remove', { peer_id: id });
+                toast('removed', 'ok');
+                refreshPeers();
+            } catch (e) {
+                toast('peer.remove failed: ' + e.message, 'err');
+            }
+        }
+
+        async function submitPeerAdd() {
+            const peer_id = document.getElementById('peer-id').value.trim();
+            const endpoint = document.getElementById('peer-endpoint').value.trim();
+            const fingerprint = document.getElementById('peer-fingerprint').value.trim();
+            if (!peer_id || !endpoint || !fingerprint) {
+                toast('id, endpoint, fingerprint all required', 'err');
+                return;
+            }
+            try {
+                await grim('peer.add', { peer_id, endpoint, fingerprint });
+                toast('peer added', 'ok');
+                document.getElementById('peer-id').value = '';
+                document.getElementById('peer-endpoint').value = '';
+                document.getElementById('peer-fingerprint').value = '';
+                refreshPeers();
+            } catch (e) {
+                toast('peer.add failed: ' + e.message, 'err');
+            }
+        }
+
+        async function showLocalCert() {
+            try {
+                const r = await grim('peer.local-cert', {});
+                openModal(`
+                    <h2>This daemon's identity</h2>
+                    <div class="muted" style="font-size:0.8rem;margin-bottom:0.5rem">Share these with a peer so they can <code>peer add</code> you back.</div>
+                    <div class="form-grid" style="grid-template-columns:130px 1fr">
+                        <label>peer_id</label><div><code>${esc(r.peer_id || r.id || '')}</code></div>
+                        <label>endpoint</label><div><code>${esc(r.endpoint || '(not advertised)')}</code></div>
+                        <label>fingerprint</label><div><code style="word-break:break-all">${esc(r.fingerprint || '')}</code></div>
+                    </div>
+                    ${r.cert_pem ? `<h2 style="margin-top:1rem">cert.pem</h2><pre>${esc(r.cert_pem)}</pre>` : ''}
+                    <div class="modal-actions"><button class="btn" onclick="closeModal()">Close</button></div>
+                `);
+            } catch (e) {
+                toast('peer.local-cert failed: ' + e.message, 'err');
+            }
+        }
+
+        async function submitTopicFederate() {
+            const peer_id = document.getElementById('fed-topic-peer').value.trim();
+            const topic = document.getElementById('fed-topic-name').value.trim();
+            if (!peer_id || !topic) { toast('peer + topic required', 'err'); return; }
+            try {
+                await grim('topic.federate', { peer_id, topic });
+                toast('topic federated', 'ok');
+            } catch (e) {
+                toast('topic.federate failed: ' + e.message, 'err');
+            }
+        }
+
+        async function submitNsFederate() {
+            const peer_id = document.getElementById('fed-ns-peer').value.trim();
+            const namespace = document.getElementById('fed-ns-name').value.trim();
+            if (!peer_id || !namespace) { toast('peer + namespace required', 'err'); return; }
+            try {
+                await grim('ns.federate', { peer_id, namespace });
+                toast('namespace federated', 'ok');
+            } catch (e) {
+                toast('ns.federate failed: ' + e.message, 'err');
+            }
+        }
+
+        async function submitWsFederate() {
+            const peer_id = document.getElementById('fed-ws-peer').value.trim();
+            const workspace_id = document.getElementById('fed-ws-id').value.trim();
+            if (!peer_id || !workspace_id) { toast('peer + workspace required', 'err'); return; }
+            try {
+                await grim('workspace.federate', { peer_id, workspace_id });
+                toast('workspace federated', 'ok');
+            } catch (e) {
+                toast('workspace.federate failed: ' + e.message, 'err');
+            }
+        }
+
+        function renderFederationPage() {
+            const el = document.querySelector('[data-page="federation"]');
+            if (!el.dataset.rendered) {
+                el.innerHTML = `
+                    <div class="card">
+                        <h3>This daemon</h3>
+                        <div style="display:flex;gap:0.5rem;align-items:center">
+                            <button class="btn btn-sm" onclick="showLocalCert()">Show my peer id + fingerprint</button>
+                            <span class="muted" style="font-size:0.8rem">share these with a peer so they can add you</span>
+                        </div>
+                    </div>
+                    <div class="card">
+                        <h3>Add peer</h3>
+                        <div class="form-grid">
+                            <label for="peer-id">Peer ID</label>
+                            <input id="peer-id" type="text" placeholder="grimd-xxxxxx">
+                            <label for="peer-endpoint">Endpoint</label>
+                            <input id="peer-endpoint" type="text" placeholder="https://host:port">
+                            <label for="peer-fingerprint">Fingerprint</label>
+                            <input id="peer-fingerprint" type="text" placeholder="sha256:…  (pin the peer cert)">
+                            <div class="form-actions">
+                                <button class="btn" onclick="submitPeerAdd()">Add peer</button>
+                                <button class="btn btn-sm" style="background:var(--surface2);color:var(--text)" onclick="refreshPeers()">Refresh</button>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="card">
+                        <h3>Peers</h3>
+                        <table class="grid-table">
+                            <thead><tr><th>ID</th><th>Endpoint</th><th>Fingerprint</th><th>State</th><th></th></tr></thead>
+                            <tbody id="peer-tbody"></tbody>
+                        </table>
+                    </div>
+                    <div class="card">
+                        <h3>Federate</h3>
+                        <p class="muted" style="font-size:0.8rem;margin-bottom:0.75rem">Subscribe this daemon to a peer's topic, namespace, or workspace. The peer must have added us back first.</p>
+                        <div class="form-grid">
+                            <label for="fed-topic-peer">Topic · peer</label>
+                            <input id="fed-topic-peer" type="text" placeholder="peer id">
+                            <label for="fed-topic-name">Topic · name</label>
+                            <input id="fed-topic-name" type="text" placeholder="alerts.deploy">
+                            <div class="form-actions"><button class="btn btn-sm" onclick="submitTopicFederate()">Federate topic</button></div>
+
+                            <label for="fed-ns-peer">Namespace · peer</label>
+                            <input id="fed-ns-peer" type="text" placeholder="peer id">
+                            <label for="fed-ns-name">Namespace</label>
+                            <input id="fed-ns-name" type="text" placeholder="shared.kv">
+                            <div class="form-actions"><button class="btn btn-sm" onclick="submitNsFederate()">Federate namespace</button></div>
+
+                            <label for="fed-ws-peer">Workspace · peer</label>
+                            <input id="fed-ws-peer" type="text" placeholder="peer id">
+                            <label for="fed-ws-id">Workspace id</label>
+                            <input id="fed-ws-id" type="text" placeholder="ws-xxxxxx">
+                            <div class="form-actions"><button class="btn btn-sm" onclick="submitWsFederate()">Federate workspace</button></div>
+                        </div>
+                    </div>
+                    <p class="muted" style="font-size:0.8rem;color:var(--text-dim);margin-top:1rem">
+                        Equivalent CLI: <code>grim peer add/list/remove/ping</code>, <code>grim topic federate</code>, <code>grim ns federate</code>, <code>grim workspace federate</code>.
+                    </p>
+                `;
+                el.dataset.rendered = '1';
+            }
+            refreshPeers();
+        }
+
+        // --- Chronicle page ---------------------------------------------
+        // Replay viewer: enter an agent id, get the full timeline of stored
+        // events (agent.replay → ReplayResponse { entries: [{seq,kind,ts,event}] }).
+        function chronicleKindColor(k) {
+            return ({
+                AgentCreated:'var(--blue)', StateChange:'var(--yellow)',
+                Output:'var(--text-dim)', MailReceived:'var(--purple)',
+                MailSent:'var(--purple)', WakeSourceFired:'var(--green)',
+                Restarted:'var(--yellow)', Escalated:'var(--red)',
+                Notification:'var(--accent)',
+            })[k] || 'var(--text-dim)';
+        }
+
+        function chronicleSummary(ev) {
+            // ev is a tagged enum object — most variants have a `type` field
+            // adjacent to fields. Stringify what's interesting per kind.
+            if (!ev || typeof ev !== 'object') return '';
+            const t = ev.type || Object.keys(ev)[0];
+            const inner = ev[t] || ev;
+            try {
+                if (t === 'Output' && inner.line) return (inner.stream||'stdout') + ': ' + String(inner.line).slice(0, 140);
+                if (t === 'StateChange') return (inner.old_state||'?') + ' → ' + (inner.new_state||'?');
+                if (t === 'MailReceived' || t === 'MailSent') return (inner.subject || inner.body || '').toString().slice(0, 120);
+                if (t === 'AgentCreated' && inner.agent) return (inner.agent.task||'').slice(0,140);
+                if (t === 'Notification') return (inner.summary||inner.title||'').toString().slice(0, 120);
+                return JSON.stringify(inner).slice(0, 140);
+            } catch { return ''; }
+        }
+
+        async function loadChronicle() {
+            const id = document.getElementById('chron-id').value.trim();
+            const body = document.getElementById('chron-body');
+            if (!id) { toast('agent id required', 'err'); return; }
+            body.innerHTML = '<div class="muted">loading…</div>';
+            try {
+                const r = await grim('agent.replay', { id });
+                const entries = r.entries || [];
+                if (!entries.length) { body.innerHTML = '<div class="muted">no events recorded</div>'; return; }
+                body.innerHTML = `
+                    <div class="muted" style="margin-bottom:0.75rem">${entries.length} event${entries.length===1?'':'s'} · agent <code>${esc(r.agent_id||id)}</code></div>
+                    <table class="grid-table">
+                        <thead><tr><th>#</th><th>Time</th><th>Kind</th><th>Detail</th></tr></thead>
+                        <tbody>${entries.map(e => `
+                            <tr>
+                                <td class="muted">${e.seq}</td>
+                                <td class="muted" style="font-size:0.75rem">${new Date(e.ts*1000).toLocaleString()}</td>
+                                <td><span style="color:${chronicleKindColor(e.kind)}">${esc(e.kind||'')}</span></td>
+                                <td><code style="font-family:inherit">${esc(chronicleSummary(e.event))}</code></td>
+                            </tr>`).join('')}</tbody>
+                    </table>
+                `;
+            } catch (e) {
+                body.innerHTML = `<div class="muted">agent.replay failed: ${esc(e.message)}</div>`;
+            }
+        }
+
+        function renderChroniclePage(rest) {
+            const el = document.querySelector('[data-page="chronicle"]');
+            if (!el.dataset.rendered) {
+                el.innerHTML = `
+                    <div class="card">
+                        <h3>Replay agent timeline</h3>
+                        <div class="form-grid" style="grid-template-columns: 90px 1fr auto">
+                            <label for="chron-id">Agent ID</label>
+                            <input id="chron-id" type="text" placeholder="agent-xxxxxx (full id)">
+                            <button class="btn btn-sm" onclick="loadChronicle()">Load</button>
+                        </div>
+                    </div>
+                    <div class="card" id="chron-body">
+                        <div class="muted">enter an agent id above and click Load</div>
+                    </div>
+                    <p class="muted" style="font-size:0.8rem;color:var(--text-dim);margin-top:1rem">
+                        Equivalent CLI: <code>grim chronicle &lt;agent&gt;</code>. Use <code>grim fork</code> to spawn from a replay cut.
+                    </p>
+                `;
+                el.dataset.rendered = '1';
+            }
+            const id = rest && rest[0];
+            if (id) {
+                document.getElementById('chron-id').value = id;
+                loadChronicle();
+            }
+        }
+
+        // --- Webhooks page ----------------------------------------------
+        // Inbound HTTP endpoints — `POST /webhooks/<name>` becomes mail to a
+        // configured topic/recipient. Definitions live in the daemon config
+        // file (operator-managed); we only list them here.
+        async function refreshWebhooks() {
+            const tbody = document.getElementById('webhook-tbody');
+            if (!tbody) return;
+            try {
+                const r = await grim('webhook.list', {});
+                const hooks = r.webhooks || [];
+                if (!hooks.length) {
+                    tbody.innerHTML = `<tr><td colspan="5" class="muted" style="text-align:center;padding:2rem">no webhooks configured — add a <code>[webhooks.&lt;name&gt;]</code> block to the daemon config</td></tr>`;
+                    return;
+                }
+                const base = location.origin;
+                tbody.innerHTML = hooks.map(h => {
+                    const target = h.topic ? `topic:<code>${esc(h.topic)}</code>` : (h.recipient ? `agent:<code>${esc(h.recipient)}</code>` : '<span class="muted">unset</span>');
+                    const auth = h.auth
+                        ? '<span class="badge" style="background:rgba(74,222,128,0.15);color:var(--green)">token</span>'
+                        : '<span class="badge" style="background:rgba(248,113,113,0.15);color:var(--red)">open</span>';
+                    return `
+                        <tr>
+                            <td><code>${esc(h.name)}</code></td>
+                            <td><code style="font-family:inherit">${esc(base)}/webhooks/${esc(h.name)}</code></td>
+                            <td>${target}</td>
+                            <td>${auth}</td>
+                            <td class="actions"><button class="btn btn-sm" onclick="testWebhook('${escAttr(h.name)}')">Test send</button></td>
+                        </tr>`;
+                }).join('');
+            } catch (e) {
+                tbody.innerHTML = `<tr><td colspan="5" class="muted">webhook.list failed: ${esc(e.message)}</td></tr>`;
+            }
+        }
+
+        async function testWebhook(name) {
+            openModal(`
+                <h2>Test POST → /webhooks/${esc(name)}</h2>
+                <div class="form-grid" style="grid-template-columns:90px 1fr">
+                    <label for="wh-token">Token</label>
+                    <input id="wh-token" type="text" placeholder="X-Grimoire-Webhook-Token (leave blank if open)">
+                    <label for="wh-body">Body</label>
+                    <textarea id="wh-body" rows="6" placeholder="payload" style="font-family:inherit;resize:vertical">{"hello":"world"}</textarea>
+                </div>
+                <div class="modal-actions">
+                    <button class="btn btn-sm" style="background:var(--surface2);color:var(--text)" onclick="closeModal()">Cancel</button>
+                    <button class="btn" onclick="sendWebhookTest('${escAttr(name)}')">Send</button>
+                </div>
+            `);
+        }
+
+        async function sendWebhookTest(name) {
+            const token = document.getElementById('wh-token').value.trim();
+            const body = document.getElementById('wh-body').value;
+            const headers = { 'Content-Type': 'application/json' };
+            if (token) headers['X-Grimoire-Webhook-Token'] = token;
+            try {
+                const res = await fetch('/webhooks/' + encodeURIComponent(name), {
+                    method: 'POST', headers, body,
+                });
+                if (res.ok) {
+                    toast('delivered · HTTP ' + res.status, 'ok');
+                    closeModal();
+                } else {
+                    const t = await res.text();
+                    toast('HTTP ' + res.status + ' · ' + t.slice(0, 80), 'err');
+                }
+            } catch (e) {
+                toast('fetch failed: ' + e.message, 'err');
+            }
+        }
+
+        function renderWebhooksPage() {
+            const el = document.querySelector('[data-page="webhooks"]');
+            if (!el.dataset.rendered) {
+                el.innerHTML = `
+                    <div class="card">
+                        <h3>Inbound webhooks</h3>
+                        <p class="muted" style="font-size:0.8rem;margin-bottom:0.75rem">
+                            Webhook endpoints are defined in the daemon config under <code>[webhooks.&lt;name&gt;]</code>. Each one POSTs the raw request body into the mail bus as a message to its configured <code>topic</code> or <code>recipient</code>. Restart the daemon to pick up edits.
+                        </p>
+                        <table class="grid-table">
+                            <thead><tr><th>Name</th><th>URL</th><th>Target</th><th>Auth</th><th></th></tr></thead>
+                            <tbody id="webhook-tbody"></tbody>
+                        </table>
+                        <div style="margin-top:1rem">
+                            <button class="btn btn-sm" onclick="refreshWebhooks()">Refresh</button>
+                        </div>
+                    </div>
+                `;
+                el.dataset.rendered = '1';
+            }
+            refreshWebhooks();
+        }
+
         const agentsEl = document.getElementById('agents');
         const statusDot = document.getElementById('status-dot');
         const statusText = document.getElementById('status-text');
@@ -680,10 +2289,11 @@
             };
         }
 
-        fetchAgents();
-        setInterval(fetchAgents, 10000);
+        route();
+        setInterval(() => { if (parseHash().name === 'agents' && !currentAgentId) fetchAgents(); }, 10000);
         connectSSE();
-        document.getElementById('summon-input').focus();
+        const _si = document.getElementById('summon-input');
+        if (_si) _si.focus();
     </script>
 </body>
 </html>

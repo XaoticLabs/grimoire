@@ -323,6 +323,7 @@ async fn run_http_server(state: AppState) -> Result<()> {
         .route("/api/scrolls/{id}", get(http_scroll_status))
         .route("/api/scrolls/{id}/activate", post(http_activate_scroll))
         .route("/api/scrolls/{id}/abandon", post(http_abandon_scroll))
+        .route("/api/rpc", post(http_rpc_bridge))
         .route("/metrics", get(http_metrics))
         .route("/", get(http_dashboard))
         .route_layer(axum::middleware::from_fn_with_state(
@@ -594,6 +595,75 @@ async fn http_abandon_scroll(
             .await
             .map(|()| serde_json::json!({"success": true})),
     )
+}
+
+/// Generic JSON-RPC bridge for the dashboard. Forwards `{method, params}` to
+/// the same `handle_rpc` dispatcher the UDS server uses, so every CLI-equivalent
+/// method becomes reachable from the browser without bespoke per-resource HTTP
+/// handlers. Bearer-auth-gated like the rest of `/api/*`.
+async fn http_rpc_bridge(
+    State(state): State<AppState>,
+    axum::Json(body): axum::Json<serde_json::Value>,
+) -> axum::Json<serde_json::Value> {
+    let method = match body.get("method").and_then(|m| m.as_str()) {
+        Some(m) => m.to_string(),
+        None => return axum::Json(serde_json::json!({"error": "method is required"})),
+    };
+    let params = body
+        .get("params")
+        .cloned()
+        .unwrap_or(serde_json::Value::Null);
+    let id = body
+        .get("id")
+        .and_then(serde_json::Value::as_u64)
+        .unwrap_or(0);
+
+    // `webhook.list` is HTTP-only — webhook config lives in this server's
+    // `AppState`, not the UDS dispatcher, so short-circuit before handing
+    // off to handle_rpc.
+    if method == "webhook.list" {
+        let entries: Vec<_> = state
+            .webhooks
+            .iter()
+            .map(|(name, cfg)| {
+                serde_json::json!({
+                    "name": name,
+                    "topic": cfg.topic,
+                    "recipient": cfg.recipient,
+                    "auth": cfg.secret.is_some(),
+                })
+            })
+            .collect();
+        return axum::Json(serde_json::json!({
+            "id": id,
+            "result": { "webhooks": entries },
+        }));
+    }
+
+    let req = RpcRequest {
+        method,
+        params,
+        id,
+        protocol_version: None,
+        auth_token: None,
+    };
+    let bus = state.manager.event_bus();
+    let resp = rpc::handle_rpc(
+        &state.manager,
+        &state.db,
+        &state.scroll_keeper,
+        &state.wake_registry,
+        &state.workspace_registry,
+        &state.peer_registry,
+        &bus,
+        &state.daemon_id,
+        req,
+    )
+    .await;
+    match serde_json::to_value(&resp) {
+        Ok(v) => axum::Json(v),
+        Err(e) => axum::Json(serde_json::json!({"error": format!("serialize: {e}")})),
+    }
 }
 
 /// Inbound webhook endpoint. The raw request body becomes the mail body —
