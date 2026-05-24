@@ -32,7 +32,7 @@ pub struct PeerSvc {
 
 impl PeerSvc {
     /// Build a `PeerSvc` by cloning the handles the service actually uses
-    /// out of the registry. The registry itself is not retained — each of
+    /// out of the registry. The registry itself is not retained: each of
     /// `db`, `bus`, `daemon_id`, and `inbox` already owns an independent
     /// `Arc` to its underlying data, so dropping the registry reference
     /// after construction doesn't affect lifetimes.
@@ -184,7 +184,7 @@ impl PeerService for PeerSvc {
 }
 
 // `tonic::Status` is large (≈176B), but the streaming-RPC return type is fixed by
-// the generated tonic trait — we can't box it without changing the public API.
+// the generated tonic trait, and we can't box it without changing the public API.
 // The `Result` wrapper is likewise dictated by the tonic trait signature.
 #[allow(clippy::result_large_err, clippy::unnecessary_wraps)]
 fn single_helloack_stream(

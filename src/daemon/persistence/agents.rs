@@ -142,7 +142,7 @@ impl super::Database {
 
     /// Children of `parent_id` whose state is still in-flight (Queued,
     /// Summoning, Active, Dormant). Completed / Banished / Failed children
-    /// are excluded — there's nothing to cascade onto.
+    /// are excluded; there's nothing to cascade onto.
     pub fn list_live_children(&self, parent_id: &str) -> Result<Vec<String>> {
         let conn = self.conn_lock();
         let mut stmt = conn.prepare(
@@ -330,7 +330,7 @@ impl super::Database {
     /// This is the rich `events` table (every `StreamEvent` variant), not the
     /// legacy `agent_events` stdout/stderr stream that `get_events` serves.
     /// Rows whose payload fails to deserialize (a schema that predates a
-    /// variant rename, say) are skipped rather than failing the whole read —
+    /// variant rename, say) are skipped rather than failing the whole read;
     /// a partial timeline beats no timeline.
     pub fn read_stream_events(&self, agent_id: &str) -> Result<Vec<StoredEvent>> {
         let conn = self.conn_lock();
@@ -368,7 +368,7 @@ impl super::Database {
 
     /// An agent's stdout lines in emission order. The raw material for a
     /// provider's `extract_result` (pact `{output}` injection) and the
-    /// `ContextReplay` transcript. Provider-neutral — no format assumed here.
+    /// `ContextReplay` transcript. Provider-neutral; no format assumed here.
     pub fn get_agent_stdout_lines(&self, agent_id: &str) -> Result<Vec<String>> {
         let conn = self.conn_lock();
         let mut stmt = conn.prepare(
@@ -386,8 +386,8 @@ impl super::Database {
 
     /// Reconstruct an agent's prior stdout as a single string, for the
     /// `ContextReplay` resume strategy (providers with no native session). Capped
-    /// to the last `budget_bytes` — oldest output truncated with a note — mirroring
-    /// the scheduler's mail-fold budgeting. Returns the empty string if the agent
+    /// to the last `budget_bytes` (oldest output truncated with a note),
+    /// mirroring the scheduler's mail-fold budgeting. Returns the empty string if the agent
     /// produced no output.
     pub fn get_agent_transcript(&self, agent_id: &str, budget_bytes: usize) -> Result<String> {
         let full = self.get_agent_stdout_lines(agent_id)?.join("\n");
@@ -451,7 +451,7 @@ impl super::Database {
     }
 
     /// On daemon startup, mark every agent that was mid-flight (`Active` or
-    /// `Summoning`) as `Failed` — their child processes are gone — and report
+    /// `Summoning`) as `Failed` (their child processes are gone), then report
     /// what was changed plus how many `Queued` agents survived for the
     /// scheduler to pick up. `Complete`/`Failed`/`Banished` rows and `Queued`
     /// rows are left untouched.

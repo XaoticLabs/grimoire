@@ -1,4 +1,4 @@
-//! `grim wake` — manage agent wake sources.
+//! `grim wake`: manage agent wake sources.
 
 use anyhow::{Context, Result};
 use clap::Subcommand;

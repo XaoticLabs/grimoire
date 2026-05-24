@@ -7,8 +7,8 @@ use crate::shared::constants;
 pub async fn run() -> Result<()> {
     // Mint a one-shot login URL so the browser is auto-authenticated. The
     // daemon validates `?t=…`, sets the `grim_auth` cookie, and redirects
-    // to `/`. If the token isn't loadable we fall back to the bare URL —
-    // the user can paste the token into the login form.
+    // to `/`. If the token isn't loadable we fall back to the bare URL,
+    // and the user can paste the token into the login form.
     let base = format!("http://127.0.0.1:{}", constants::DAEMON_PORT);
     let (url, authed) = match auth::load_for_client() {
         Ok(tok) => (format!("{}/auth/login?t={}", base, tok.as_str()), true),
@@ -19,7 +19,7 @@ pub async fn run() -> Result<()> {
         println!("🔮 Opening grimoire dashboard at {}", base.bold());
     } else {
         println!(
-            "🔮 Opening grimoire dashboard at {} — sign in with your token from {}",
+            "🔮 Opening grimoire dashboard at {} (sign in with your token from {})",
             base.bold(),
             auth::token_path().display(),
         );

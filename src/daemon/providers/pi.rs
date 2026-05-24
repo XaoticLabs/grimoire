@@ -10,8 +10,8 @@
 //!
 //! Verified live against pi 0.75.4 (2026-05-22): `pi -p --mode json` runs a
 //! headless turn and exits cleanly after `agent_end`. The first stdout event is
-//! `{"type":"session","id":"<uuid>","cwd":...}` — that `id` is the resumable
-//! session id (it also names the persisted file under
+//! `{"type":"session","id":"<uuid>","cwd":...}`. That `id` is the resumable
+//! session id (and also names the persisted file under
 //! `~/.pi/agent/sessions/<cwd-scope>/`). Resume is `pi --session <id> -p`.
 //! pi enables its read/bash/edit/write tools by default, so an agent can shell
 //! out to `grim notify/mail/memory` without an allowlist (unlike Claude's

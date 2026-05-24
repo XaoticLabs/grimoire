@@ -2,7 +2,7 @@
 // Production code: no `.unwrap()`. Tests freely use it.
 #![cfg_attr(not(test), warn(clippy::unwrap_used))]
 #![warn(missing_docs)]
-//! # Grimoire — agent orchestration daemon
+//! # Grimoire: agent orchestration daemon
 //!
 //! A daemon-based orchestrator for AI coding agents. Agents are modeled as
 //! supervised processes, not function calls: they survive the death of any
@@ -11,16 +11,16 @@
 //!
 //! ## Crate layout
 //!
-//! * [`daemon`] — the long-running supervisor process (`grim daemon`).
+//! * [`daemon`]: the long-running supervisor process (`grim daemon`).
 //!   Owns the SQLite event log, the scheduler, the wake-source registry,
 //!   and the gRPC servers exposed over UDS, HTTP, and federated peer
 //!   links.
-//! * [`cli`] — the `grim` command-line client. Speaks the daemon's
+//! * [`cli`]: the `grim` command-line client. Speaks the daemon's
 //!   protocol over the UDS socket; everything the dashboard does is
 //!   reachable here too.
-//! * [`grimw`] — the worker-side process (`grimw`). Connects outbound
+//! * [`grimw`]: the worker-side process (`grimw`). Connects outbound
 //!   to a daemon and executes work the daemon assigns it.
-//! * [`shared`] — wire-format types ([`shared::protocol`]), auth tokens
+//! * [`shared`]: wire-format types ([`shared::protocol`]), auth tokens
 //!   ([`shared::auth`]), config schema ([`shared::config`]), and other
 //!   types reused across the three binaries above.
 //!

@@ -36,7 +36,7 @@ grim scry                                        # open the web dashboard
 
 # The thing one-shot CLIs can't do:
 grim demo standing-review --repo . --provider claude
-# A reviewer is now Dormant in this repo. Edit a file — it wakes,
+# A reviewer is now Dormant in this repo. Edit a file, it wakes,
 # diffs, decides, pings you, sleeps. Survives `grim daemon` restarts.
 ```
 
@@ -46,7 +46,7 @@ Any command that takes an agent ID also takes a short prefix, so `grim bind 4a` 
 
 Almost everything here is built from two things.
 
-1. **A durable event log.** Every state change, output line, and lifecycle event is written through to SQLite with per-stream sequence numbers. Nothing is lost if a subscriber lags or the daemon restarts. On reboot the log is the source of truth — in-flight agents are reconciled, standing agents rehydrate.
+1. **A durable event log.** Every state change, output line, and lifecycle event is written through to SQLite with per-stream sequence numbers. Nothing is lost if a subscriber lags or the daemon restarts. On reboot the log is the source of truth: in-flight agents are reconciled and standing agents rehydrate.
 2. **An addressable mailbox.** Every agent has an address (`agent://<id>`) and a mailbox; topics (`topic://<name>`) fan out to subscribers.
 
 Everything else composes those two. Wake triggers deliver to a mailbox. Supervision restarts and escalates through the log. Workspaces publish file changes to a topic. Notifications are log subscribers. Federation is mail between daemons.
@@ -57,13 +57,13 @@ Everything else composes those two. Wake triggers deliver to a mailbox. Supervis
 - **Messaging.** Agents send each other mail and subscribe to topics. Dormant agents wake on mail; live ones read at the next turn boundary.
 - **Supervision.** OTP-style restart policies (`always` / `on_failure` / `never`) with per-agent rate limits. When a child fails too often, the parent agent wakes with the failure and decides what to do.
 - **Scrolls.** A markdown spec of tasks with dependencies and file ownership. Independent tasks run in parallel; same-file tasks serialize.
-- **Workspaces & shared memory.** A managed git worktree shared by several agents, plus a per-workspace KV store with optimistic CAS and prefix subscriptions — a write to `findings/auth` wakes whoever's watching.
+- **Workspaces & shared memory.** A managed git worktree shared by several agents, plus a per-workspace KV store with optimistic CAS and prefix subscriptions. A write to `findings/auth` wakes whoever's watching.
 - **Federated memory.** A namespace KV (`grim ns`) decoupled from worktrees that replicates across daemons. Writes converge LWW on a Lamport tuple; deletes propagate as tombstones.
 - **Federation.** Two `grimd` instances peer over mutually-authenticated gRPC. Mail, opt-in topics, and federated namespaces forward across daemons, deduped at the inbox.
 - **Worker pool.** Dispatch to remote machines via the `grimw` worker binary over mTLS, with capability-aware placement.
-- **Notifications.** Outbound webhook (Slack/Discord/relay), local JSON-lines log, *or* `notify-send` desktop toast — any combination, fan-out independent.
+- **Notifications.** Outbound webhook (Slack/Discord/relay), local JSON-lines log, or `notify-send` desktop toast. Any combination, fan-out independent.
 - **Inbound webhooks.** Configure `[webhooks.<name>]` and `POST /webhooks/<name>` becomes mail on a topic, so a standing agent subscribed to it wakes on real-world events.
-- **Time-travel.** `grim chronicle <id>` (alias `grim replay`) reconstructs an agent's full life — stdout interleaved with state changes, wake fires, restarts, mail, notifications — with state-at-point reconstruction at any seq. `grim fork <id> --at <seq>` branches a new agent seeded with the parent's transcript. `grim eval <id> --rubric <file>` scores a transcript.
+- **Time-travel.** `grim chronicle <id>` (alias `grim replay`) reconstructs an agent's full life (stdout interleaved with state changes, wake fires, restarts, mail, and notifications) with state-at-point reconstruction at any seq. `grim fork <id> --at <seq>` branches a new agent seeded with the parent's transcript. `grim eval <id> --rubric <file>` scores a transcript.
 - **Metrics.** `GET /metrics` exposes Prometheus text exposition behind the same bearer auth as `/api/*`.
 
 ## The mystic vocabulary, translated
@@ -89,21 +89,21 @@ Peer grimd ──gRPC──▶   │
                        └── PeerClient/Server + Outbox/Inbox          ← federation
 ```
 
-The daemon owns agent lifecycles and persists everything in SQLite over three transports: a JSON-RPC Unix socket for the CLI, an HTTP/SSE dashboard, and gRPC for peers and workers. Each transport is its own trust domain with its own auth, on by default — the gRPC transports are mutual TLS with pinned self-signed certs alongside the per-link bearer token. The scheduler does admission control and capability-aware placement; a provider registry hides each CLI tool behind one trait.
+The daemon owns agent lifecycles and persists everything in SQLite over three transports: a JSON-RPC Unix socket for the CLI, an HTTP/SSE dashboard, and gRPC for peers and workers. Each transport is its own trust domain with its own auth, on by default. The gRPC transports use mutual TLS with pinned self-signed certs alongside the per-link bearer token. The scheduler does admission control and capability-aware placement; a provider registry hides each CLI tool behind one trait.
 
 ## Status
 
 **Works today:** everything in [What's in the box](#whats-in-the-box). Trust layer ships on by default across all three transports with negotiated protocol versioning.
 
-**Partial:** Federated namespaces replicate writes made after `ns federate`, but there's no initial-state snapshot for a peer joining a populated namespace yet, and concurrent writes to one key resolve LWW rather than surfacing the conflict. Federated *workspaces* are mid-build — the schema and operator surface (`grim workspace federate`) shipped; the event flow that actually wakes a remote agent on a file change in another daemon's workspace is the next pickup. Metrics ships Prometheus only; OTel tracing export is not wired.
+**Partial:** Federated namespaces replicate writes made after `ns federate`, but there's no initial-state snapshot for a peer joining a populated namespace yet, and concurrent writes to one key resolve LWW rather than surfacing the conflict. Federated *workspaces* are mid-build: the schema and operator surface (`grim workspace federate`) shipped, but the event flow that actually wakes a remote agent on a file change in another daemon's workspace is the next pickup. Metrics ships Prometheus only; OTel tracing export is not wired.
 
 **Not built yet:**
-- Sandboxing — a cwd jail, cgroups, per-agent resource limits.
-- Policy and budget primitives — per-provider and per-cwd allow rules, token and cost ceilings.
+- Sandboxing: a cwd jail, cgroups, per-agent resource limits.
+- Policy and budget primitives: per-provider and per-cwd allow rules, token and cost ceilings.
 
 ## Recipes
 
-- [Standing review agent](docs/recipes/standing-review-agent.md) — the canonical "wake on file change, ping me if interesting, sleep" loop. Verified live against Claude and pi.
+- [Standing review agent](docs/recipes/standing-review-agent.md). The canonical "wake on file change, ping me if interesting, sleep" loop. Verified live against Claude and pi.
 
 ## MSRV
 

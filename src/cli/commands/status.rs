@@ -19,7 +19,7 @@ pub fn format_text(resp: &StatusResponse) -> String {
         resp.workers.len(),
     );
     if resp.workers.is_empty() {
-        out.push_str("Workers (0) — running local-only.\n");
+        out.push_str("Workers: 0 (running local-only).\n");
     } else {
         let _ = writeln!(out, "Workers ({})", resp.workers.len());
         for w in &resp.workers {

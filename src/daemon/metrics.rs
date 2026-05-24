@@ -7,7 +7,7 @@
 //!
 //! Scrape semantics: `render` runs a handful of `COUNT(*)` queries against
 //! the live SQLite db (cheap; agents/events tables are indexed). It is safe to
-//! call at any cadence Prometheus is configured for. There is no caching —
+//! call at any cadence Prometheus is configured for. There is no caching,
 //! every scrape sees fresh data.
 
 use std::fmt::Write as _;
@@ -63,7 +63,7 @@ const COUNTER_KINDS: &[(&str, &str, &str)] = &[
 
 /// Render the full Prometheus exposition snapshot. Errors from individual
 /// queries are surfaced as a `# ERROR` comment line for that metric rather
-/// than failing the whole scrape — a partial snapshot beats none.
+/// than failing the whole scrape, since a partial snapshot beats none.
 pub fn render(db: &Database, started_at: Instant, version: &str) -> String {
     let mut out = String::with_capacity(2048);
 
@@ -71,7 +71,7 @@ pub fn render(db: &Database, started_at: Instant, version: &str) -> String {
     let _ = writeln!(out, "# TYPE grimoire_build_info gauge");
     let _ = writeln!(out, "grimoire_build_info{{version=\"{version}\"}} 1");
 
-    // Uptime — a gauge so a daemon restart is visible as a drop to zero,
+    // Uptime: a gauge so a daemon restart is visible as a drop to zero,
     // not as a counter reset that confuses rate() queries.
     let uptime_secs = started_at.elapsed().as_secs();
     let _ = writeln!(
@@ -81,7 +81,7 @@ pub fn render(db: &Database, started_at: Instant, version: &str) -> String {
     let _ = writeln!(out, "# TYPE grimoire_uptime_seconds gauge");
     let _ = writeln!(out, "grimoire_uptime_seconds {uptime_secs}");
 
-    // Agents by state — always emit every standard state so series stay stable.
+    // Agents by state: always emit every standard state so series stay stable.
     let _ = writeln!(out, "# HELP grimoire_agents Agents grouped by state.");
     let _ = writeln!(out, "# TYPE grimoire_agents gauge");
     match db.count_agents_by_state() {
@@ -103,7 +103,7 @@ pub fn render(db: &Database, started_at: Instant, version: &str) -> String {
         }
     }
 
-    // Queue depth — Queued-state agents waiting for the scheduler to promote.
+    // Queue depth: Queued-state agents waiting for the scheduler to promote.
     let _ = writeln!(
         out,
         "# HELP grimoire_queue_depth Agents in Queued state awaiting dispatch."
@@ -118,7 +118,7 @@ pub fn render(db: &Database, started_at: Instant, version: &str) -> String {
         }
     }
 
-    // Events total — one number for the whole durable log.
+    // Events total: one number for the whole durable log.
     let _ = writeln!(
         out,
         "# HELP grimoire_events_total Total durable stream-log events recorded."
@@ -133,7 +133,7 @@ pub fn render(db: &Database, started_at: Instant, version: &str) -> String {
         }
     }
 
-    // Per-kind event counters — the operator-signal subset.
+    // Per-kind event counters: the operator-signal subset.
     for (kind, metric, help) in COUNTER_KINDS {
         let _ = writeln!(out, "# HELP {metric} {help}");
         let _ = writeln!(out, "# TYPE {metric} counter");
@@ -147,7 +147,7 @@ pub fn render(db: &Database, started_at: Instant, version: &str) -> String {
         }
     }
 
-    // Notifications by level — distinct series so warn/error rates are graphable.
+    // Notifications by level: distinct series so warn/error rates are graphable.
     let _ = writeln!(
         out,
         "# HELP grimoire_notifications_total Operator-facing notifications by level."

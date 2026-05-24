@@ -97,7 +97,7 @@ impl ProviderRegistry {
     }
 
     /// Per-provider USD pricing resolved from `[providers.<name>.pricing]`.
-    /// `None` means the provider is unpriced — agents still record token
+    /// `None` means the provider is unpriced. Agents still record token
     /// usage but contribute zero USD to budgets.
     pub fn pricing_for(&self, name: &str) -> Option<crate::shared::config::ProviderPricing> {
         self.pricings.get(name).cloned()

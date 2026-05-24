@@ -3,7 +3,7 @@ use colored::Colorize;
 
 use crate::cli::client::DaemonClient;
 
-/// `grim notify` — emit an operator-facing notification. Intended for spawned
+/// `grim notify`: emit an operator-facing notification. Intended for spawned
 /// agents to call when *they* decide something is worth surfacing ("ping me
 /// only if interesting"). Provider-neutral: any agent CLI that can run a shell
 /// command can use it. The agent's own id is read from `GRIMOIRE_AGENT_ID`

@@ -82,7 +82,7 @@ async fn resolve_workspace(
 }
 
 /// Decide the initial `MailState` for a piece of outbound mail given the
-/// looked-up recipient agent. Returns `(state, fail_reason)` — the reason is
+/// looked-up recipient agent. Returns `(state, fail_reason)`; the reason is
 /// `Some` iff the state is `Failed`.
 fn compute_mail_state(
     agent: Option<&crate::shared::types::Agent>,
@@ -98,7 +98,7 @@ fn compute_mail_state(
 
 /// Operator-facing fields of a freshly-built outbound mail row, before the
 /// daemon mints the `id` and `created_at`. Replaces what used to be ten
-/// positional arguments to `new_outbound_mail` — every call site now reads
+/// positional arguments to `new_outbound_mail`. Every call site now reads
 /// like prose and a new field doesn't ripple through every caller.
 struct MailDraft {
     recipient_id: String,
@@ -1035,8 +1035,8 @@ pub async fn handle_mail_send(
 ///   * `timeout_ms` elapses (default 30 000), returning `ask_timeout`.
 ///
 /// Repliers acknowledge the request by sending an ordinary mail with
-/// `in_reply_to` set to the original mail id — there is no separate "reply"
-/// verb; ordinary `mail.send` carries the correlation.
+/// `in_reply_to` set to the original mail id. There is no separate "reply"
+/// verb: ordinary `mail.send` carries the correlation.
 pub async fn handle_mail_ask(
     db: &Arc<Database>,
     bus: &EventBus,
@@ -1148,7 +1148,7 @@ async fn collect_mail_replies(
         let recv = match tokio::time::timeout(remaining, events.recv()).await {
             Ok(Ok(ev)) => ev,
             // Lagged subscribers can still catch later events; closed bus
-            // means no more replies will ever arrive — both treated the
+            // means no more replies will ever arrive. Both are treated the
             // same here, with the deadline as the real exit condition.
             Ok(Err(_)) => continue,
             Err(_) => break,
@@ -1176,8 +1176,8 @@ async fn collect_mail_replies(
 /// Multi-bid auction over the mailbox. Posts `params.body` to `params.to`
 /// (typically a `topic://...`), then collects every reply mail whose
 /// `in_reply_to` matches one of the posted ids until `deadline_ms` elapses.
-/// Unlike [`handle_mail_ask`], this returns *all* bids — picking the winner
-/// is the caller's job — and does not error when zero bids arrive.
+/// Unlike [`handle_mail_ask`], this returns *all* bids. Picking the winner
+/// is the caller's job, and zero bids is not an error.
 pub async fn handle_mail_tender(
     db: &Arc<Database>,
     bus: &EventBus,
@@ -1869,9 +1869,9 @@ fn valid_ns_name(s: &str) -> bool {
 }
 
 /// Fan a just-applied local write out to every peer the namespace federates
-/// to: enqueue an outbox row and wake that peer's drainer. Best-effort —
+/// to: enqueue an outbox row and wake that peer's drainer. Best-effort;
 /// enqueue failures are logged, not surfaced to the writer (the write itself
-/// already succeeded locally; replication retries on its own schedule).
+/// already succeeded locally, and replication retries on its own schedule).
 async fn namespace_replicate(
     peer_registry: &Arc<PeerRegistry>,
     write: &crate::daemon::namespace_db::NamespaceWrite,
@@ -2387,7 +2387,7 @@ async fn handle_workspace_federations(
 // --- Workspace federation ---
 
 /// Home-daemon-side opt-in: this workspace's file events will fan out
-/// to `peer` per `direction`. The drainer + producer is not yet wired —
+/// to `peer` per `direction`. The drainer + producer is not yet wired;
 /// this records the intent so cross-machine subscribe can be set up ahead
 /// of the event flow landing.
 async fn handle_workspace_federate(
@@ -2401,8 +2401,8 @@ async fn handle_workspace_federate(
         Err(_) => return rpc_err(req.id, "invalid_direction"),
     };
     let ws = try_rpc!(resolve_workspace(req.id, &peer_registry.db, &params.workspace).await);
-    // Only the *home* of a workspace can opt it into outbound federation —
-    // shadows already point at a remote home and would re-export events
+    // Only the *home* of a workspace can opt it into outbound federation.
+    // Shadows already point at a remote home and would re-export events
     // they don't originate.
     if matches!(ws.kind, WorkspaceKind::Shadow) {
         return rpc_err(req.id, "workspace_is_shadow_cannot_federate");
@@ -2509,8 +2509,8 @@ async fn handle_workspace_federate_subscribe(
 }
 
 /// Symmetric to `topic.unfederate`: run on each side independently to
-/// drop the federation row. Does *not* delete the shadow workspace row
-/// — that's an explicit `workspace destroy` so an operator doesn't lose
+/// drop the federation row. Does *not* delete the shadow workspace row;
+/// that's an explicit `workspace destroy`, so an operator doesn't lose
 /// historical chronicle attribution by accident.
 async fn handle_workspace_unfederate(
     peer_registry: &Arc<PeerRegistry>,

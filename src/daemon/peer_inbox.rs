@@ -40,7 +40,7 @@ impl InboxHandler {
             return Ok(ack_fail(&msg.mail_id, "invalid_recipient"));
         };
 
-        // Idempotency check up front — if we've already seen this
+        // Idempotency check up front. If we've already seen this
         // (sender_daemon_id, sender_seq), ack ok and don't re-insert.
         let inserted = self.db.insert_peer_inbox_if_absent(
             &peer.daemon_id,
@@ -139,7 +139,7 @@ impl InboxHandler {
     }
 
     async fn deliver_topic(&self, peer: &Peer, msg: &MailDeliver, topic: &str) -> Result<MailAck> {
-        // Local topic fanout — one mail row per local subscriber.
+        // Local topic fanout, one mail row per local subscriber.
         let subscribers = self.db.list_subscribers_for_topic(topic)?;
         if subscribers.is_empty() {
             return Ok(ack_ok(&msg.mail_id));

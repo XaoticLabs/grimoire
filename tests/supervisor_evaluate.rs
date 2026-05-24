@@ -121,7 +121,7 @@ async fn evaluate_window_slides_per_failure() {
     )
     .unwrap();
     let now = Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap();
-    // Three rows 70s ago — all outside the new 60s window.
+    // Three rows 70s ago, all outside the new 60s window.
     for _ in 0..3 {
         db.insert_restart_history_row(
             "abcd0004",
@@ -183,7 +183,7 @@ async fn evaluate_rate_limited_delays_60s() {
     .unwrap();
     let now = Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap();
     let clock = Arc::new(TestClock::new(now));
-    // rate_per_min = 1 — first call consumes the only token, next call denied.
+    // rate_per_min = 1, first call consumes the only token, next call denied.
     let sup = build_supervisor(db.clone(), clock, 1, 3);
     let _ = sup.evaluate("abcd0006").await.unwrap();
     // Seed a second agent so the bucket is empty for the next call.

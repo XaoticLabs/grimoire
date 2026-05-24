@@ -3,13 +3,13 @@
 //! Both the federation mail path and the namespace replication path follow
 //! the same shape: a `pending` row is claimed by flipping it to `in_flight`,
 //! shipped as a single `PeerOutbound` frame, and resolved on the matching
-//! ack — `delivered` on success, `pending` with bumped `attempts` +
-//! `next_attempt_at` on failure. The per-table specifics live behind
+//! ack (`delivered` on success, `pending` with bumped `attempts` +
+//! `next_attempt_at` on failure). The per-table specifics live behind
 //! [`OutboxBackend`] and the common loop body lives in [`pump_one_row`] /
 //! [`handle_ack_outcome`].
 //!
 //! Bus-event emission (mail's `PeerMailForwarded` / `PeerMailForwardFailed`)
-//! is intentionally kept at the call site, not on the trait — memory has
+//! is intentionally kept at the call site, not on the trait. Memory has
 //! no equivalent and other drainers each carry their own observability
 //! needs.
 
@@ -46,7 +46,7 @@ pub fn row_to_mail_deliver(row: &PeerOutboxRow) -> crate::shared::peer_proto::Ma
 
 /// What the per-peer client task remembers about a row it has shipped
 /// and is waiting on an ack for. Single in-flight slot per drainer keeps
-/// the wire serial — the receiving side only needs to ack one outstanding
+/// the wire serial; the receiving side only needs to ack one outstanding
 /// row at a time.
 #[derive(Debug, Clone)]
 pub struct InFlight {
@@ -82,7 +82,7 @@ pub trait OutboxBackend: Sync {
     fn mark_in_flight(&self, row_id: &str) -> anyhow::Result<()>;
 
     /// Terminal-success transition. Implementations may delete the row
-    /// (memory) or move it to `delivered` (mail) — both are correct.
+    /// (memory) or move it to `delivered` (mail); both are correct.
     fn mark_delivered(&self, row_id: &str) -> anyhow::Result<()>;
 
     /// Failed-ack / send-error transition: row returns to `pending` with
@@ -99,7 +99,7 @@ pub trait OutboxBackend: Sync {
 
 /// Drain a single pending row for `peer_id`, transition it to
 /// `in_flight`, and ship it. No-op if `in_flight` is already occupied or
-/// the peer is being torn down — both cases are routine, not errors.
+/// the peer is being torn down (both cases are routine, not errors).
 ///
 /// On send failure the row is bumped back to `pending` with backoff
 /// applied before the error propagates, so a stuck channel won't pin a
@@ -145,8 +145,8 @@ pub async fn pump_one_row<B: OutboxBackend>(
 /// real attempt number).
 ///
 /// Caller's responsibility: ack-key match (compare `ack.<key>` to
-/// `in_flight.ack_key`) and emitting any bus events — those are kept
-/// out of this function so memory's no-event policy stays clean.
+/// `in_flight.ack_key`) and emitting any bus events (kept out of this
+/// function so memory's no-event policy stays clean).
 pub fn handle_ack_outcome<B: OutboxBackend>(backend: &B, in_flight: &InFlight, ok: bool) {
     let now = unix_now();
     if ok {

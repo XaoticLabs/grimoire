@@ -369,7 +369,7 @@ fn worker_registered_kind_string() {
 }
 
 // ---------------------------------------------------------------------------
-// StatusResponse / DaemonStatusResult — queue-distinct counts (Task 10)
+// StatusResponse / DaemonStatusResult: queue-distinct counts (Task 10)
 // ---------------------------------------------------------------------------
 
 #[test]

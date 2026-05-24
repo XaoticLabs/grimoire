@@ -88,7 +88,7 @@ impl Notifier {
         }
     }
 
-    /// Fire-and-forget POST. Failures are logged, never propagated — a flaky
+    /// Fire-and-forget POST. Failures are logged but never propagated; a flaky
     /// webhook must not affect agent execution.
     async fn post(&self, payload: &Payload, body: &serde_json::Value) {
         let Some(url) = self.config.webhook_url.as_deref() else {
@@ -175,7 +175,7 @@ async fn append_log(path: &PathBuf, body: &serde_json::Value) {
 }
 
 /// Fire a desktop toast via `notify-send`. Missing binary is logged once at
-/// debug level — desktop sinks are best-effort by design.
+/// debug level; desktop sinks are best-effort by design.
 async fn notify_desktop(payload: &Payload) {
     let urgency = match payload.level.as_str() {
         "error" => "critical",
@@ -332,7 +332,7 @@ mod tests {
 
     #[test]
     fn notifier_constructs_with_tls() {
-        // Exercises the rustls/native-roots connector build — catches a
+        // Exercises the rustls/native-roots connector build. Catches a
         // misconfigured CryptoProvider, which would otherwise only surface
         // at the first live webhook POST.
         assert!(Notifier::new(enabled()).is_ok());

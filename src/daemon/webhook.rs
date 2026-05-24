@@ -5,7 +5,7 @@
 //! configured topic (or to a direct recipient), then drops it into the
 //! existing `mail.send` path. Wake-on-mail picks it up from there, so a
 //! standing agent subscribed to the topic gets woken with the webhook
-//! payload as its prompt — no extra wiring required.
+//! payload as its prompt, no extra wiring required.
 //!
 //! This is the missing leg that turns the standing-agent demo from
 //! "watch files locally" into "watch your real GitHub PRs": a CI / GitHub /
@@ -38,7 +38,7 @@ pub enum WebhookAuth {
 
 /// Constant-time check of the presented `X-Grimoire-Webhook-Token` against
 /// the config secret. The early-out for `secret = None` is intentional and
-/// part of the spec — operators opt in to auth, not the other way around.
+/// part of the spec, operators opt in to auth, not the other way around.
 pub fn check_token(presented: Option<&str>, expected: Option<&str>) -> WebhookAuth {
     match expected {
         None => WebhookAuth::Open,

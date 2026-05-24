@@ -313,7 +313,7 @@ impl super::Database {
         Ok(n as usize)
     }
 
-    /// Number of agents currently mid-flight (Active or Summoning) — the
+    /// Number of agents currently mid-flight (Active or Summoning), the
     /// scheduler's `in_flight` count for capacity decisions.
     pub fn count_in_flight_agents(&self) -> Result<usize> {
         let conn = self.conn_lock();

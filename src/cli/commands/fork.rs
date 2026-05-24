@@ -41,7 +41,7 @@ fn build_fork_prompt(
 
     format!(
         "You are a fork of agent {parent_id} branched at event seq {cut_seq}.\n\
-         Below is the parent agent's output stream up to the fork point — your provenance.\n\
+         Below is the parent agent's output stream up to the fork point, your provenance.\n\
          The original task follows after the divider.\n\
          \n\
          === parent transcript (seq 0..={cut_seq}) ===\n\
@@ -95,7 +95,7 @@ pub async fn run(
     let considered = &replay.entries[..cut];
     let cut_seq = considered.last().map_or(0, |e| e.seq);
 
-    // 3) Extract parent metadata from the AgentCreated event — first entry,
+    // 3) Extract parent metadata from the AgentCreated event, the first entry,
     // by construction. We need its task/provider/model so the fork inherits
     // them unless the caller overrides.
     let (parent_task, parent_provider, parent_model) = considered

@@ -168,7 +168,7 @@ async fn run_uds_server(state: AppState) -> Result<()> {
                     UdsAuthDecision::Reject => {
                         let err = RpcResponse::error(req.id, -32000, "unauthenticated".to_string());
                         let _ = write_response(&mut writer, &err).await;
-                        // Close the connection on failed auth — repeated
+                        // Close the connection on failed auth. Repeated
                         // attempts on the same socket would just be a
                         // (very slow) brute-force vector.
                         return;
@@ -306,9 +306,9 @@ async fn write_response(
 const AUTH_COOKIE_NAME: &str = "grim_auth";
 
 async fn run_http_server(state: AppState) -> Result<()> {
-    // Protected routes — everything that touches state, plus the dashboard
-    // HTML itself (the SPA leaks no useful surface unauthenticated, but
-    // shielding `/` means a stray browser tab can't even render the chrome).
+    // Protected routes: everything that touches state, plus the dashboard
+    // HTML itself. The SPA leaks no useful surface unauthenticated, but
+    // shielding `/` means a stray browser tab can't even render the chrome.
     let protected = Router::new()
         .route("/api/agents", get(http_list_agents))
         .route("/api/agents", post(http_summon_agent))
@@ -331,9 +331,9 @@ async fn run_http_server(state: AppState) -> Result<()> {
             http_auth_middleware,
         ));
 
-    // Unauthenticated routes — the login endpoints accept the token
+    // Unauthenticated routes. The login endpoints accept the token
     // explicitly and set the cookie on success. Webhooks live here because
-    // external services (GitHub, Slack, …) won't carry the daemon's bearer
+    // external services (GitHub, Slack, etc.) won't carry the daemon's bearer
     // token; per-webhook auth is the optional shared secret in the config.
     let public = Router::new()
         .route("/auth/login", get(http_login_get).post(http_login_post))
@@ -618,8 +618,8 @@ async fn http_rpc_bridge(
         .and_then(serde_json::Value::as_u64)
         .unwrap_or(0);
 
-    // `webhook.list` is HTTP-only — webhook config lives in this server's
-    // `AppState`, not the UDS dispatcher, so short-circuit before handing
+    // `webhook.list` is HTTP-only: webhook config lives in this server's
+    // `AppState`, not the UDS dispatcher. Short-circuit before handing
     // off to handle_rpc.
     if method == "webhook.list" {
         let entries: Vec<_> = state
@@ -666,9 +666,9 @@ async fn http_rpc_bridge(
     }
 }
 
-/// Inbound webhook endpoint. The raw request body becomes the mail body —
-/// no provider-specific decoding here; subscriber agents know the shape of
-/// whatever they signed up for. Goes through the same `mail.send` path
+/// Inbound webhook endpoint. The raw request body becomes the mail body;
+/// no provider-specific decoding here, since subscriber agents know the shape
+/// of whatever they signed up for. Goes through the same `mail.send` path
 /// every other mail does, so subscriber wake-on-mail Just Works.
 async fn http_webhook(
     State(state): State<AppState>,
@@ -705,7 +705,7 @@ async fn http_webhook(
     }
 
     // Bodies are passed through verbatim. UTF-8 is required (mail body is a
-    // String); binary webhook payloads aren't a use case for v1 — operators
+    // String); binary webhook payloads aren't a use case for v1. Operators
     // can base64 ahead of the daemon if they need one.
     let Ok(body_str) = String::from_utf8(body.to_vec()) else {
         return webhook_err(axum::http::StatusCode::BAD_REQUEST, "body_not_utf8");
@@ -714,7 +714,7 @@ async fn http_webhook(
     // Reuse the canonical mail-send path so the topic fan-out, federation
     // routing, body-size guard, and StreamEvent emission all stay
     // single-sourced. The synthetic RpcRequest is the price for not
-    // refactoring the handler — id=0 is fine because we throw it away.
+    // refactoring the handler. The id is 0 because we throw it away.
     let req = crate::shared::protocol::RpcRequest {
         method: "mail.send".to_string(),
         params: serde_json::json!({
@@ -764,7 +764,7 @@ fn webhook_err(status: axum::http::StatusCode, code: &str) -> axum::response::Re
 }
 
 /// Prometheus text-exposition endpoint. Behind the same bearer-auth wall as
-/// `/api/*` — within the daemon's trust boundary a scrape needs the token,
+/// `/api/*`: within the daemon's trust boundary a scrape needs the token,
 /// which keeps the metrics surface out of the casual-browser attack surface
 /// without making metrics second-class.
 async fn http_metrics(State(state): State<AppState>) -> axum::response::Response {
@@ -847,7 +847,7 @@ pub fn test_auth_router(token: Arc<AuthToken>) -> Router {
 }
 
 /// 401 with a small JSON body for `/api/*` and an HTML pointer to
-/// `/auth/login` for everything else. Either way the body is constant —
+/// `/auth/login` for everything else. Either way the body is constant;
 /// the auth check is constant-time on its hot path.
 fn unauthorized_response(path: &str) -> axum::response::Response {
     use axum::http::StatusCode;
@@ -872,7 +872,7 @@ fn unauthorized_response(path: &str) -> axum::response::Response {
 // affected by the `IntoResponse` glob.
 use axum::response::IntoResponse;
 
-/// `GET /auth/login` — also accepts `?t=<token>` so `grim dashboard --open`
+/// `GET /auth/login`. Also accepts `?t=<token>` so `grim dashboard --open`
 /// can produce a single-shot URL the user clicks once. If `?t=` validates,
 /// we set the cookie and redirect to `/`; otherwise we render the login
 /// form and let the user paste the token by hand.
@@ -893,7 +893,7 @@ async fn http_login_get(
         .into_response()
 }
 
-/// `POST /auth/login` — form-encoded `token=…` from the login page.
+/// `POST /auth/login`. Form-encoded `token=…` from the login page.
 async fn http_login_post(
     State(state): State<AppState>,
     axum::Form(form): axum::Form<LoginForm>,
@@ -950,7 +950,7 @@ const LOGIN_PAGE_HTML: &str = r#"<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>grimoire — sign in</title>
+<title>grimoire sign in</title>
 <style>
   body { font-family: -apple-system, system-ui, sans-serif; background: #0e0e10;
          color: #d8d8d8; display: flex; min-height: 100vh; align-items: center;

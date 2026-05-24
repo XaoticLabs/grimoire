@@ -89,7 +89,7 @@ pub async fn start() -> Result<()> {
     manager.set_supervisor(supervisor.clone()).await;
     let _supervisor_task = supervisor.spawn();
 
-    // Scheduler — promotes Queued agents to Active per global capacity and
+    // Scheduler: promotes Queued agents to Active per global capacity and
     // dispatches supervised restarts when they come due. The daemon's
     // single load-bearing tick loop: without it, `grim summon` would queue
     // a row that never starts, and `Failed` agents with `--restart on_failure`
@@ -242,7 +242,7 @@ fn bootstrap_runtime(config: &Config) -> Result<()> {
     let socket = config.socket_path();
     let port = config.port();
 
-    // Startup banner — written to stderr (not the structured tracing log)
+    // Startup banner, written to stderr (not the structured tracing log)
     // so it shows up in interactive `grim daemon start` even when the user
     // hasn't enabled an env filter that lets `info!` through.
     #[allow(clippy::print_stderr)]
@@ -309,8 +309,8 @@ fn spawn_peer_listener(
         };
 
         // mTLS: present our identity as the server cert, and require inbound
-        // peers to present a client cert signed by — i.e. equal to, since each
-        // is self-signed — one of the certs we pinned at `peer add`. With no
+        // peers to present a client cert signed by (i.e. equal to, since each
+        // is self-signed) one of the certs we pinned at `peer add`. With no
         // peers pinned yet the listener still binds, but every client cert is
         // untrusted, so no inbound stream completes (the bearer-token check
         // would reject unknown peers regardless). Newly-added inbound peers

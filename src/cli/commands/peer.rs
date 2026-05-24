@@ -1,4 +1,4 @@
-//! `grim peer` — federation peer management (Task 11).
+//! `grim peer`: federation peer management (Task 11).
 
 use anyhow::{Result, anyhow};
 use clap::Subcommand;
@@ -117,7 +117,7 @@ async fn run_list() -> Result<()> {
     );
     for p in &result.peers {
         let dimm: &str = if p.daemon_id.is_empty() {
-            "—"
+            "-"
         } else {
             &p.daemon_id
         };

@@ -59,7 +59,7 @@ pub fn spawn(
 
             match run_once(&registry, &cur, &notify_outbox, &mut shutdown_rx).await {
                 Ok(()) => {
-                    // Clean shutdown — `backoff` is no longer relevant since
+                    // Clean shutdown. `backoff` is no longer relevant since
                     // we're exiting the reconnect loop entirely.
                     return;
                 }
@@ -225,8 +225,8 @@ async fn run_once(
 
 /// True iff the peer row is in `Removing`. Drainer halts in that case so
 /// teardown isn't racing fresh sends. A missing/errored lookup is treated
-/// as "not removing" — matching the pre-refactor behavior where the
-/// `if let Ok(Some(_)) && removing` guard simply fell through.
+/// as "not removing" (matching the pre-refactor behavior, where the
+/// `if let Ok(Some(_)) && removing` guard simply fell through).
 fn peer_removing(registry: &Arc<PeerRegistry>, peer_id: &str) -> bool {
     matches!(
         registry.db.get_peer(peer_id),
@@ -262,7 +262,7 @@ async fn handle_inbound(
         }
         Some(peer_inbound::Msg::HeartbeatAck(_)) => Ok(()),
         Some(peer_inbound::Msg::MailDeliver(d)) => {
-            // Server pushed mail at us — route through inbox handler.
+            // Server pushed mail at us; route through inbox handler.
             let ack = registry.inbox.handle_mail_deliver(peer, &d).await?;
             let _ = out_tx
                 .send(PeerOutbound {
@@ -285,7 +285,7 @@ async fn handle_inbound(
             Ok(())
         }
         Some(peer_inbound::Msg::MemoryDeliver(d)) => {
-            // Server pushed a namespace write at us — apply via LWW and ack.
+            // Server pushed a namespace write at us; apply via LWW and ack.
             let ack = apply_memory_deliver(&registry.db, &peer.id, &d);
             let _ = out_tx
                 .send(PeerOutbound {
@@ -303,7 +303,7 @@ async fn handle_inbound(
                         "namespace replication rejected");
                 }
             }
-            // Ack for an unknown op — drop it; the sender will retry the
+            // Ack for an unknown op; drop it. The sender will retry the
             // tracked row when the real ack arrives.
             Ok(())
         }
@@ -381,7 +381,7 @@ pub fn apply_memory_deliver(
     }
 }
 
-/// Mail outbox backend — drives `peer_outbox` rows over the mail channel.
+/// Mail outbox backend. Drives `peer_outbox` rows over the mail channel.
 struct MailOutbox<'a> {
     db: &'a Database,
 }
@@ -419,7 +419,7 @@ impl OutboxBackend for MailOutbox<'_> {
     }
 }
 
-/// Namespace replication backend — drives `namespace_outbox` rows over
+/// Namespace replication backend. Drives `namespace_outbox` rows over
 /// the memory channel.
 struct MemoryOutbox<'a> {
     db: &'a Database,

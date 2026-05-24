@@ -155,7 +155,7 @@ impl ScrollKeeper {
         })
     }
 
-    /// Activate a scroll — start scheduling ready tasks
+    /// Activate a scroll. Starts scheduling ready tasks.
     pub async fn activate(&self, scroll_id: &str) -> anyhow::Result<()> {
         let scroll = self
             .db
@@ -180,7 +180,7 @@ impl ScrollKeeper {
         Ok(())
     }
 
-    /// Abandon a scroll — banish active agents, mark incomplete tasks as skipped
+    /// Abandon a scroll. Banishes active agents and marks incomplete tasks as skipped.
     pub async fn abandon(&self, scroll_id: &str) -> anyhow::Result<()> {
         let tasks = self.db.get_tasks_for_scroll(scroll_id)?;
 
@@ -336,7 +336,7 @@ impl ScrollKeeper {
 
     async fn handle_agent_failure(&self, agent_id: &str) {
         // If the agent has an active restart policy, defer the failure
-        // handling to the supervisor — it will transition the agent to
+        // handling to the supervisor, which will transition the agent to
         // Restarting and eventually to terminal Failed if the budget is
         // exhausted. Without this gate, scroll-keeper could mark the task
         // failed before the supervisor flips state.

@@ -3,11 +3,11 @@
 //! Two enforcement paths live in different layers and need separate
 //! exercise:
 //!
-//!   * **Budget gate** — runs inside `AgentManager::dispatch_internal`,
+//!   * **Budget gate**: runs inside `AgentManager::dispatch_internal`,
 //!     after the scheduler has already promoted a `Queued` row. Tested by
 //!     pre-seeding `budget_spend` and asserting `dispatch_internal` either
 //!     refuses (hard) or proceeds (soft).
-//!   * **Policy gate** — runs inside `handle_summon` before the row is
+//!   * **Policy gate**: runs inside `handle_summon` before the row is
 //!     even enqueued. Tested over the RPC surface, which is the only
 //!     code path that consults `[policy]`.
 

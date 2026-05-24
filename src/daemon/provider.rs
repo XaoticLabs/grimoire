@@ -7,7 +7,7 @@ use super::process_manager::SpawnedAgent;
 use crate::shared::config::SandboxConfig;
 
 /// Identity injected into a spawned agent's environment so the agent can call
-/// back into `grim` (mail, memory, notify) knowing who it is — without the
+/// back into `grim` (mail, memory, notify) knowing who it is, without the
 /// agent having to be told its own id. Provider-neutral: applied as
 /// `GRIMOIRE_*` env vars on the child process regardless of which CLI runs,
 /// so claude / `pi` / opencode / aider all see the same contract.
@@ -47,7 +47,7 @@ pub struct ProviderCapabilities {
 ///
 /// - `Native`: the underlying CLI owns the session; the daemon resumes it by id
 ///   via [`Provider::spawn_resume`] (Claude `--resume`, pi `--session`).
-///   Full-fidelity — the CLI keeps the transcript and its own state.
+///   Full-fidelity, the CLI keeps the transcript and its own state.
 /// - `ContextReplay`: the CLI is stateless; the daemon reconstructs a context
 ///   preamble from the durable event log and prepends it to a fresh
 ///   [`Provider::spawn`]. The universal fallback for generic config providers.

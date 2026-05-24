@@ -31,13 +31,13 @@ pub struct MonitorResult {
     pub tokens_used: Option<u64>,
     /// Per-bucket breakdown used to attribute USD spend through
     /// `[providers.<name>.pricing]`. `None` for providers that only report
-    /// a total — budgets then attribute the total at `input_per_mtok`.
+    /// a total. Budgets then attribute the total at `input_per_mtok`.
     pub token_breakdown: Option<super::provider::TokenBreakdown>,
 }
 
 impl Default for MonitorResult {
     /// `Failed` with no exit code is the "no information" baseline used by
-    /// every fabricated/error-path `MonitorResult` in this codebase — tests
+    /// every fabricated/error-path `MonitorResult` in this codebase. Tests
     /// override one or two fields with `..Default::default()` so new
     /// fields don't ripple through every init site.
     fn default() -> Self {

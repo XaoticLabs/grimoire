@@ -12,8 +12,8 @@ static REQ_ID: AtomicU64 = AtomicU64::new(1);
 pub struct DaemonClient {
     reader: BufReader<tokio::net::unix::OwnedReadHalf>,
     writer: tokio::net::unix::OwnedWriteHalf,
-    /// Cached at connect time. None means "we couldn't load a token, but
-    /// peercred trust may still let us through" — the daemon decides.
+    /// Cached at connect time. `None` means we couldn't load a token, but
+    /// peercred trust may still let us through; the daemon decides.
     auth_token: Option<String>,
 }
 
@@ -29,8 +29,8 @@ impl DaemonClient {
 
         // Best-effort token load. UDS connections from the daemon's own UID
         // get a peercred bypass server-side, so we don't bail here if the
-        // token file is missing — that case is the dev's first run before
-        // the daemon has created it. Cross-UID calls without a token will
+        // token file is missing (that case is the dev's first run before
+        // the daemon has created it). Cross-UID calls without a token will
         // get a clean "unauthenticated" back from the daemon.
         let auth_token = auth::load_for_client().ok().map(|t| t.as_str().to_string());
 
@@ -46,7 +46,7 @@ impl DaemonClient {
     ///
     /// Bails out cleanly on transport errors, on RPC `error` responses, on
     /// an unexpectedly empty `result` field, and on JSON-decoding failures.
-    /// All four error paths carry the method name for grep-ability — a
+    /// All four error paths carry the method name for grep-ability, so a
     /// stack trace from production should pinpoint which RPC misbehaved.
     pub async fn call_typed<T: serde::de::DeserializeOwned>(
         &mut self,

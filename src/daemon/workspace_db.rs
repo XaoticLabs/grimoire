@@ -2,7 +2,7 @@
 //! `persistence.rs` to keep this v1 feature self-contained.
 //!
 //! Uses the same `Database` connection pool via `with_test_conn` is not the
-//! pattern — these are plain methods on `Database` added via an `impl` block
+//! pattern, these are plain methods on `Database` added via an `impl` block
 //! in this module.
 
 use anyhow::{Result, anyhow};
@@ -17,7 +17,7 @@ use crate::shared::types::{
 
 use super::persistence::Database;
 
-/// Outcome of a memory CAS write — surfaces the prior version on conflict so
+/// Outcome of a memory CAS write, surfaces the prior version on conflict so
 /// the caller can retry trivially (1 RTT).
 #[derive(Debug)]
 pub enum MemoryWriteOutcome {
@@ -445,7 +445,7 @@ impl Database {
         )?)
     }
 
-    /// All federation rows for `workspace_id` regardless of direction —
+    /// All federation rows for `workspace_id` regardless of direction,
     /// used by `workspace show` and by the producer-side fanout.
     /// Every workspace_federations row across all workspaces.
     pub fn list_workspace_federations(&self) -> Result<Vec<WorkspaceFederation>> {

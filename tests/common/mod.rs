@@ -2,7 +2,7 @@
 
 // Each test binary `mod common`s this file privately, so the lint sees its
 // `pub` items as unreachable from that crate's root. The visibility is
-// load-bearing — sibling test files need it.
+// load-bearing, sibling test files need it.
 #![allow(unreachable_pub)]
 
 use std::path::PathBuf;

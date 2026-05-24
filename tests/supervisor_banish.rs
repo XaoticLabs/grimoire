@@ -140,7 +140,7 @@ async fn banish_continues_when_supervisor_cancel_fails() {
     let bus = EventBus::new(db.clone());
     seed(&db, "ban00004", AgentState::Failed);
     let manager = AgentManager::new(db.clone(), bus.clone(), Config::default()).await;
-    // No supervisor wired — cascade no-ops.
+    // No supervisor wired, cascade no-ops.
     let ok = manager.banish("ban00004").await.unwrap();
     // Failed agents are not banishable currently, so just confirm no crash.
     let _ = ok;

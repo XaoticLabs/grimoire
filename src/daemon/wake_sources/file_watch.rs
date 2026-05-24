@@ -3,7 +3,7 @@
 //! configured glob set and is not in the ignore set.
 //!
 //! The bridge from `notify`'s sync callback into the registry's tokio
-//! runtime is a bounded `tokio::sync::mpsc::Sender` — the watcher thread
+//! runtime is a bounded `tokio::sync::mpsc::Sender`. The watcher thread
 //! pushes events, a debounce task drains them.
 
 use anyhow::{Result, anyhow};

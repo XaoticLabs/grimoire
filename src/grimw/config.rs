@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GrimwConfig {
     /// `https://host:port` of the daemon's worker listener. Plaintext URLs
-    /// are rejected — the worker link is mTLS.
+    /// are rejected; the worker link is mTLS.
     pub daemon_url: String,
     #[serde(default)]
     pub secret: String,

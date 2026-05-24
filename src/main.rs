@@ -1,6 +1,6 @@
 #![cfg_attr(not(test), forbid(unsafe_code))]
 #![cfg_attr(not(test), warn(clippy::unwrap_used))]
-// `grim` is the CLI entry point — printing diagnostics/usage hints to the
+// `grim` is the CLI entry point, printing diagnostics/usage hints to the
 // user's terminal is its job. Library/daemon code is still gated by the
 // global `print_stdout`/`print_stderr` lints.
 #![allow(clippy::print_stdout, clippy::print_stderr)]
@@ -20,7 +20,7 @@ pub mod daemon;
 pub mod shared;
 
 #[derive(Parser)]
-#[command(name = "grim", about = "Grimoire — AI Agent Orchestrator")]
+#[command(name = "grim", about = "Grimoire AI Agent Orchestrator")]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
@@ -141,8 +141,8 @@ enum Commands {
         /// Parent agent ID (or prefix)
         id: String,
 
-        /// Cut point — an event seq (inclusive) or kind name (stop after
-        /// first occurrence). Defaults to the parent's full life.
+        /// Cut point. An event seq (inclusive) or kind name (stop after
+        /// the first occurrence). Defaults to the parent's full life.
         #[arg(long)]
         at: Option<String>,
 
@@ -299,7 +299,7 @@ enum Commands {
     Ask {
         /// Recipient address (`agent://<id>` or `topic://<name>`).
         addr: String,
-        /// Body — trailing args are joined with single spaces.
+        /// Body. Trailing args are joined with single spaces.
         #[arg(trailing_var_arg = true, num_args = 1..)]
         body: Vec<String>,
         /// How long to wait for a reply, in seconds. Defaults to 30.
@@ -314,7 +314,7 @@ enum Commands {
     Tender {
         /// Recipient address (`agent://<id>` or `topic://<name>`).
         addr: String,
-        /// Body — trailing args are joined with single spaces.
+        /// Body. Trailing args are joined with single spaces.
         #[arg(trailing_var_arg = true, num_args = 1..)]
         body: Vec<String>,
         /// How long to collect bids, in seconds. Defaults to 30.

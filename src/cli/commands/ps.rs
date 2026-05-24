@@ -1,4 +1,4 @@
-//! `grim ps` — OS-process inventory for live agents. The dashboard's
+//! `grim ps`: OS-process inventory for live agents. The dashboard's
 //! "Processes" panel reads the same `agent.processes` RPC.
 
 use anyhow::{Context, Result};

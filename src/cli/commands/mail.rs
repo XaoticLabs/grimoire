@@ -15,7 +15,7 @@ pub enum MailCommand {
     /// Send mail to an `agent://<id>` or `topic://<name>` address.
     Send {
         addr: String,
-        /// Body — trailing args are joined with single spaces.
+        /// Body. Trailing args are joined with single spaces.
         #[arg(trailing_var_arg = true, num_args = 1..)]
         body: Vec<String>,
         /// Correlation id of the mail this one replies to. Pairs with
@@ -249,7 +249,7 @@ pub async fn run_ask(addr: &str, body: &str, timeout_secs: u64) -> Result<()> {
 }
 
 /// Post a tender and print each bid (one per line) as it arrived. Caller
-/// composes the response — e.g. `head -1` to take the first bidder.
+/// composes the response, e.g. `head -1` to take the first bidder.
 pub async fn run_tender(addr: &str, body: &str, deadline_secs: u64) -> Result<()> {
     use crate::shared::protocol::MailTenderResult;
     let mut client = DaemonClient::connect().await?;

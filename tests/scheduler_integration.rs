@@ -308,7 +308,7 @@ async fn capacity_saturation_promotes_on_completion() {
     assert_eq!(active_or_summoning, 2, "cap=2 should give 2 in-flight");
     assert_eq!(h.db.count_queued().unwrap(), 1, "third stays queued");
 
-    // Complete the first dispatched agent — frees a slot.
+    // Complete the first dispatched agent, freeing a slot.
     let started = h.executor.started_ids().await;
     assert_eq!(started.len(), 2);
     h.executor
@@ -483,7 +483,7 @@ async fn banish_while_queued_dequeues() {
         .unwrap();
     assert_eq!(h.db.count_queued().unwrap(), 1);
 
-    // Banish while Queued: must remove the row and mark Banished — never
+    // Banish while Queued: must remove the row and mark Banished, never
     // touch the executor.
     let ok = h.manager.banish(&agent.id).await.unwrap();
     assert!(ok);

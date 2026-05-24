@@ -1,4 +1,4 @@
-//! `WakeRegistry` — a daemon-internal actor that owns wake-source lifecycle.
+//! `WakeRegistry`: a daemon-internal actor that owns wake-source lifecycle.
 //!
 //! Responsibilities:
 //! - Persist wake_sources rows in SQLite.
@@ -30,7 +30,7 @@ use crate::daemon::wake_sources::parent_completion::{
 };
 use crate::shared::constants;
 
-/// Wake-source tick — how often the registry sweeps cron sources whose
+/// Wake-source tick: how often the registry sweeps cron sources whose
 /// next-fire time has elapsed. Lower bound is the smallest cron resolution
 /// (1 minute) but we sample at 30s so a freshly-armed cron fires promptly.
 const WAKE_TICK_INTERVAL: Duration = Duration::from_secs(30);
@@ -43,7 +43,7 @@ pub trait WakeMailSender: Send + Sync {
     async fn send_wake_mail(&self, wake_id: &str, agent_id: &str, body: &str) -> Result<String>;
 }
 
-/// Default `WakeMailSender` — writes a wake-eligible mail row with
+/// Default `WakeMailSender`: writes a wake-eligible mail row with
 /// `sender_id = wake://<wake_id>` so the scheduler's mail-wake path can pick
 /// it up unchanged.
 pub struct DbWakeMailSender {
@@ -190,7 +190,7 @@ impl WakeRegistry {
         Some(drain)
     }
 
-    /// Manually drive a single cron evaluation pass — used by tests that
+    /// Manually drive a single cron evaluation pass, used by tests that
     /// inject a `TestClock` and don't want to wait 30s.
     pub async fn tick_cron(self: &Arc<Self>) -> Result<()> {
         let now = self.clock.now();
@@ -291,7 +291,7 @@ impl WakeRegistry {
         Ok(true)
     }
 
-    /// Bulk retire — used by `grim banish`.
+    /// Bulk retire, used by `grim banish`.
     pub async fn retire_for_agent(self: &Arc<Self>, agent_id: &str) -> Result<usize> {
         let sources = self.db.list_wake_sources_for_agent(agent_id)?;
         let n = sources.len();

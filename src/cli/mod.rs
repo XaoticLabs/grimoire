@@ -1,5 +1,5 @@
 // CLI surface; not part of the library's documented API. Also: this is the
-// user-facing boundary, so direct stdout/stderr output is its job — the
+// user-facing boundary, so direct stdout/stderr output is its job. The
 // global `print_stdout`/`print_stderr` lints stay on so stray prints in
 // library/daemon code still get caught.
 #![allow(missing_docs)]

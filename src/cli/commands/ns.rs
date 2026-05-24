@@ -1,4 +1,4 @@
-//! `grim ns` — federated namespace memory. A string-named KV store that can
+//! `grim ns`: federated namespace memory. A string-named KV store that can
 //! replicate across daemons (see `ns federate`). Values are UTF-8 strings;
 //! conflicts resolve last-write-wins on a Lamport tuple.
 

@@ -1,4 +1,4 @@
-//! Federation Task 13: end-to-end two-daemon harness — now over mTLS.
+//! Federation Task 13: end-to-end two-daemon harness, now over mTLS.
 //!
 //! Spawns two in-process `PeerRegistry` instances (each backed by its
 //! own tempdir database + EventBus + DaemonId + self-signed identity),

@@ -34,7 +34,7 @@ pub struct RpcRequest {
     /// Bearer token. Required when the daemon cannot identify the caller
     /// via `SO_PEERCRED` (i.e. UDS connections from a different UID, or
     /// any future non-UDS transport that reuses `RpcRequest`). UDS
-    /// connections from the daemon's own UID may omit the token — the
+    /// connections from the daemon's own UID may omit the token; the
     /// kernel's peer-credential check substitutes for authentication.
     /// Sent on every request; the server caches `authed=true` per
     /// connection after the first successful check.
@@ -302,7 +302,7 @@ pub struct MailAskResult {
 }
 
 /// Post a task to a topic (or single agent) and collect replies for a
-/// fixed window. Used to gather bids from a fleet — typical pattern is
+/// fixed window. Used to gather bids from a fleet; the typical pattern is
 /// "fan out a job to `topic://workers`, take the first/best bid."
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MailTenderParams {
@@ -688,7 +688,7 @@ pub struct AgentProcess {
     pub pid: u32,
     pub alive: bool,
     /// `true` iff the agent's state is terminal (Complete/Failed/Banished)
-    /// but `alive` is also true — i.e. the OS process outlived its agent.
+    /// but `alive` is also true (i.e. the OS process outlived its agent).
     pub stuck: bool,
 }
 
@@ -960,7 +960,7 @@ impl StreamEvent {
     /// `MailSent`/`MailFailed`, recipient for `MailReceived`/`MailDelivered`).
     pub fn agent_id(&self) -> Option<&str> {
         // Each variant binds a differently-named field (agent_id vs
-        // recipient_id vs sender_id) — collapsing the arms would obscure
+        // recipient_id vs sender_id); collapsing the arms would obscure
         // which field is being read for each event type.
         #[allow(clippy::match_same_arms)]
         match self {
@@ -1202,14 +1202,14 @@ pub struct WorkspaceFederateResult {
 /// from that peer are authorized when the producer/consumer paths land.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorkspaceFederateSubscribeParams {
-    /// `<home-daemon-id>/<home-workspace-id>` — the canonical address of
+    /// `<home-daemon-id>/<home-workspace-id>`. The canonical address of
     /// the remote workspace this shadow tracks.
     pub home: String,
     pub peer: String,
     /// Optional local alias. Defaults to `<home-workspace>-shadow`.
     #[serde(default)]
     pub alias: Option<String>,
-    /// Optional branch label (display only — no worktree on disk).
+    /// Optional branch label (display only; no worktree on disk).
     #[serde(default = "default_shadow_branch")]
     pub branch: String,
 }

@@ -144,13 +144,13 @@ async fn summon_self_escalation_rejects() {
     // matches the eventual id. Since IDs are random, we instead exercise
     // the rejection by sending an `agent://` with a matching id pre-checked
     // through a roundtrip: use `agent://aaaaaaaa` and assert the daemon
-    // rejects when it happens to match — practically we just confirm
+    // rejects when it happens to match. Practically we just confirm
     // parse_address works for invalid_address otherwise.
     //
     // For the actual self_escalation rejection, since we can't predict the
     // generated id, we rely on the daemon's post-id-generation check. We
     // verify by NOT triggering it and verifying invalid_address is returned
-    // for malformed addresses — this test is then a placeholder. The real
+    // for malformed addresses, so this test is then a placeholder. The real
     // self_escalation path is exercised by integration testing.
     let resp = summon(json!({
         "task": "t",
@@ -160,7 +160,7 @@ async fn summon_self_escalation_rejects() {
         "escalate_to": "agent://zzzzzzzz",
     }))
     .await;
-    // 'z' is invalid hex — should fail with invalid_agent_id
+    // 'z' is invalid hex, should fail with invalid_agent_id
     assert_eq!(resp.error.unwrap().message, "invalid_agent_id");
 }
 

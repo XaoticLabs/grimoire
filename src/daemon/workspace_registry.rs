@@ -1,4 +1,4 @@
-//! `WorkspaceRegistry` — daemon-internal owner of workspace lifecycle.
+//! `WorkspaceRegistry`: daemon-internal owner of workspace lifecycle.
 //!
 //! Mirrors the `WakeRegistry` shape (`Arc<Self>`, mutex-protected handle map,
 //! shells out via a `GitRunner` seam so tests can swap the git binary). Owns
@@ -21,7 +21,7 @@ use super::event_bus::EventBus;
 use super::persistence::Database;
 use super::workspace_watcher::WorkspaceWatcherHandle;
 
-/// Errors enumerated as RPC code strings — keep stable for client matching.
+/// Errors enumerated as RPC code strings, kept stable for client matching.
 /// Body is `<code>` or `<code>:<details>`; `code()` returns the prefix so RPC
 /// handlers don't have to ad-hoc-split the `Display` output.
 #[derive(Debug)]

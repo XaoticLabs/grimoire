@@ -19,7 +19,7 @@ mod scrolls;
 mod supervision;
 mod wake;
 
-/// One row in the `task_queue` table — work that has been requested but not
+/// One row in the `task_queue` table: work that has been requested but not
 /// yet dispatched to an executor. Lives alongside the `agents` row whose `id`
 /// it shares.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -35,7 +35,7 @@ pub struct QueueRow {
     pub block_reason: Option<String>,
 }
 
-/// One row in the `eval_results` table — a single rubric-scored verdict
+/// One row in the `eval_results` table: a single rubric-scored verdict
 /// from `evaluator_id` against `target_id`. Multiple verdicts per target
 /// are allowed (different rubrics / evaluators); look-ups go through
 /// `Database::list_eval_results`.
@@ -87,7 +87,7 @@ pub struct Database {
 /// Best-effort `ALTER TABLE ADD COLUMN` for forward-only migrations. Returns
 /// `Ok(())` whether or not the column already exists. `column_ddl` is the
 /// full DDL fragment (e.g. `"keep_alive INTEGER NOT NULL DEFAULT 0"`).
-/// All identifiers are crate literals — no injection surface.
+/// All identifiers are crate literals, no injection surface.
 fn add_column_if_missing(
     conn: &Connection,
     table: &str,
@@ -114,7 +114,7 @@ impl Database {
 
     /// Run a synchronous DB closure on the blocking thread pool so the
     /// caller's Tokio worker stays free. The Arc clone keeps lifetimes
-    /// simple — the closure owns its handle for the duration.
+    /// simple, the closure owns its handle for the duration.
     pub async fn run<F, R>(self: &Arc<Self>, f: F) -> R
     where
         F: FnOnce(&Self) -> R + Send + 'static,
@@ -578,7 +578,7 @@ impl Database {
 
         add_column_if_missing(&conn, "agents", "workspace_id", "workspace_id TEXT")?;
 
-        // Shadow workspaces have no on-disk worktree — the path column is
+        // Shadow workspaces have no on-disk worktree, so the path column is
         // filled with a sentinel `shadow://<home-id>/<ws-id>` so the
         // existing UNIQUE constraint still holds.
         add_column_if_missing(

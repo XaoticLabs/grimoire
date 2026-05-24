@@ -17,7 +17,7 @@ fn truncate(s: &str, max: usize) -> String {
 }
 
 /// Format a non-`Output` lifecycle event as one compact, colored detail line
-/// (no seq/timestamp columns — the caller prepends those). Returns `None` for
+/// (no seq/timestamp columns, the caller prepends those). Returns `None` for
 /// events that carry no agent-scoped signal worth a row (e.g. `MailDelivered`,
 /// which is implied by the preceding `MailReceived`). The catch-all renders
 /// the bare kind tag so a newly added variant is never silently invisible.

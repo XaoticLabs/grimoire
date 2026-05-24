@@ -184,7 +184,7 @@ impl PeerRegistry {
             match self.db.get_peer_by_name(name)? {
                 Some(p) if p.state == PeerState::Active => return Ok(p),
                 Some(p) if p.state == PeerState::Down => {
-                    // Handshake explicitly rejected — surface to caller and
+                    // Handshake explicitly rejected, surface to caller and
                     // tear down the row so a retry can choose a new token.
                     let _ = self.db.delete_peer(&p.id);
                     self.handles.lock().await.remove(&p.id);
@@ -245,7 +245,7 @@ impl PeerRegistry {
         };
         // Minimal ping: report current state + zero RTT for now (full
         // request/response over the channel is layered on Heartbeat / HeartbeatAck
-        // — for v1, returning state suffices).
+        // for v1, returning state suffices).
         Ok((0, peer.state.as_str().to_string()))
     }
 }

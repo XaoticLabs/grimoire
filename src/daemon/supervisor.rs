@@ -1,4 +1,4 @@
-//! `Supervisor` — daemon-internal actor that owns restart-policy evaluation,
+//! `Supervisor`: daemon-internal actor that owns restart-policy evaluation,
 //! a windowed budget per agent, a global rate counter, and a tree-depth cap.
 //!
 //! Responsibilities:
@@ -114,7 +114,7 @@ pub struct EscalationOutcome {
     pub recipient_ids: Vec<AgentId>,
 }
 
-/// Default `EscalationMailSender` — writes one mail row per recipient with
+/// Default `EscalationMailSender`. Writes one mail row per recipient with
 /// `sender_id = "supervisor://<failed-agent-id>"`.
 pub struct DbEscalationMailSender {
     pub db: Arc<Database>,
@@ -345,7 +345,7 @@ impl Supervisor {
             return Ok(RestartDecision::NotSupervised);
         }
 
-        // Tree-depth check FIRST — it overrides budget.
+        // Tree-depth check FIRST: it overrides budget.
         let depth = self.db.get_escalation_depth(agent_id).unwrap_or(0);
         if depth + 1 > self.tree_depth_cap {
             return Ok(RestartDecision::BudgetExhausted {
@@ -489,7 +489,7 @@ impl Supervisor {
         let candidates = self.db.list_failed_with_active_policy().unwrap_or_default();
         for id in candidates {
             // Skip if there's an Escalated event newer than the latest
-            // restart_history row — we already escalated this agent.
+            // restart_history row (meaning we already escalated this agent).
             if self
                 .db
                 .has_escalated_event_after_latest_history(&id)
@@ -501,7 +501,7 @@ impl Supervisor {
             let decision = self.evaluate(&id).await?;
             match decision {
                 RestartDecision::Restart { attempt, .. } => {
-                    // Use now (immediate) — the original window has elapsed.
+                    // Use now (immediate); the original window has elapsed.
                     let now = self.clock.now();
                     self.schedule_restart(&id, attempt, now, false).await?;
                 }
@@ -580,7 +580,7 @@ impl Supervisor {
     /// Best-effort summary of the agent's last error: read recent
     /// agent_events looking for a stderr-style entry, fall back to None.
     fn last_error_summary(&self, agent_id: &str) -> Option<String> {
-        // Cheap heuristic — get the agent's last few events and grep for any
+        // Cheap heuristic. Get the agent's last few events and grep for any
         // stderr line. If none, return None and callers fall back to
         // "unknown".
         let evts = self.db.get_events(agent_id, Some(20)).ok()?;

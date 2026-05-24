@@ -10,7 +10,7 @@
 //!   * a 100ms periodic tick (safety net for any signal we missed).
 //!
 //! Tests drive the scheduler via [`Scheduler::tick_now`] without spawning the
-//! background task — see `tests/scheduler.rs`.
+//! background task. See `tests/scheduler.rs`.
 
 use std::collections::HashSet;
 use std::fmt::Write as _;
@@ -116,7 +116,7 @@ impl Scheduler {
     /// Declare providers handled by the daemon's in-process `LocalExecutor`.
     /// Dispatch for these will not be gated on a registered remote worker.
     /// When the local executor and a matching remote worker both exist, the
-    /// dispatcher (AgentManager) currently routes locally — federated
+    /// dispatcher (AgentManager) currently routes locally; federated
     /// placement is a separate concern owned by the executor layer.
     #[must_use]
     pub fn with_local_providers<I, S>(mut self, providers: I) -> Self
@@ -189,7 +189,7 @@ impl Scheduler {
         for row in rows {
             if in_flight >= cap {
                 // Mark the rest as capacity-blocked for visibility in
-                // `grim queue`. Cosmetic — scheduler will revisit them on
+                // `grim queue`. Cosmetic; scheduler will revisit them on
                 // the next signal.
                 if row.block_reason.as_deref() != Some("capacity")
                     && let Err(e) = self.db.set_block_reason(&row.id, Some("capacity"))
@@ -199,7 +199,7 @@ impl Scheduler {
                 continue;
             }
 
-            // Eligibility peek: provider_name=None means "any worker" — skip
+            // Eligibility peek: provider_name=None means "any worker"; skip
             // the check entirely and let dispatch_internal pick. When set,
             // require at least one registered worker that advertises it,
             // OR that the provider is listed in `local_providers` (the
@@ -236,7 +236,7 @@ impl Scheduler {
             }
 
             // Hand off to dispatcher. We pass the row by value (the caller no
-            // longer owns it after the claim succeeded — the queue row is
+            // longer owns it after the claim succeeded; the queue row is
             // gone). On success the dispatcher is responsible for moving the
             // agent through `Summoning -> Active`. On failure we requeue with
             // the original `enqueued_at` so fairness is preserved, then break
@@ -415,8 +415,8 @@ impl Scheduler {
 /// `[... N more messages truncated]` note is appended.
 ///
 /// Returns (prompt, folded_mail_ids) where `folded_mail_ids` is the list of
-/// mail rows that contributed (including any partially truncated message — it
-/// still counts as folded so it doesn't block forever).
+/// mail rows that contributed. Any partially truncated message still counts
+/// as folded, so it doesn't block forever.
 pub fn build_wake_prompt(mails: &[crate::shared::types::Mail]) -> (String, Vec<String>) {
     const SEP: &str = "\n\n---\n\n";
     let mut buf = String::new();

@@ -169,7 +169,7 @@ impl RemoteExecutor {
         }
     }
 
-    /// Stub used purely by `Placement` tests — never started.
+    /// Stub used purely by `Placement` tests, never started.
     pub fn stub_for_test(worker_id: String) -> Self {
         let (tx, _) = mpsc::channel(1);
         let (_, rx) = mpsc::channel(1);
@@ -216,7 +216,7 @@ async fn run_remote_completion(
             }
         }
     }
-    // Stream closed without a TaskFinished — treat as worker_lost.
+    // Stream closed without a TaskFinished, treat as worker_lost.
     MonitorResult {
         error_reason: Some("worker_lost".to_string()),
         ..Default::default()

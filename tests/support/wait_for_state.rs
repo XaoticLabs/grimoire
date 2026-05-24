@@ -2,7 +2,7 @@
 // Polls the database for an agent's state, returning when it matches a
 // target state or timing out with the actual final state. Use this in any
 // test where work goes through `enqueue + scheduler.tick_now()` rather than
-// the old synchronous `summon` path — post-enqueue the agent is `Queued`,
+// the old synchronous `summon` path. Post-enqueue the agent is `Queued`,
 // so a direct `assert_eq!(state, Active)` would race the scheduler.
 
 use std::time::Duration;

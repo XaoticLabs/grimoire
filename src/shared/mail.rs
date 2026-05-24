@@ -4,8 +4,8 @@
 //!
 //! Two schemes are supported:
 //!
-//!   * `agent://<id>` — `<id>` is the 8-char short id (`[0-9a-f]{8}`).
-//!   * `topic://<name>` — `<name>` matches `^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$`.
+//!   * `agent://<id>`, where `<id>` is the 8-char short id (`[0-9a-f]{8}`).
+//!   * `topic://<name>`, where `<name>` matches `^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$`.
 //!
 //! Anything else, including a bare string with no `://`, is rejected.
 
@@ -16,7 +16,7 @@ use crate::shared::types::{AgentId, DaemonId, validate_daemon_id};
 pub enum Address {
     Agent(AgentId),
     Topic(String),
-    /// `agent://grimd-<daemon-id>/<agent-id>` — federation form.
+    /// `agent://grimd-<daemon-id>/<agent-id>` (federation form).
     FederatedAgent {
         daemon_id: DaemonId,
         agent_id: AgentId,
@@ -112,7 +112,7 @@ fn parse_federated_agent_tail(s: &str) -> Option<(DaemonId, AgentId)> {
     Some((daemon.to_string(), agent.to_string()))
 }
 
-/// `^[0-9a-f]{8}$` — the existing short-id shape. Reject anything else,
+/// `^[0-9a-f]{8}$`. The existing short-id shape; reject anything else,
 /// including segments after a slash.
 pub fn is_valid_agent_id(s: &str) -> bool {
     if s.len() != 8 {
@@ -212,7 +212,7 @@ mod tests {
 
     #[test]
     fn body_preview_truncates_by_chars_not_bytes() {
-        // 4-byte UTF-8 character (an emoji) — preview must not split it.
+        // 4-byte UTF-8 character (an emoji); preview must not split it.
         let body = "🎉".repeat(10);
         let preview = body_preview(&body, 5);
         assert_eq!(preview.chars().count(), 5);

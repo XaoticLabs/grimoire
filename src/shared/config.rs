@@ -40,8 +40,8 @@ pub struct Config {
 /// One inbound webhook → mail bridge. Each entry exposes one endpoint at
 /// `/webhooks/<name>` whose raw request body is delivered to `topic` (or to
 /// `recipient` for direct mail). If `secret` is set, callers must present it
-/// in the `X-Grimoire-Webhook-Token` header — the only auth on the otherwise-
-/// public webhook surface. We deliberately *don't* implement provider-specific
+/// in the `X-Grimoire-Webhook-Token` header (the only auth on the otherwise-
+/// public webhook surface). We deliberately *don't* implement provider-specific
 /// HMAC schemes (GitHub's `X-Hub-Signature-256`, Slack's signing-secret); the
 /// expected deploy is "reverse proxy → daemon," where the proxy unwraps any
 /// such header and applies a daemon-side token instead.
@@ -185,7 +185,7 @@ pub struct ProviderConfig {
     pub sandbox: Option<SandboxConfig>,
     /// Token → USD pricing used to attribute spend to `[budgets.*]`. When
     /// unset, runs through this provider record token usage but do not
-    /// charge a budget — useful for free local models.
+    /// charge a budget (useful for free local models).
     #[serde(default)]
     pub pricing: Option<ProviderPricing>,
 }
@@ -228,7 +228,7 @@ impl ProviderPricing {
 /// time, any matching budget whose today's spend has reached `daily_usd`
 /// refuses new work (`hard`) or just warns (`soft`).
 ///
-/// "Day" boundaries are UTC midnight today — calendar-day windows are
+/// "Day" boundaries are UTC midnight today; calendar-day windows are
 /// what operators reason about for monthly bills.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BudgetConfig {
@@ -270,12 +270,12 @@ pub struct PolicyConfig {
 /// `systemd.exec(5)` and `bwrap(1)` that map cleanly onto an LLM-CLI process.
 ///
 /// Three orthogonal axes:
-///   * **resource**: `memory_max`, `cpu_quota` — enforced via cgroup v2
-///     (systemd-run user scope when available).
+///   * **resource**: `memory_max`, `cpu_quota` (enforced via cgroup v2,
+///     systemd-run user scope when available).
 ///   * **filesystem / network**: `fs_jail`, `allow_network`, `ro_paths`,
-///     `rw_paths` — enforced via `bwrap` when available.
-///   * **economic**: `token_budget` — enforced in-process by tracking spend
-///     per agent and suspending on exceed.
+///     `rw_paths` (enforced via `bwrap` when available).
+///   * **economic**: `token_budget` (enforced in-process by tracking spend
+///     per agent and suspending on exceed).
 ///
 /// The three layers are independent: a config may set only a token budget,
 /// only a memory cap, or any combination. Missing tools degrade gracefully
@@ -296,7 +296,7 @@ pub struct SandboxConfig {
     pub fs_jail: bool,
     /// Allow network access. Only consulted when `fs_jail` is true (bwrap
     /// `--share-net` vs `--unshare-net`). Cgroup egress rules are not yet
-    /// modelled — operators wanting network-deny without an fs jail should
+    /// modelled; operators wanting network-deny without an fs jail should
     /// run the daemon under an outer namespace.
     #[serde(default = "default_true")]
     pub allow_network: bool,
@@ -346,8 +346,8 @@ pub struct DaemonConfig {
     #[serde(default = "default_peer_heartbeat_interval_secs")]
     pub peer_heartbeat_interval_secs: u64,
     /// Federation: optional `host:port` to bind the peer gRPC listener.
-    /// `None` (default) skips the listener — federation traffic cannot
-    /// arrive but `mail.send` still routes locally.
+    /// `None` (default) skips the listener: federation traffic cannot
+    /// arrive, but `mail.send` still routes locally.
     #[serde(default)]
     pub peer_listen_addr: Option<String>,
     /// Federation mTLS: explicit transport-identity cert/key. When unset

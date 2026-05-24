@@ -20,7 +20,7 @@
 //! 2. `<grimoire_dir>/tls/<name>.crt` + `.key` (auto-generated on first
 //!    start, mode 0600), where `<name>` is `daemon` or `worker`.
 //!
-//! With no config, the daemon converges on the auto-generated file — zero
+//! With no config, the daemon converges on the auto-generated file: zero
 //! config for the solo operator, explicit override for org PKI.
 
 #![warn(missing_docs)]
@@ -33,7 +33,7 @@ use super::constants;
 
 /// Constant DNS SAN minted into every identity cert. Because trust is pinned
 /// to the exact certificate, the SAN match performed by rustls is not the
-/// security boundary — a fixed name lets the client always set a matching
+/// security boundary; a fixed name lets the client always set a matching
 /// `domain_name` without knowing the remote's id ahead of time. `.invalid`
 /// is reserved (RFC 6761) so it can never resolve on a real network.
 pub const TLS_SAN: &str = "grimoire.invalid";
@@ -47,7 +47,7 @@ pub struct Identity {
 }
 
 impl Identity {
-    /// The certificate in PEM form. Safe to share — this is what a remote
+    /// The certificate in PEM form. Safe to share: this is what a remote
     /// pins to trust this endpoint.
     #[must_use]
     pub fn cert_pem(&self) -> &str {
@@ -67,8 +67,8 @@ impl Identity {
         tonic::transport::Identity::from_pem(self.cert_pem.as_bytes(), self.key_pem.as_bytes())
     }
 
-    /// Lowercase hex SHA-256 fingerprint of the certificate's DER bytes — the
-    /// value an operator pins (e.g. `WorkerConfig.daemon_cert_sha256`).
+    /// Lowercase hex SHA-256 fingerprint of the certificate's DER bytes.
+    /// This is the value an operator pins (e.g. `WorkerConfig.daemon_cert_sha256`).
     #[must_use]
     pub fn fingerprint(&self) -> String {
         cert_fingerprint(&self.cert_pem)
@@ -184,7 +184,7 @@ pub fn load_or_init(
 
 /// Generate a fresh self-signed cert+key with CN=`name` and the constant
 /// [`TLS_SAN`] (plus `name` as a DNS SAN) so a client can verify against
-/// either. Not persisted — callers decide where it lives.
+/// either. Not persisted; callers decide where it lives.
 pub fn generate(name: &str) -> Result<Identity> {
     let cert_key =
         rcgen::generate_simple_self_signed(vec![TLS_SAN.to_string(), sanitize_san(name)])

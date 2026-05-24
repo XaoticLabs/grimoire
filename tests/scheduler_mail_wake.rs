@@ -53,7 +53,7 @@ impl AgentStateLookup for DbLookup {
     }
 }
 
-/// No-op dispatcher — mail-wake tests don't exercise the queue path.
+/// No-op dispatcher, mail-wake tests don't exercise the queue path.
 #[derive(Default)]
 struct NoopDispatcher;
 

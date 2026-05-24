@@ -143,13 +143,13 @@ impl AgentManager {
         Ok(())
     }
 
-    /// Inject the wake registry — banish cascades retire wake sources
+    /// Inject the wake registry. Banish cascades retire wake sources
     /// through it. Called once by daemon boot wiring.
     pub async fn set_wake_registry(&self, registry: Arc<WakeRegistry>) {
         *self.wake_registry.lock().await = Some(registry);
     }
 
-    /// Inject the supervisor — banish cascades cancel pending restarts
+    /// Inject the supervisor. Banish cascades cancel pending restarts
     /// through it. Called once by daemon boot wiring.
     pub async fn set_supervisor(&self, supervisor: Arc<Supervisor>) {
         *self.supervisor.lock().await = Some(supervisor);
@@ -277,7 +277,7 @@ impl AgentManager {
                 && let Some(pricing) = manager.registry.pricing_for(&provider_name)
             {
                 let breakdown = result.token_breakdown.unwrap_or_else(|| {
-                    // No breakdown but we may still have a total — charge it
+                    // No breakdown but we may still have a total. Charge it
                     // as input tokens (conservative; vendors price input
                     // cheaper than output, so this *under*-bills slightly).
                     crate::daemon::provider::TokenBreakdown {
@@ -355,7 +355,7 @@ impl AgentManager {
 
     /// Enqueue an agent for the scheduler to pick up. Inserts the agent in
     /// `Queued` state and writes a row into `task_queue`; does NOT start the
-    /// executor — that is the scheduler's job (handled by
+    /// executor (that is the scheduler's job, handled by
     /// `AgentManager::dispatch_internal`).
     pub async fn enqueue(
         self: &Arc<Self>,
@@ -456,7 +456,7 @@ impl AgentManager {
     /// Drive a claimed queue row through `executor.start` and the
     /// `Summoning -> Active` transition. Called only by the scheduler after a
     /// successful `claim_for_dispatch`. On failure, returns `Err` *without*
-    /// mutating queue state — the scheduler owns the requeue path so the
+    /// mutating queue state, since the scheduler owns the requeue path so the
     /// row's original `enqueued_at` (and therefore lane fairness) is preserved.
     pub(crate) async fn dispatch_internal(self: &Arc<Self>, row: QueueRow) -> Result<()> {
         let agent_id = row.id.clone();
@@ -485,7 +485,7 @@ impl AgentManager {
         // Daily USD budget gate. For every budget that includes this
         // provider, check today's running spend. Hard budgets refuse
         // dispatch; soft budgets only log. Unlike the token gate above,
-        // this does NOT banish — the next day will let work through, so we
+        // this does NOT banish. The next day will let work through, so we
         // requeue-via-Err and the scheduler retries naturally.
         let today = chrono::Utc::now().format("%Y-%m-%d").to_string();
         for (name, b) in &self.config.budgets {
@@ -863,7 +863,7 @@ impl AgentManager {
 
         match managed.agent.state {
             AgentState::Queued => {
-                // Queued agents have no process and no executor handle — just
+                // Queued agents have no process and no executor handle. Just
                 // dequeue and flip to Banished. `delete_from_queue` is
                 // idempotent: if the scheduler already claimed the row (state
                 // would have moved to Summoning, so we wouldn't be here), the
@@ -906,7 +906,7 @@ impl AgentManager {
                 Ok(true)
             }
             AgentState::Dormant => {
-                // No live process — just retire the agent.
+                // No live process; just retire the agent.
                 managed.agent.state = AgentState::Banished;
                 self.db
                     .update_agent_state(id, &AgentState::Banished, None)?;
@@ -919,7 +919,7 @@ impl AgentManager {
                 Ok(true)
             }
             AgentState::Restarting => {
-                // No live process and no executor handle — supervisor's
+                // No live process and no executor handle. The supervisor's
                 // pending heap is cancelled by the outer cascade.
                 managed.agent.state = AgentState::Banished;
                 self.db

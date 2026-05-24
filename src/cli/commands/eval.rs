@@ -9,13 +9,13 @@ use crate::shared::protocol::{
 /// Maximum bytes of folded transcript we send to the evaluator. Tail-keep
 /// the most recent output (latest behavior dominates most rubric calls) and
 /// mark the truncation explicitly so the evaluator can choose to weight or
-/// caveat its score. Mirrors `fork`'s fold cap deliberately — anywhere the
+/// caveat its score. Mirrors `fork`'s fold cap deliberately: anywhere the
 /// daemon reasons about an agent's "context", 16 KiB is the line.
 const MAX_FOLDED_TRANSCRIPT: usize = 16 * 1024;
 
 /// Build the prompt sent to the evaluator agent. Inputs are intentionally
 /// concatenated rather than templated through a schema so the rubric author
-/// can put anything they want in the rubric file — including stricter
+/// can put anything they want in the rubric file, including stricter
 /// JSON-output instructions that override the default suggestion.
 fn build_eval_prompt(target_id: &str, max_seq: i64, rubric: &str, transcript: &str) -> String {
     let (transcript_block, note) = if transcript.len() > MAX_FOLDED_TRANSCRIPT {
@@ -47,7 +47,7 @@ fn build_eval_prompt(target_id: &str, max_seq: i64, rubric: &str, transcript: &s
 }
 
 /// Fold the target agent's `Output` stdout events into a single transcript
-/// string. Same shape as `fork::build_fork_prompt` uses — keep the two in
+/// string. Same shape as `fork::build_fork_prompt` uses. Keep the two in
 /// sync if one changes how it extracts output.
 fn fold_transcript(entries: &[crate::shared::protocol::ReplayEntry]) -> String {
     let mut buf = String::new();
@@ -137,7 +137,7 @@ pub async fn run(
     }
 
     // Block until the evaluator reaches a terminal state, then parse its
-    // last-result JSON. Polling — not subscribing — keeps the CLI hops
+    // last-result JSON. Polling, not subscribing, keeps the CLI hops
     // identical to the rest of `grim`; eval runs are short-lived enough
     // that a 1 s tick is fine.
     let parsed = wait_for_verdict(&mut client, &result.id, timeout_secs).await?;
@@ -147,7 +147,7 @@ pub async fn run(
     Ok(())
 }
 
-/// `grim eval <id> --list` — print every recorded evaluation for the
+/// `grim eval <id> --list`: print every recorded evaluation for the
 /// target, newest first. Mirrors `grim mail list` in shape so operators
 /// can scan an agent's full review history at a glance.
 pub async fn run_list(target_id: &str) -> Result<()> {
@@ -246,7 +246,7 @@ async fn wait_for_verdict(
 
 /// Pull the score JSON out of the evaluator's free-form reply. We accept
 /// either a bare JSON object (the strict path requested by the prompt) or
-/// a JSON object embedded anywhere in the result — agents reliably drift
+/// a JSON object embedded anywhere in the result, because agents reliably drift
 /// from "JSON only" and rejecting that drift would make eval brittle.
 fn parse_verdict(text: &str) -> Result<EvalVerdict> {
     if let Ok(v) = serde_json::from_str::<EvalVerdict>(text.trim()) {

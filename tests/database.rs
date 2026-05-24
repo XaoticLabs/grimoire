@@ -59,7 +59,7 @@ fn make_agent(id: &str) -> Agent {
     }
 }
 // ---------------------------------------------------------------------------
-// Durable event log — schema
+// Durable event log: schema
 // ---------------------------------------------------------------------------
 #[test]
 fn events_table_exists_after_migration() {
@@ -96,11 +96,11 @@ fn migrate_is_idempotent() {
     {
         let _db = Database::open(tmp.path()).unwrap();
     }
-    // Reopen the same file — must succeed (CREATE TABLE IF NOT EXISTS, etc.)
+    // Reopen the same file, must succeed (CREATE TABLE IF NOT EXISTS, etc.)
     let _db = Database::open(tmp.path()).unwrap();
 }
 // ---------------------------------------------------------------------------
-// Durable event log — append_event
+// Durable event log: append_event
 // ---------------------------------------------------------------------------
 fn sample_agent_for_created(id: &str) -> Agent {
     Agent {
@@ -195,7 +195,7 @@ fn append_event_round_trips_payload() {
             })
             .unwrap();
         let decoded: StreamEvent = serde_json::from_str(&payload).unwrap();
-        // Payload re-serializes identically — equivalent to original.
+        // Payload re-serializes identically, equivalent to original.
         let original_json = serde_json::to_string(&event).unwrap();
         let decoded_json = serde_json::to_string(&decoded).unwrap();
         assert_eq!(original_json, decoded_json);
@@ -757,7 +757,7 @@ fn dependency_edges_for_scroll() {
     assert!(edges.contains(&("e-c".to_string(), "e-b".to_string())));
 }
 // ---------------------------------------------------------------------------
-// task_queue — durable work queue
+// task_queue: durable work queue
 // ---------------------------------------------------------------------------
 fn make_queued_agent(id: &str) -> Agent {
     let mut a = make_agent(id);

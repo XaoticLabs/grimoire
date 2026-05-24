@@ -34,7 +34,7 @@ impl WorkerControl for WorkerControlService {
     type ChannelStream =
         Pin<Box<dyn Stream<Item = Result<DaemonMessage, Status>> + Send + 'static>>;
 
-    // `tonic::Status` is large but the trait fixes the Err type — boxing here would
+    // `tonic::Status` is large but the trait fixes the Err type; boxing here would
     // change the API generated from the proto definition.
     #[allow(clippy::result_large_err)]
     async fn channel(

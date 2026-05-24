@@ -565,7 +565,7 @@
             return function() {
                 const el = document.querySelector(`[data-page="${name}"]`);
                 if (el.dataset.rendered) return;
-                el.innerHTML = `<div class="empty"><div class="icon">&#x2728;</div><div>${name} page — coming next</div></div>`;
+                el.innerHTML = `<div class="empty"><div class="icon">&#x2728;</div><div>${name} page (coming next)</div></div>`;
                 el.dataset.rendered = '1';
             };
         }
@@ -613,8 +613,8 @@
                 const agents = result.agents || [];
                 const cur = sel.value;
                 sel.innerHTML = agents.length
-                    ? agents.map(a => `<option value="${escAttr(a.id)}">${esc(a.id)} — ${esc((a.task || '').slice(0, 60))}</option>`).join('')
-                    : `<option value="">no agents — summon one from the Agents tab first</option>`;
+                    ? agents.map(a => `<option value="${escAttr(a.id)}">${esc(a.id)} - ${esc((a.task || '').slice(0, 60))}</option>`).join('')
+                    : `<option value="">no agents, summon one from the Agents tab first</option>`;
                 if (cur && agents.some(a => a.id === cur)) sel.value = cur;
             } catch (e) {
                 sel.innerHTML = `<option value="">agent.circle failed: ${esc(e.message)}</option>`;
@@ -642,14 +642,14 @@
             const tbody = document.getElementById('wake-tbody');
             if (!tbody) return;
             if (!sources.length) {
-                tbody.innerHTML = `<tr><td colspan="6" class="muted" style="text-align:center;padding:2rem">no wake sources yet — add one above</td></tr>`;
+                tbody.innerHTML = `<tr><td colspan="6" class="muted" style="text-align:center;padding:2rem">No wake sources yet. Add one above.</td></tr>`;
                 return;
             }
             tbody.innerHTML = sources.map(s => {
                 const cfg = (s.config_json || '').slice(0, 60);
                 const last = s.last_fired_at
                     ? new Date(s.last_fired_at * 1000).toLocaleString()
-                    : '—';
+                    : '-';
                 return `
                     <tr>
                         <td><code>${esc(s.id || '')}</code></td>
@@ -743,9 +743,9 @@
                             <select id="wake-agent"></select>
                             <label for="wake-kind">Kind</label>
                             <select id="wake-kind" onchange="updateWakeFormFields()">
-                                <option value="cron">cron — fire on a schedule</option>
-                                <option value="file_watch">file_watch — fire when matching files change</option>
-                                <option value="parent_completion">parent_completion — fire when another agent finishes</option>
+                                <option value="cron">cron: fire on a schedule</option>
+                                <option value="file_watch">file_watch: fire when matching files change</option>
+                                <option value="parent_completion">parent_completion: fire when another agent finishes</option>
                             </select>
 
                             <label class="wake-field" data-kinds="cron" for="wake-cron">Cron expr</label>
@@ -826,7 +826,7 @@
             const tbody = document.getElementById('ws-tbody');
             if (!tbody) return;
             if (!workspaces.length) {
-                tbody.innerHTML = `<tr><td colspan="6" class="muted" style="text-align:center;padding:2rem">no workspaces yet — create one above</td></tr>`;
+                tbody.innerHTML = `<tr><td colspan="6" class="muted" style="text-align:center;padding:2rem">No workspaces yet. Create one above.</td></tr>`;
             } else {
                 tbody.innerHTML = workspaces.map(w => `
                     <tr>
@@ -883,7 +883,7 @@
             let agents = [];
             try { agents = (await grim('agent.circle', {})).agents || []; } catch (e) {}
             const opts = agents.length
-                ? agents.map(a => `<option value="${escAttr(a.id)}">${esc(a.id)} — ${esc((a.task||'').slice(0,50))}</option>`).join('')
+                ? agents.map(a => `<option value="${escAttr(a.id)}">${esc(a.id)} - ${esc((a.task||'').slice(0,50))}</option>`).join('')
                 : `<option value="">no agents</option>`;
             openModal(`
                 <h2>Assign agent to ${esc(workspace_id)}</h2>
@@ -1003,7 +1003,7 @@
 
         // --- Health page -------------------------------------------------
         // Aggregates daemon.status + agent.queue.list + budget.list +
-        // /metrics scrape. /metrics is Prometheus text — we surface a few
+        // /metrics scrape. /metrics is Prometheus text, we surface a few
         // headline numbers and expose the full body in a <details> block.
         function formatUptime(secs) {
             const d = Math.floor(secs / 86400);
@@ -1024,7 +1024,7 @@
             try {
                 const s = await grim('daemon.status', {});
                 document.getElementById('health-tiles').innerHTML = [
-                    statTile('Daemon', s.daemon_id ? 'grimd-' + s.daemon_id : '—', 'id'),
+                    statTile('Daemon', s.daemon_id ? 'grimd-' + s.daemon_id : '-', 'id'),
                     statTile('Uptime', formatUptime(s.uptime_secs || 0)),
                     statTile('Agents', s.agent_count || 0, `${s.active_count || 0} active · ${s.queued_count || 0} queued`),
                     statTile('Concurrency', s.max_concurrent_agents || 0, 'max concurrent'),
@@ -1045,7 +1045,7 @@
                             <td class="muted">${formatAge(e.age_seconds||0)}</td>
                             <td>${esc(e.provider||'')}</td>
                             <td>${esc(e.model||'')}</td>
-                            <td>${e.block_reason ? '<span style="color:var(--red)">'+esc(e.block_reason)+'</span>' : '<span class="muted">—</span>'}</td>
+                            <td>${e.block_reason ? '<span style="color:var(--red)">'+esc(e.block_reason)+'</span>' : '<span class="muted">-</span>'}</td>
                             <td><code style="font-family:inherit">${esc((e.task_text||'').slice(0,60))}</code></td>
                         </tr>`).join('')
                     : `<tr><td colspan="7" class="muted" style="text-align:center;padding:1rem">queue empty</td></tr>`;
@@ -1077,7 +1077,7 @@
 
             refreshProcesses();
 
-            // /metrics is a Prometheus text exposition — fetch raw and show.
+            // /metrics is a Prometheus text exposition, fetch raw and show.
             try {
                 const res = await fetch('/metrics');
                 const text = await res.text();
@@ -1239,8 +1239,8 @@
                     <tr>
                         <td><code>${esc(t.task.name)}</code></td>
                         <td><span style="color:${taskStateColor(t.task.state)}">${esc(t.task.state)}</span></td>
-                        <td>${t.task.agent_id ? '<code>' + esc(t.task.agent_id.slice(0,12)) + '</code>' : '<span class="muted">—</span>'}</td>
-                        <td class="muted">${(t.depends_on_names||[]).map(n => esc(n)).join(', ') || '—'}</td>
+                        <td>${t.task.agent_id ? '<code>' + esc(t.task.agent_id.slice(0,12)) + '</code>' : '<span class="muted">-</span>'}</td>
+                        <td class="muted">${(t.depends_on_names||[]).map(n => esc(n)).join(', ') || '-'}</td>
                         <td class="muted">${esc(t.task.model || '')}</td>
                         <td><code style="font-family:inherit">${esc((t.task.prompt || '').slice(0, 60))}</code></td>
                     </tr>`).join('');
@@ -1340,7 +1340,7 @@
                 const agents = result.agents || [];
                 const cur = sel.value;
                 sel.innerHTML = agents.length
-                    ? agents.map(a => `<option value="${escAttr(a.id)}">${esc(a.id)} — ${esc((a.task||'').slice(0,60))}</option>`).join('')
+                    ? agents.map(a => `<option value="${escAttr(a.id)}">${esc(a.id)} - ${esc((a.task||'').slice(0,60))}</option>`).join('')
                     : `<option value="">no agents</option>`;
                 if (cur && agents.some(a => a.id === cur)) sel.value = cur;
                 currentMailAgent = sel.value || null;
@@ -1381,7 +1381,7 @@
             }
             tbody.innerHTML = mails.map(m => {
                 const preview = (m.body || '').slice(0, 80);
-                const from = m.sender_id ? esc(m.sender_id.slice(0, 8)) : '<span class="muted">—</span>';
+                const from = m.sender_id ? esc(m.sender_id.slice(0, 8)) : '<span class="muted">-</span>';
                 const topic = m.topic ? `<span class="badge badge-mail">${esc(m.topic)}</span>` : '';
                 const reply = m.in_reply_to ? `<div class="muted" style="font-size:0.7rem">↳ ${esc(m.in_reply_to.slice(0,12))}</div>` : '';
                 return `
@@ -1403,7 +1403,7 @@
             openModal(`
                 <h2>Mail ${esc(id)}</h2>
                 <div class="muted" style="font-size:0.8rem;margin-bottom:0.5rem">
-                    from: <code>${esc(sender || '—')}</code>
+                    from: <code>${esc(sender || '-')}</code>
                     ${topic ? ' · topic: <code>' + esc(topic) + '</code>' : ''}
                     ${inReplyTo ? ' · reply to: <code>' + esc(inReplyTo) + '</code>' : ''}
                 </div>
@@ -1630,8 +1630,8 @@
                             <td>${esc(p.name || '')}</td>
                             <td><code>${esc((p.source_id||'').slice(0,12))}</code></td>
                             <td><span style="color:${pactStateColor(p.state)}">${esc(p.state||'')}</span></td>
-                            <td>${p.target_id ? '<code>' + esc(p.target_id.slice(0,12)) + '</code>' : '<span class="muted">—</span>'}</td>
-                            <td class="muted" style="font-size:0.75rem">${p.fired_at ? new Date(p.fired_at).toLocaleString() : '—'}</td>
+                            <td>${p.target_id ? '<code>' + esc(p.target_id.slice(0,12)) + '</code>' : '<span class="muted">-</span>'}</td>
+                            <td class="muted" style="font-size:0.75rem">${p.fired_at ? new Date(p.fired_at).toLocaleString() : '-'}</td>
                             <td><code style="font-family:inherit">${esc((p.task_tpl||'').slice(0, 80))}</code></td>
                         </tr>`).join('')
                     : `<tr><td colspan="7" class="muted" style="text-align:center;padding:2rem">no pacts</td></tr>`;
@@ -1670,7 +1670,7 @@
                             <label for="pact-name">Name</label>
                             <input id="pact-name" type="text" placeholder="(optional)">
                             <label for="pact-tpl">Task template</label>
-                            <textarea id="pact-tpl" rows="3" placeholder="task text — fires later as a fresh agent" style="font-family:inherit;resize:vertical"></textarea>
+                            <textarea id="pact-tpl" rows="3" placeholder="task text (fires later as a fresh agent)" style="font-family:inherit;resize:vertical"></textarea>
                             <div class="form-actions">
                                 <button class="btn" onclick="submitPactCreate()">Create</button>
                             </div>
@@ -1728,7 +1728,7 @@
                                 <td class="muted" style="font-size:0.75rem">${new Date(e.created_at*1000).toLocaleString()}</td>
                                 <td><code>${esc((e.evaluator_id||'').slice(0,12))}</code></td>
                                 <td><span style="color:${evalScoreColor(e.score)};font-weight:500">${(e.score ?? 0).toFixed(2)}</span></td>
-                                <td>${e.verdict ? '<span class="badge">' + esc(e.verdict) + '</span>' : '<span class="muted">—</span>'}</td>
+                                <td>${e.verdict ? '<span class="badge">' + esc(e.verdict) + '</span>' : '<span class="muted">-</span>'}</td>
                                 <td><code style="font-family:inherit">${esc((e.rationale||'').slice(0,200))}</code></td>
                             </tr>`).join('')}</tbody>
                     </table>
@@ -1815,7 +1815,7 @@
         // Peers + cross-daemon federations (namespaces, workspaces, topics).
         // RPCs: peer.add/list/remove/ping/local-cert, ns.list, ns.federate,
         // topic.federate/unfederate, workspace.federate/unfederate.
-        // A peer is "stale" if we haven't heard from it in over a minute —
+        // A peer is "stale" if we haven't heard from it in over a minute,
         // matches the gossip cadence in src/daemon/peer_registry.rs.
         const PEER_STALE_SECS = 60;
 
@@ -1851,7 +1851,7 @@
                                 <code>${esc(p.name || '')}</code>
                                 <div class="muted" style="font-size:0.7rem;margin-top:0.15rem">${esc(p.peer_id || '')}</div>
                             </td>
-                            <td><code style="font-family:inherit">${esc(p.url || '')}</code><div class="muted" style="font-size:0.7rem">daemon ${esc(p.daemon_id || '—')}</div></td>
+                            <td><code style="font-family:inherit">${esc(p.url || '')}</code><div class="muted" style="font-size:0.7rem">daemon ${esc(p.daemon_id || '-')}</div></td>
                             <td><span class="badge">${esc(p.state || '')}</span><div class="muted" style="font-size:0.7rem">${esc(pres.label)}</div></td>
                             <td>${outboxBadge(p.outbox_depth || 0)}</td>
                             <td class="actions">
@@ -2054,7 +2054,7 @@
         }
 
         // Direction comes back as the enum string ("inbound" | "outbound" | "both")
-        // for topic/ns and as the same lowercase string for workspaces — the
+        // for topic/ns and as the same lowercase string for workspaces. The
         // shape converged on FederationDirection in shared/types.
         function fedDirBadge(d) {
             const color = ({
@@ -2136,7 +2136,7 @@
         }
 
         function chronicleSummary(ev) {
-            // ev is a tagged enum object — most variants have a `type` field
+            // ev is a tagged enum object, most variants have a `type` field
             // adjacent to fields. Stringify what's interesting per kind.
             if (!ev || typeof ev !== 'object') return '';
             const t = ev.type || Object.keys(ev)[0];
@@ -2207,7 +2207,7 @@
         }
 
         // --- Webhooks page ----------------------------------------------
-        // Inbound HTTP endpoints — `POST /webhooks/<name>` becomes mail to a
+        // Inbound HTTP endpoints, `POST /webhooks/<name>` becomes mail to a
         // configured topic/recipient. Definitions live in the daemon config
         // file (operator-managed); we only list them here.
         async function refreshWebhooks() {
@@ -2217,7 +2217,7 @@
                 const r = await grim('webhook.list', {});
                 const hooks = r.webhooks || [];
                 if (!hooks.length) {
-                    tbody.innerHTML = `<tr><td colspan="5" class="muted" style="text-align:center;padding:2rem">no webhooks configured — add a <code>[webhooks.&lt;name&gt;]</code> block to the daemon config</td></tr>`;
+                    tbody.innerHTML = `<tr><td colspan="5" class="muted" style="text-align:center;padding:2rem">no webhooks configured, add a <code>[webhooks.&lt;name&gt;]</code> block to the daemon config</td></tr>`;
                     return;
                 }
                 const base = location.origin;

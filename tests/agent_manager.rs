@@ -209,7 +209,7 @@ async fn dispatch_failure_returns_err_without_touching_queue() {
         .await;
     assert!(result.is_err(), "forced executor failure must propagate");
 
-    // dispatch_internal must NOT mutate queue/state on failure — that's the
+    // dispatch_internal must NOT mutate queue/state on failure, that's the
     // scheduler's job (it owns the requeue path so fairness is preserved).
     assert_eq!(
         db.count_queued().unwrap(),
@@ -287,7 +287,7 @@ async fn banish_queued_sets_state_banished() {
 #[tokio::test]
 async fn banish_queued_does_not_invoke_kill() {
     // For a Queued agent, no executor handle, no pid, and no cancel were
-    // registered — banish must take the queue-only path and never reach the
+    // registered, banish must take the queue-only path and never reach the
     // process-kill code. Observable: executor was never called.
     let (_, _, manager, log) = fresh_manager().await;
 
@@ -430,7 +430,7 @@ async fn enqueue_is_the_entry_point_not_summon() {
         .unwrap();
 
     // After enqueue alone (no scheduler tick), the executor must NOT have
-    // been called — proving enqueue is non-dispatching.
+    // been called, proving enqueue is non-dispatching.
     assert_eq!(
         log.calls.lock().unwrap().len(),
         0,

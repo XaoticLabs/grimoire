@@ -105,7 +105,7 @@ async fn cron_fires_when_clock_crosses_schedule() {
     reg.tick_cron().await.unwrap();
     assert!(sender.calls.lock().await.is_empty());
 
-    // Advance 90 seconds — crosses at least one minute boundary.
+    // Advance 90 seconds, crosses at least one minute boundary.
     test_clock.advance(Duration::seconds(90));
     reg.tick_cron().await.unwrap();
     let calls = sender.calls.lock().await;

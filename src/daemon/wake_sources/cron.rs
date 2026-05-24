@@ -10,8 +10,8 @@
 //! ## Why not the `cron` crate
 //!
 //! The `cron` crate pulls in `phf`, `phf_macros`, `phf_generator`, `rand` and
-//! `winnow` — none of which would otherwise be in this tree. Our needs are a
-//! parser and "next fire time after T"; this hand-rolled implementation is
+//! `winnow`, none of which would otherwise be in this tree. Our needs are a
+//! parser and "next fire time after T", and this hand-rolled implementation is
 //! ~150 lines with no transitive deps.
 
 use anyhow::{Result, anyhow};
@@ -37,7 +37,7 @@ impl CronSource {
         })
     }
 
-    /// Returns `Some(now)` if the source should fire — i.e. at least one
+    /// Returns `Some(now)` if the source should fire, i.e. at least one
     /// scheduled time exists in the half-open interval `(since, now]`
     /// where `since` is `last_fired_at` if known else the source's
     /// `registered_at`.
@@ -241,7 +241,7 @@ mod tests {
 
     #[test]
     fn weekday_filter_matches_business_days() {
-        // 0 9 * * 1-5 — 09:00 UTC, Mon–Fri.
+        // 0 9 * * 1-5: 09:00 UTC, Mon–Fri.
         let s = CronSource::new("0 9 * * 1-5").unwrap();
         // 2026-01-05 is a Monday.
         let mon = Utc.with_ymd_and_hms(2026, 1, 5, 8, 59, 0).unwrap();

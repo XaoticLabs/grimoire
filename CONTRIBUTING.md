@@ -19,7 +19,7 @@ Everything CI runs is mirrored in the `Makefile`. The two targets that
 matter day-to-day:
 
 ```sh
-make all   # fmt-check, clippy, test, typos — what you should run before pushing
+make all   # fmt-check, clippy, test, typos. Run before pushing.
 make ci    # the full CI gate including cargo-deny, cargo-machete
 ```
 

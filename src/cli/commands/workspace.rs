@@ -40,7 +40,7 @@ pub enum WorkspaceCommand {
     },
     /// Subscribe to a remote workspace's events (consumer-side). Creates a
     /// local "shadow" workspace pointing at `<home-daemon-id>/<home-ws-id>`.
-    /// Shadows have no on-disk worktree — they exist to receive federated
+    /// Shadows have no on-disk worktree, they exist to receive federated
     /// events and wake local agents.
     FederateSubscribe {
         /// `<home-daemon-id>/<home-workspace-id>` address of the remote workspace.

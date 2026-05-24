@@ -196,7 +196,7 @@ async fn late_subscriber_misses_earlier_events() {
 }
 
 // ---------------------------------------------------------------------------
-// Durable event log — writer task wired into EventBus
+// Durable event log: writer task wired into EventBus
 // ---------------------------------------------------------------------------
 
 fn count_events(db: &Database) -> i64 {

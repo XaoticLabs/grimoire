@@ -1,7 +1,7 @@
 //! Shared authentication token used by the CLI (over UDS) and dashboard
 //! (over HTTP). Peer-federation and worker-pool links use their own
-//! per-link bearer tokens — those are orthogonal trust domains and live
-//! elsewhere (`peer_registry`, `WorkerConfig.secret`).
+//! per-link bearer tokens (orthogonal trust domains that live elsewhere:
+//! `peer_registry`, `WorkerConfig.secret`).
 //!
 //! ## Resolution order
 //!
@@ -12,7 +12,7 @@
 //! 3. `~/.grimoire/auth.token` (auto-generated on first start, mode 0600).
 //!
 //! The CLI uses the same resolution order. With no config and no env, both
-//! sides converge on the auto-generated file — zero-config for the solo
+//! sides converge on the auto-generated file: zero-config for the solo
 //! developer, explicit override for shared/CI machines.
 //!
 //! ## Verification
@@ -44,7 +44,7 @@ const GENERATED_TOKEN_HEX_LEN: usize = 64;
 pub struct AuthToken(String);
 
 impl AuthToken {
-    /// Wrap a raw token string. The input is stored verbatim — callers are
+    /// Wrap a raw token string. The input is stored verbatim; callers are
     /// responsible for trimming whitespace before construction.
     pub fn new(s: impl Into<String>) -> Self {
         Self(s.into())

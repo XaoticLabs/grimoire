@@ -25,13 +25,13 @@ pub(crate) fn binary_on_path(name: &str) -> bool {
     })
 }
 
-/// True iff `systemd-run` is on `PATH`. Memoized — probed once per process.
+/// True iff `systemd-run` is on `PATH`. Memoized; probed once per process.
 fn systemd_run_available() -> bool {
     static CACHED: OnceLock<bool> = OnceLock::new();
     *CACHED.get_or_init(|| binary_on_path("systemd-run"))
 }
 
-/// True iff `bwrap` is on `PATH`. Memoized — probed once per process.
+/// True iff `bwrap` is on `PATH`. Memoized; probed once per process.
 fn bwrap_available() -> bool {
     static CACHED: OnceLock<bool> = OnceLock::new();
     *CACHED.get_or_init(|| binary_on_path("bwrap"))
@@ -122,7 +122,7 @@ fn wrap_with_systemd_run(cmd: Command, s: &SandboxConfig) -> Command {
 
     // Inherit stdio config from the original by re-applying piped streams.
     // tokio::process::Command doesn't expose stdio readers, but providers
-    // always set null/piped before spawn — re-applying the same here keeps
+    // always set null/piped before spawn; re-applying the same here keeps
     // the contract identical regardless of wrapping.
     wrapped
         .stdin(std::process::Stdio::null())
@@ -138,7 +138,7 @@ fn wrap_with_systemd_run(cmd: Command, s: &SandboxConfig) -> Command {
 ///
 /// The jail mounts:
 ///   * `/usr`, `/etc`, `/lib`, `/lib64`, `/bin`, `/sbin` read-only (when they
-///     exist on the host) — enough to exec a typical CLI and read system certs.
+///     exist on the host); enough to exec a typical CLI and read system certs.
 ///   * `/proc` and `/dev` from fresh kernel filesystems.
 ///   * `tmpfs` at `/tmp` and `/run`.
 ///   * The agent's `current_dir` read-write.
@@ -204,7 +204,7 @@ fn wrap_with_bwrap(cmd: Command, s: &SandboxConfig) -> Command {
         .arg("--tmpfs")
         .arg("/run");
 
-    // Agent CWD is always read-write — the agent has to be able to do work.
+    // Agent CWD is always read-write; the agent has to be able to do work.
     if let Some(dir) = &cwd {
         wrapped.arg("--bind").arg(dir).arg(dir);
         wrapped.arg("--chdir").arg(dir);

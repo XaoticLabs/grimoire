@@ -1,4 +1,4 @@
-//! `grim budget` — read-only visibility into configured `[budgets.*]`
+//! `grim budget`: read-only visibility into configured `[budgets.*]`
 //! caps and today's running spend. There is no `create` / `delete` here on
 //! purpose: budgets live in `config.toml` so they're versionable and
 //! reproducible across daemon restarts.

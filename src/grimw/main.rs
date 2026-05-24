@@ -1,6 +1,6 @@
 #![cfg_attr(not(test), forbid(unsafe_code))]
 #![cfg_attr(not(test), warn(clippy::unwrap_used))]
-// `grimw` is a CLI binary — direct stdout/stderr output is expected.
+// `grimw` is a CLI binary, direct stdout/stderr output is expected.
 #![allow(clippy::print_stdout, clippy::print_stderr)]
 
 use std::path::PathBuf;

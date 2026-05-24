@@ -1,4 +1,4 @@
-//! `grim demo` — one-command scaffolds that wire existing primitives into a
+//! `grim demo`: one-command scaffolds that wire existing primitives into a
 //! working standing-agent flow. Each step prints the underlying `grim` action
 //! it performs, so the demo doubles as a legibility aid: nothing here is magic,
 //! it's just `summon --keep-alive` + a file-watch wake source + `grim notify`.
@@ -16,7 +16,7 @@ use crate::shared::protocol::{SummonResult, WakeAddResult};
 const REVIEWER_PROMPT: &str = "You are a standing code reviewer running under Grimoire. \
 You wake whenever a file changes in this repository. On each wake: inspect the most recent \
 changes (e.g. run `git diff` and `git status`), and IF you find something a human should \
-know about — a likely bug, a risky change, a failing test, a security issue — surface it by \
+know about (a likely bug, a risky change, a failing test, a security issue), surface it by \
 running `grim notify \"<short finding>\" --level warn`. If nothing is noteworthy, stay quiet \
 and do nothing. Be terse. Do NOT modify any files.";
 

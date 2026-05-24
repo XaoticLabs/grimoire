@@ -9,7 +9,7 @@
 //! is deterministic across the cluster: given the same set of writes, every
 //! daemon converges on the same value regardless of arrival order, and
 //! re-delivering a write is a no-op (it can never be *strictly greater* than
-//! the copy already applied) — so replication needs no separate dedupe.
+//! the copy already applied). Replication therefore needs no separate dedupe.
 //!
 //! Deletes are **tombstones** (`deleted = 1`, empty value): a delete is just a
 //! write with a fresh tuple, so it propagates and resolves by the same rule.
@@ -117,7 +117,7 @@ impl Database {
     }
 
     /// Apply a write under the LWW rule, also advancing the local clock to the
-    /// write's lamport. Used for **inbound replication** — the tuple is
+    /// write's lamport. Used for **inbound replication**: the tuple is
     /// supplied by the origin daemon, not minted here.
     pub fn namespace_apply_write(&self, w: &NamespaceWrite) -> Result<NsApply> {
         let conn = self.workspace_conn_lock();
@@ -184,7 +184,7 @@ impl Database {
         self.namespace_local_write(namespace, key, value, false, daemon_id, updated_by)
     }
 
-    /// Local delete: writes a tombstone with a fresh tuple. Idempotent — a
+    /// Local delete: writes a tombstone with a fresh tuple. Idempotent; a
     /// delete of an absent key still produces a tombstone so the intent
     /// replicates.
     pub fn namespace_delete(
@@ -322,7 +322,7 @@ impl Database {
 
     /// Enqueue a write for replication to a single peer (Pending, due now).
     /// Redelivery is safe (LWW apply is idempotent), so there's no per-op
-    /// dedupe — `op_id` is just a correlation handle for the ack.
+    /// dedupe; `op_id` is just a correlation handle for the ack.
     pub fn namespace_enqueue(&self, peer_id: &str, op_id: &str, w: &NamespaceWrite) -> Result<()> {
         let conn = self.workspace_conn_lock();
         let now = Utc::now().timestamp();

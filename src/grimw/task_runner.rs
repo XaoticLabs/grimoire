@@ -19,7 +19,7 @@ fn build_agent_env(agent_id: &str, extra: &HashMap<String, String>) -> Vec<(Stri
     let mut out: Vec<(String, String)> = Vec::with_capacity(extra.len() + 1);
     out.push(("GRIMOIRE_AGENT_ID".to_string(), agent_id.to_string()));
     // Extra entries from the daemon. A daemon-sent `GRIMOIRE_AGENT_ID` here
-    // is honored — the canonical injection is just the safety net for
+    // is honored; the canonical injection is just the safety net for
     // older daemons that don't populate `assign.env`.
     for (k, v) in extra {
         out.push((k.clone(), v.clone()));
@@ -127,8 +127,8 @@ impl TaskDispatcher {
         // memory, notify) knowing who they are without being told. Previously
         // only locally-executed agents got it; remote-worker agents couldn't
         // `grim notify` because this line wasn't here. `assign.env` is the
-        // proto field 7 — forward-compat for any future `GRIMOIRE_*` the
-        // daemon wants to send (workspace, scroll, etc.) without a wire bump.
+        // proto field 7 (forward-compat for any future `GRIMOIRE_*` the
+        // daemon wants to send: workspace, scroll, etc., without a wire bump).
         for (k, v) in build_agent_env(&assign.agent_id, &assign.env) {
             cmd.env(k, v);
         }
