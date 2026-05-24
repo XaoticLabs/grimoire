@@ -186,6 +186,7 @@ impl AgentManager {
                         exit_code: None,
                         session_id: None,
                         error_reason: Some(format!("completion_panicked: {e}")),
+                        tokens_used: None,
                     }
                 }
             };
@@ -222,6 +223,24 @@ impl AgentManager {
                             agent_id = %agent_id,
                             "keep_alive set but no session_id; completing as Complete"
                         );
+                    }
+                }
+            }
+
+            if let Some(tokens) = result.tokens_used
+                && tokens > 0
+            {
+                match db.add_agent_tokens(&agent_id, tokens) {
+                    Ok(total) => {
+                        tracing::info!(
+                            agent_id = %agent_id,
+                            tokens_this_run = tokens,
+                            tokens_total = total,
+                            "Recorded token usage"
+                        );
+                    }
+                    Err(e) => {
+                        error!(agent_id = %agent_id, error = %e, "Failed to record token usage");
                     }
                 }
             }
@@ -376,6 +395,23 @@ impl AgentManager {
             .provider_name
             .clone()
             .unwrap_or_else(|| self.registry.default_name().to_string());
+
+        // Token-budget gate: if the provider sandbox caps lifetime token
+        // spend and we're already past it, refuse to start another turn and
+        // banish with a clear reason instead of silently re-running.
+        if let Some(sb) = self.registry.sandbox_for(&provider_name)
+            && let Some(budget) = sb.token_budget
+        {
+            let used = self.db.get_agent_tokens(&agent_id).unwrap_or(0);
+            if used >= budget {
+                let reason = format!("token_budget_exceeded: used {used} >= budget {budget}");
+                tracing::warn!(agent_id = %agent_id, %reason, "Refusing dispatch");
+                let _ =
+                    self.db
+                        .update_agent_state(&agent_id, &AgentState::Banished, None);
+                return Err(anyhow::anyhow!(reason));
+            }
+        }
 
         let req = ExecuteRequest {
             agent_id: agent_id.clone(),

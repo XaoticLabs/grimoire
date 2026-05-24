@@ -97,6 +97,13 @@ pub trait Provider: Send + Sync {
 
     /// Extract the final result text from collected stdout lines
     fn extract_result(&self, stdout_lines: &[String]) -> Option<String>;
+
+    /// Extract total input+output token spend for this run. Providers that
+    /// don't expose usage in their stream return `None` (the default), and
+    /// `SandboxConfig.token_budget` is then unenforceable for that provider.
+    fn extract_usage(&self, _stdout_lines: &[String]) -> Option<u64> {
+        None
+    }
 }
 
 #[cfg(test)]

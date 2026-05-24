@@ -47,6 +47,7 @@ impl Executor for MockExecutor {
                 exit_code: Some(0),
                 session_id: None,
                 error_reason: None,
+                tokens_used: None,
             }
         });
         Ok(ExecutorHandle {
@@ -370,6 +371,7 @@ async fn invoke_context_replay_prepends_transcript_and_no_native_resume() {
             binary: "true".to_string(),
             args_template: vec!["{task}".to_string()],
             env: HashMap::new(),
+            sandbox: None,
         },
     );
 

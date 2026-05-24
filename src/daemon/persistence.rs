@@ -340,6 +340,16 @@ impl Database {
             "escalation_depth",
             "escalation_depth INTEGER NOT NULL DEFAULT 0",
         )?;
+        // Token-budget bookkeeping: cumulative input+output tokens charged to
+        // the agent across all of its turns. Updated at process exit when the
+        // provider reports a `usage` block. `SandboxConfig.token_budget`
+        // compares against this value before the next dispatch.
+        add_column_if_missing(
+            &conn,
+            "agents",
+            "tokens_used",
+            "tokens_used INTEGER NOT NULL DEFAULT 0",
+        )?;
 
         conn.execute_batch(
             "
@@ -664,6 +674,37 @@ impl Database {
 
     pub fn update_agent_pid(&self, id: &str, pid: u32) -> Result<()> {
         self.update_agent_field(id, "pid", &pid)
+    }
+
+    /// Atomically add `tokens` to `agents.tokens_used` for `id`. Returns the
+    /// new running total. A `0` increment is a no-op fast path.
+    pub fn add_agent_tokens(&self, id: &str, tokens: u64) -> Result<u64> {
+        if tokens == 0 {
+            return self.get_agent_tokens(id);
+        }
+        let conn = self.conn.lock();
+        conn.execute(
+            "UPDATE agents SET tokens_used = tokens_used + ?1, updated_at = ?2 WHERE id = ?3",
+            params![tokens as i64, chrono::Utc::now().to_rfc3339(), id],
+        )?;
+        let total: i64 = conn.query_row(
+            "SELECT tokens_used FROM agents WHERE id = ?1",
+            params![id],
+            |r| r.get(0),
+        )?;
+        Ok(total.max(0) as u64)
+    }
+
+    pub fn get_agent_tokens(&self, id: &str) -> Result<u64> {
+        let conn = self.conn.lock();
+        let total: i64 = conn
+            .query_row(
+                "SELECT tokens_used FROM agents WHERE id = ?1",
+                params![id],
+                |r| r.get(0),
+            )
+            .unwrap_or(0);
+        Ok(total.max(0) as u64)
     }
 
     pub fn get_agent(&self, id: &str) -> Result<Option<Agent>> {

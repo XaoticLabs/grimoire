@@ -107,7 +107,9 @@ async fn consume_lines_persists_each_line_as_event() {
     drop(tx);
 
     let _captured: CapturedSessionId =
-        consume_lines(agent_id.clone(), stream, bus.clone(), db.clone(), None).await;
+        consume_lines(agent_id.clone(), stream, bus.clone(), db.clone(), None)
+            .await
+            .session_id;
 
     let events = db.get_events(&agent_id, None).unwrap();
     assert_eq!(events.len(), 5, "expected one DB row per line");
@@ -213,7 +215,9 @@ async fn consume_lines_captures_session_id_from_provider() {
     tx.send(line(LineSource::Stdout, "after")).await.unwrap();
     drop(tx);
 
-    let captured = consume_lines(agent_id, stream, bus, db, Some(provider)).await;
+    let captured = consume_lines(agent_id, stream, bus, db, Some(provider))
+        .await
+        .session_id;
     assert_eq!(
         captured,
         Some("session-xyz".to_string()),

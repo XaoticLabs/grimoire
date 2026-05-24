@@ -123,6 +123,38 @@ impl Provider for ClaudeProvider {
         }
         None
     }
+
+    /// Pull `usage.input_tokens + usage.output_tokens` from the trailing
+    /// `result` event of a stream-json run (also tolerates the older
+    /// `usage` shape on `message_stop`).
+    fn extract_usage(&self, stdout_lines: &[String]) -> Option<u64> {
+        for line in stdout_lines.iter().rev() {
+            let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else {
+                continue;
+            };
+            let usage = v
+                .get("usage")
+                .or_else(|| v.get("message").and_then(|m| m.get("usage")));
+            if let Some(u) = usage {
+                let inp = u.get("input_tokens").and_then(serde_json::Value::as_u64);
+                let out = u.get("output_tokens").and_then(serde_json::Value::as_u64);
+                let cache_r = u
+                    .get("cache_read_input_tokens")
+                    .and_then(serde_json::Value::as_u64);
+                let cache_c = u
+                    .get("cache_creation_input_tokens")
+                    .and_then(serde_json::Value::as_u64);
+                let total = inp.unwrap_or(0)
+                    + out.unwrap_or(0)
+                    + cache_r.unwrap_or(0)
+                    + cache_c.unwrap_or(0);
+                if total > 0 {
+                    return Some(total);
+                }
+            }
+        }
+        None
+    }
 }
 
 #[cfg(test)]
@@ -177,6 +209,23 @@ mod tests {
     fn extract_result_empty() {
         let p = claude();
         assert_eq!(p.extract_result(&[]), None);
+    }
+
+    #[test]
+    fn extract_usage_sums_input_output_and_cache() {
+        let p = claude();
+        let lines = vec![
+            r#"{"type":"assistant","message":"x"}"#.to_string(),
+            r#"{"type":"result","result":"done","usage":{"input_tokens":100,"output_tokens":50,"cache_read_input_tokens":10,"cache_creation_input_tokens":5}}"#.to_string(),
+        ];
+        assert_eq!(p.extract_usage(&lines), Some(165));
+    }
+
+    #[test]
+    fn extract_usage_none_without_usage_block() {
+        let p = claude();
+        let lines = vec![r#"{"type":"result","result":"done"}"#.to_string()];
+        assert_eq!(p.extract_usage(&lines), None);
     }
 
     #[test]

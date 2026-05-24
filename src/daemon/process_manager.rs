@@ -25,6 +25,10 @@ pub struct MonitorResult {
     pub exit_code: Option<i32>,
     pub session_id: Option<String>,
     pub error_reason: Option<String>,
+    /// Tokens consumed by this run, when the provider reports usage. `None`
+    /// for providers that don't (the agent is then unbillable against
+    /// `SandboxConfig.token_budget`).
+    pub tokens_used: Option<u64>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -49,6 +53,14 @@ pub struct LineEvent {
 }
 
 pub type CapturedSessionId = Option<String>;
+
+/// Output of [`consume_lines`]: the resumable session id (if the provider
+/// reports one) plus the agent's full stdout buffer, used post-exit to
+/// extract token usage and the final result text.
+pub struct ConsumedRun {
+    pub session_id: CapturedSessionId,
+    pub stdout_lines: Vec<String>,
+}
 
 /// Persist a single output line as an `AgentEvent` row. Shared between the
 /// local consume_lines path and the future RemoteExecutor.
@@ -81,11 +93,12 @@ pub async fn consume_lines<S>(
     event_bus: EventBus,
     db: Arc<Database>,
     provider: Option<Arc<dyn Provider>>,
-) -> CapturedSessionId
+) -> ConsumedRun
 where
     S: Stream<Item = LineEvent> + Unpin,
 {
     let mut session_id: Option<String> = None;
+    let mut stdout_lines: Vec<String> = Vec::new();
     while let Some(LineEvent { source, line }) = lines.next().await {
         if let Some(p) = &provider
             && let Some(sid) = p.extract_session_id(&line)
@@ -96,8 +109,14 @@ where
             error!(?source, error = %e, "failed to persist event");
         }
         publish_output(&event_bus, &agent_id, source, &line);
+        if matches!(source, LineSource::Stdout) {
+            stdout_lines.push(line);
+        }
     }
-    session_id
+    ConsumedRun {
+        session_id,
+        stdout_lines,
+    }
 }
 
 fn line_stream<R>(
@@ -133,6 +152,7 @@ pub async fn monitor_agent(
     let merged =
         line_stream(stdout, LineSource::Stdout).merge(line_stream(stderr, LineSource::Stderr));
 
+    let provider_for_usage = provider.clone();
     let consume = tokio::spawn(consume_lines(
         agent_id.clone(),
         merged,
@@ -142,7 +162,14 @@ pub async fn monitor_agent(
     ));
 
     let exit_status = child.wait().await;
-    let captured_session_id = consume.await.unwrap_or(None);
+    let consumed = consume.await.unwrap_or(ConsumedRun {
+        session_id: None,
+        stdout_lines: Vec::new(),
+    });
+    let captured_session_id = consumed.session_id;
+    let tokens_used = provider_for_usage
+        .as_ref()
+        .and_then(|p| p.extract_usage(&consumed.stdout_lines));
 
     match exit_status {
         Ok(status) => {
@@ -154,6 +181,7 @@ pub async fn monitor_agent(
                     exit_code: code,
                     session_id: captured_session_id,
                     error_reason: None,
+                    tokens_used,
                 }
             } else {
                 warn!(agent_id = %agent_id, code = ?code, "Agent failed");
@@ -162,6 +190,7 @@ pub async fn monitor_agent(
                     exit_code: code,
                     session_id: captured_session_id,
                     error_reason: None,
+                    tokens_used,
                 }
             }
         }
@@ -172,6 +201,7 @@ pub async fn monitor_agent(
                 exit_code: None,
                 session_id: captured_session_id,
                 error_reason: Some(format!("wait_failed: {e}")),
+                tokens_used,
             }
         }
     }

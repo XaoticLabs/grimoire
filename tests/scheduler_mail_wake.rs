@@ -79,6 +79,7 @@ impl Executor for StubExecutor {
                 exit_code: Some(0),
                 session_id: None,
                 error_reason: None,
+                tokens_used: None,
             }
         });
         Ok(ExecutorHandle {
