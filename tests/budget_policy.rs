@@ -50,10 +50,7 @@ impl Executor for MockExecutor {
             grimoire::daemon::process_manager::MonitorResult {
                 state: AgentState::Complete,
                 exit_code: Some(0),
-                session_id: None,
-                error_reason: None,
-                tokens_used: None,
-                token_breakdown: None,
+                ..Default::default()
             }
         });
         Ok(ExecutorHandle {

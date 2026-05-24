@@ -94,10 +94,7 @@ async fn agent_manager_summon_uses_executor() {
                 grimoire::daemon::process_manager::MonitorResult {
                     state: AgentState::Complete,
                     exit_code: Some(0),
-                    session_id: None,
-                    error_reason: None,
-                    tokens_used: None,
-                    token_breakdown: None,
+                    ..Default::default()
                 }
             });
             Ok(ExecutorHandle {
@@ -172,10 +169,7 @@ async fn agent_manager_invoke_passes_resume_session_id() {
                 grimoire::daemon::process_manager::MonitorResult {
                     state: AgentState::Complete,
                     exit_code: Some(0),
-                    session_id: None,
-                    error_reason: None,
-                    tokens_used: None,
-                    token_breakdown: None,
+                    ..Default::default()
                 }
             });
             Ok(ExecutorHandle {

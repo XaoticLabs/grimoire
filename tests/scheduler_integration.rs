@@ -54,10 +54,7 @@ impl ControlledExecutor {
             let _ = tx.send(MonitorResult {
                 state,
                 exit_code,
-                session_id: None,
-                error_reason: None,
-                tokens_used: None,
-                token_breakdown: None,
+                ..Default::default()
             });
         }
     }
@@ -79,12 +76,8 @@ impl Executor for ControlledExecutor {
         let (cancel_tx, _cancel_rx) = oneshot::channel::<()>();
         let completion = tokio::spawn(async move {
             done_rx.await.unwrap_or_else(|_| MonitorResult {
-                state: AgentState::Failed,
-                exit_code: None,
-                session_id: None,
                 error_reason: Some("test executor dropped".into()),
-                tokens_used: None,
-                token_breakdown: None,
+                ..Default::default()
             })
         });
         Ok(ExecutorHandle {

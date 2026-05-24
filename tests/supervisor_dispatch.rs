@@ -179,10 +179,7 @@ async fn restart_dispatch_passes_session_id() {
                 MonitorResult {
                     state: AgentState::Complete,
                     exit_code: Some(0),
-                    session_id: None,
-                    error_reason: None,
-                    tokens_used: None,
-                    token_breakdown: None,
+                    ..Default::default()
                 }
             });
             Ok(ExecutorHandle {
@@ -233,10 +230,7 @@ async fn restart_dispatch_emits_restarted_event() {
                 MonitorResult {
                     state: AgentState::Complete,
                     exit_code: Some(0),
-                    session_id: None,
-                    error_reason: None,
-                    tokens_used: None,
-                    token_breakdown: None,
+                    ..Default::default()
                 }
             });
             Ok(ExecutorHandle {

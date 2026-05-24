@@ -211,20 +211,15 @@ async fn run_remote_completion(
                     exit_code: fin.exit_code,
                     session_id: fin.session_id,
                     error_reason: fin.error_reason,
-                    tokens_used: None,
-                    token_breakdown: None,
+                    ..Default::default()
                 };
             }
         }
     }
     // Stream closed without a TaskFinished — treat as worker_lost.
     MonitorResult {
-        state: AgentState::Failed,
-        exit_code: None,
-        session_id: None,
         error_reason: Some("worker_lost".to_string()),
-        tokens_used: None,
-        token_breakdown: None,
+        ..Default::default()
     }
 }
 

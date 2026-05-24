@@ -202,12 +202,8 @@ impl AgentManager {
                 Err(e) => {
                     error!(agent_id = %agent_id, error = %e, "executor completion task panicked");
                     process_manager::MonitorResult {
-                        state: AgentState::Failed,
-                        exit_code: None,
-                        session_id: None,
                         error_reason: Some(format!("completion_panicked: {e}")),
-                        tokens_used: None,
-                        token_breakdown: None,
+                        ..Default::default()
                     }
                 }
             };

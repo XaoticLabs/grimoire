@@ -35,6 +35,23 @@ pub struct MonitorResult {
     pub token_breakdown: Option<super::provider::TokenBreakdown>,
 }
 
+impl Default for MonitorResult {
+    /// `Failed` with no exit code is the "no information" baseline used by
+    /// every fabricated/error-path `MonitorResult` in this codebase — tests
+    /// override one or two fields with `..Default::default()` so new
+    /// fields don't ripple through every init site.
+    fn default() -> Self {
+        Self {
+            state: AgentState::Failed,
+            exit_code: None,
+            session_id: None,
+            error_reason: None,
+            tokens_used: None,
+            token_breakdown: None,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LineSource {
     Stdout,
@@ -181,37 +198,30 @@ pub async fn monitor_agent(
     match exit_status {
         Ok(status) => {
             let code = status.code();
-            if status.success() {
+            let state = if status.success() {
                 info!(agent_id = %agent_id, "Agent completed successfully");
-                MonitorResult {
-                    state: AgentState::Complete,
-                    exit_code: code,
-                    session_id: captured_session_id,
-                    error_reason: None,
-                    tokens_used,
-                    token_breakdown,
-                }
+                AgentState::Complete
             } else {
                 warn!(agent_id = %agent_id, code = ?code, "Agent failed");
-                MonitorResult {
-                    state: AgentState::Failed,
-                    exit_code: code,
-                    session_id: captured_session_id,
-                    error_reason: None,
-                    tokens_used,
-                    token_breakdown,
-                }
+                AgentState::Failed
+            };
+            MonitorResult {
+                state,
+                exit_code: code,
+                session_id: captured_session_id,
+                tokens_used,
+                token_breakdown,
+                ..Default::default()
             }
         }
         Err(e) => {
             error!(agent_id = %agent_id, error = %e, "Failed to wait on agent process");
             MonitorResult {
-                state: AgentState::Failed,
-                exit_code: None,
                 session_id: captured_session_id,
                 error_reason: Some(format!("wait_failed: {e}")),
                 tokens_used,
                 token_breakdown,
+                ..Default::default()
             }
         }
     }
