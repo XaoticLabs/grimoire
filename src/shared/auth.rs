@@ -154,22 +154,7 @@ fn write_token_file(path: &Path, token: &str) -> Result<()> {
         std::fs::create_dir_all(parent)?;
     }
     std::fs::write(path, token)?;
-    set_owner_only_permissions(path)?;
-    Ok(())
-}
-
-#[cfg(unix)]
-fn set_owner_only_permissions(path: &Path) -> Result<()> {
-    use std::os::unix::fs::PermissionsExt;
-    let mut perms = std::fs::metadata(path)?.permissions();
-    perms.set_mode(0o600);
-    std::fs::set_permissions(path, perms)?;
-    Ok(())
-}
-
-#[cfg(not(unix))]
-fn set_owner_only_permissions(_path: &Path) -> Result<()> {
-    // Non-Unix platforms: best effort; ACLs are out of scope here.
+    super::fs_util::set_owner_only(path)?;
     Ok(())
 }
 

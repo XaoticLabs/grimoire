@@ -47,12 +47,7 @@ pub fn load_or_mint(path: &Path) -> Result<DaemonId> {
     tmp.write_all(id.as_bytes())?;
     tmp.flush()?;
 
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let perms = fs::Permissions::from_mode(0o600);
-        fs::set_permissions(tmp.path(), perms)?;
-    }
+    crate::shared::fs_util::set_owner_only(tmp.path())?;
 
     // `persist_noclobber` would error if another racer wrote first; we want
     // to read theirs in that case.

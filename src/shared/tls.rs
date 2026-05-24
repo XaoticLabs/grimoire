@@ -185,8 +185,8 @@ pub fn load_or_init(
         .with_context(|| format!("writing tls cert to {}", cp.display()))?;
     std::fs::write(&kp, &id.key_pem)
         .with_context(|| format!("writing tls key to {}", kp.display()))?;
-    set_owner_only(&cp)?;
-    set_owner_only(&kp)?;
+    super::fs_util::set_owner_only(&cp)?;
+    super::fs_util::set_owner_only(&kp)?;
     Ok(id)
 }
 
@@ -221,20 +221,6 @@ fn sanitize_san(name: &str) -> String {
     } else {
         format!("{cleaned}.{TLS_SAN}")
     }
-}
-
-#[cfg(unix)]
-fn set_owner_only(path: &Path) -> Result<()> {
-    use std::os::unix::fs::PermissionsExt;
-    let mut perms = std::fs::metadata(path)?.permissions();
-    perms.set_mode(0o600);
-    std::fs::set_permissions(path, perms)?;
-    Ok(())
-}
-
-#[cfg(not(unix))]
-fn set_owner_only(_path: &Path) -> Result<()> {
-    Ok(())
 }
 
 #[cfg(test)]
