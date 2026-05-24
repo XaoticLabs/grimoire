@@ -167,6 +167,60 @@ pub struct ProviderConfig {
     pub args_template: Vec<String>,
     #[serde(default)]
     pub env: HashMap<String, String>,
+    /// Per-provider confinement. `None` (default) leaves agents un-sandboxed
+    /// for backwards compatibility; setting any field opts the provider in.
+    /// Enforcement layers (cgroup limits, filesystem jail) are applied at
+    /// spawn time when the corresponding host tools are present, and warn
+    /// rather than fail if they are not.
+    #[serde(default)]
+    pub sandbox: Option<SandboxConfig>,
+}
+
+/// Per-agent resource and capability limits, modelled after the parts of
+/// `systemd.exec(5)` and `bwrap(1)` that map cleanly onto an LLM-CLI process.
+///
+/// Three orthogonal axes:
+///   * **resource**: `memory_max`, `cpu_quota` — enforced via cgroup v2
+///     (systemd-run user scope when available).
+///   * **filesystem / network**: `fs_jail`, `allow_network`, `ro_paths`,
+///     `rw_paths` — enforced via `bwrap` when available.
+///   * **economic**: `token_budget` — enforced in-process by tracking spend
+///     per agent and suspending on exceed.
+///
+/// The three layers are independent: a config may set only a token budget,
+/// only a memory cap, or any combination. Missing tools degrade gracefully
+/// with a one-time warning instead of failing the spawn.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct SandboxConfig {
+    /// Hard memory cap (bytes). Maps to systemd `MemoryMax=`.
+    #[serde(default)]
+    pub memory_max: Option<u64>,
+    /// CPU quota as a percent of one core (100 = one full core, 200 = two).
+    /// Maps to systemd `CPUQuota=<n>%`.
+    #[serde(default)]
+    pub cpu_quota_percent: Option<u32>,
+    /// Enable bwrap filesystem isolation. When true the agent runs under
+    /// `bwrap` with `ro_paths` mounted read-only and `rw_paths` read-write;
+    /// the rest of `/` is hidden.
+    #[serde(default)]
+    pub fs_jail: bool,
+    /// Allow network access. Only consulted when `fs_jail` is true (bwrap
+    /// `--share-net` vs `--unshare-net`). Cgroup egress rules are not yet
+    /// modelled — operators wanting network-deny without an fs jail should
+    /// run the daemon under an outer namespace.
+    #[serde(default = "default_true")]
+    pub allow_network: bool,
+    /// Paths to mount read-only inside the jail.
+    #[serde(default)]
+    pub ro_paths: Vec<PathBuf>,
+    /// Paths to mount read-write inside the jail. The agent's CWD is added
+    /// automatically.
+    #[serde(default)]
+    pub rw_paths: Vec<PathBuf>,
+    /// Maximum total tokens (input+output) an agent may consume across its
+    /// lifetime before the supervisor suspends it. `None` = unlimited.
+    #[serde(default)]
+    pub token_budget: Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

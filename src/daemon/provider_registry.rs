@@ -97,6 +97,7 @@ impl ProviderRegistry {
                     binary: "true".to_string(),
                     args_template: vec![],
                     env: HashMap::new(),
+                sandbox: None,
                 },
             )),
         );
@@ -130,6 +131,7 @@ mod tests {
                 binary: "aider".to_string(),
                 args_template: vec!["--message".to_string(), "{task}".to_string()],
                 env: HashMap::new(),
+                sandbox: None,
             },
         );
 
@@ -157,6 +159,7 @@ mod tests {
                 binary: "pi".to_string(),
                 args_template: vec!["{task}".to_string()],
                 env: HashMap::new(),
+                sandbox: None,
             },
         );
 
@@ -182,6 +185,7 @@ mod tests {
                 binary: "aider".to_string(),
                 args_template: vec![],
                 env: HashMap::new(),
+                sandbox: None,
             },
         );
 
