@@ -22,10 +22,10 @@
 
 #![warn(missing_docs)]
 
-use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
+use ring::rand::SecureRandom as _;
 use subtle::ConstantTimeEq;
 
 use super::constants;
@@ -158,15 +158,14 @@ fn write_token_file(path: &Path, token: &str) -> Result<()> {
     Ok(())
 }
 
-/// 32 random bytes rendered as 64 lowercase hex chars. Sourced from
-/// two UUIDv4s (16 bytes each) to avoid pulling in `rand` directly.
+/// 32 random bytes (256 bits) rendered as 64 lowercase hex chars, sourced
+/// from `ring`'s OS-backed CSPRNG.
 fn generate_token() -> String {
-    let a = uuid::Uuid::new_v4();
-    let b = uuid::Uuid::new_v4();
-    let mut out = String::with_capacity(GENERATED_TOKEN_HEX_LEN);
-    for byte in a.as_bytes().iter().chain(b.as_bytes().iter()) {
-        let _ = write!(out, "{byte:02x}");
-    }
+    let mut buf = [0u8; 32];
+    ring::rand::SystemRandom::new()
+        .fill(&mut buf)
+        .expect("SystemRandom::fill is infallible on supported platforms");
+    let out = hex::encode(buf);
     debug_assert_eq!(out.len(), GENERATED_TOKEN_HEX_LEN);
     out
 }

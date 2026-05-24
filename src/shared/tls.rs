@@ -90,12 +90,7 @@ pub fn cert_fingerprint(cert_pem: &str) -> String {
         return String::new();
     };
     let digest = ring::digest::digest(&ring::digest::SHA256, &der);
-    let mut out = String::with_capacity(digest.as_ref().len() * 2);
-    for b in digest.as_ref() {
-        use std::fmt::Write as _;
-        let _ = write!(out, "{b:02x}");
-    }
-    out
+    hex::encode(digest.as_ref())
 }
 
 /// Decode the first PEM `CERTIFICATE` block in `pem` to its DER bytes.
