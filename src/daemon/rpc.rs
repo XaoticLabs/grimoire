@@ -47,13 +47,20 @@ fn try_op<T: serde::Serialize, E: std::fmt::Display>(
 
 /// Resolve a peer name to a `Peer`, mapping the standard tri-state outcome
 /// (`Ok(Some)` / `Ok(None)` / `Err`) into an `RpcResponse` error suitable for
-/// early return via `let peer = resolve_peer(req_id, &reg, name)?;`.
-fn resolve_peer(
+/// early return via `let peer = resolve_peer(req_id, &reg, name).await?;`.
+/// Async so the underlying `Database::get_peer_by_name` runs on the blocking
+/// pool instead of stalling the Tokio worker.
+async fn resolve_peer(
     req_id: u64,
     peer_registry: &PeerRegistry,
     name: &str,
 ) -> Result<crate::shared::types::Peer, RpcResponse> {
-    match peer_registry.db.get_peer_by_name(name) {
+    let name = name.to_string();
+    match peer_registry
+        .db
+        .run(move |db| db.get_peer_by_name(&name))
+        .await
+    {
         Ok(Some(p)) => Ok(p),
         Ok(None) => Err(rpc_err(req_id, "peer_not_found")),
         Err(e) => Err(RpcResponse::error(req_id, -32000, format!("db: {e}"))),
@@ -61,12 +68,13 @@ fn resolve_peer(
 }
 
 /// Resolve a workspace id to a `Workspace`, same shape as `resolve_peer`.
-fn resolve_workspace(
+async fn resolve_workspace(
     req_id: u64,
-    db: &Database,
+    db: &Arc<Database>,
     id: &str,
 ) -> Result<crate::shared::types::Workspace, RpcResponse> {
-    match db.get_workspace(id) {
+    let id = id.to_string();
+    match db.run(move |db| db.get_workspace(&id)).await {
         Ok(Some(w)) => Ok(w),
         Ok(None) => Err(rpc_err(req_id, "workspace_not_found")),
         Err(e) => Err(RpcResponse::error(req_id, -32000, format!("db: {e}"))),
@@ -255,27 +263,27 @@ pub async fn handle_rpc(
         "agent.circle" => handle_circle(manager, req).await,
         "agent.banish" => handle_banish(manager, req).await,
         "agent.invoke" => handle_invoke(manager, req).await,
-        "pact.create" => handle_pact_create(db, req),
-        "pact.list" => handle_pact_list(db, req),
+        "pact.create" => handle_pact_create(db, req).await,
+        "pact.list" => handle_pact_list(db, req).await,
         "scroll.inscribe" => handle_scroll_inscribe(scroll_keeper, req).await,
         "scroll.activate" => handle_scroll_activate(scroll_keeper, req).await,
         "scroll.status" => handle_scroll_status(scroll_keeper, req),
-        "scroll.list" => handle_scroll_list(db, req),
+        "scroll.list" => handle_scroll_list(db, req).await,
         "scroll.abandon" => handle_scroll_abandon(scroll_keeper, req).await,
         "daemon.status" => handle_status(manager, daemon_id, req).await,
-        "agent.queue.list" => handle_queue_list(db, req),
+        "agent.queue.list" => handle_queue_list(db, req).await,
         "agent.result" => handle_agent_result(manager, db, req).await,
-        "budget.list" => handle_budget_list(manager, db, req),
-        "eval.record" => handle_eval_record(db, req),
-        "eval.list" => handle_eval_list(db, req),
+        "budget.list" => handle_budget_list(manager, db, req).await,
+        "eval.record" => handle_eval_record(db, req).await,
+        "eval.list" => handle_eval_list(db, req).await,
         "mail.send" => handle_mail_send(db, bus, peer_registry, daemon_id, req).await,
         "mail.ask" => handle_mail_ask(db, bus, peer_registry, daemon_id, req).await,
         "mail.tender" => handle_mail_tender(db, bus, peer_registry, daemon_id, req).await,
-        "mail.list" => handle_mail_list(db, req),
-        "mail.ack" => handle_mail_ack(db, bus, req),
-        "mail.subscribe" => handle_mail_subscribe(db, req),
-        "mail.unsubscribe" => handle_mail_unsubscribe(db, req),
-        "mail.topics" => handle_mail_topics(db, req),
+        "mail.list" => handle_mail_list(db, req).await,
+        "mail.ack" => handle_mail_ack(db, bus, req).await,
+        "mail.subscribe" => handle_mail_subscribe(db, req).await,
+        "mail.unsubscribe" => handle_mail_unsubscribe(db, req).await,
+        "mail.topics" => handle_mail_topics(db, req).await,
         "wake.add" => handle_wake_add(db, wake_registry, req).await,
         "wake.list" => handle_wake_list(wake_registry, req).await,
         "wake.remove" => handle_wake_remove(wake_registry, req).await,
@@ -289,13 +297,13 @@ pub async fn handle_rpc(
             handle_workspace_federate_subscribe(peer_registry, req).await
         }
         "workspace.unfederate" => handle_workspace_unfederate(peer_registry, req).await,
-        "memory.put" => handle_memory_put(db, bus, req),
-        "memory.get" => handle_memory_get(db, req),
-        "memory.list" => handle_memory_list(db, req),
-        "memory.delete" => handle_memory_delete(db, bus, req),
+        "memory.put" => handle_memory_put(db, bus, req).await,
+        "memory.get" => handle_memory_get(db, req).await,
+        "memory.list" => handle_memory_list(db, req).await,
+        "memory.delete" => handle_memory_delete(db, bus, req).await,
         "ns.put" => handle_ns_put(db, peer_registry, daemon_id, req).await,
-        "ns.get" => handle_ns_get(db, req),
-        "ns.list" => handle_ns_list(db, req),
+        "ns.get" => handle_ns_get(db, req).await,
+        "ns.list" => handle_ns_list(db, req).await,
         "ns.delete" => handle_ns_delete(db, peer_registry, daemon_id, req).await,
         "ns.federate" => handle_ns_federate(peer_registry, req).await,
         "peer.add" => handle_peer_add(peer_registry, req).await,
@@ -306,7 +314,7 @@ pub async fn handle_rpc(
         "topic.federate" => handle_topic_federate(peer_registry, req).await,
         "topic.unfederate" => handle_topic_unfederate(peer_registry, req).await,
         "notify" => handle_notify(bus, req),
-        "agent.replay" => handle_replay(db, req),
+        "agent.replay" => handle_replay(db, req).await,
         _ => RpcResponse::error(req.id, -32601, format!("Unknown method: {}", req.method)),
     }
 }
@@ -341,7 +349,8 @@ async fn handle_wake_add(
 ) -> RpcResponse {
     let params: WakeAddParams = try_params!(req);
     // Validate agent exists.
-    match db.get_agent(&params.agent_id) {
+    let agent_id = params.agent_id.clone();
+    match db.run(move |db| db.get_agent(&agent_id)).await {
         Ok(Some(_)) => {}
         Ok(None) => return rpc_err(req.id, "agent_not_found"),
         Err(e) => return RpcResponse::error(req.id, -32000, format!("db: {e}")),
@@ -466,7 +475,7 @@ async fn handle_summon(
     }
     let workspace_path: Option<std::path::PathBuf> = match &params.workspace {
         Some(name) => {
-            let ws = try_rpc!(resolve_workspace(req.id, db, name));
+            let ws = try_rpc!(resolve_workspace(req.id, db, name).await);
             if ws.state != crate::shared::types::WorkspaceState::Active {
                 return rpc_err(req.id, "workspace_destroying");
             }
@@ -542,9 +551,18 @@ async fn handle_summon(
             let _ = manager.banish(&result.id).await;
             return rpc_err(req.id, "self_parent");
         }
-        match db.get_agent(parent) {
-            Ok(Some(_)) => {
-                if let Err(e) = db.set_agent_parent(&result.id, Some(parent)) {
+        let parent_owned = parent.clone();
+        let child_id = result.id.clone();
+        let lookup = db
+            .run(move |db| match db.get_agent(&parent_owned) {
+                Ok(Some(_)) => Ok(Some(db.set_agent_parent(&child_id, Some(&parent_owned)))),
+                Ok(None) => Ok(None),
+                Err(e) => Err(e),
+            })
+            .await;
+        match lookup {
+            Ok(Some(set_res)) => {
+                if let Err(e) = set_res {
                     tracing::warn!(
                         agent = %result.id,
                         parent = %parent,
@@ -619,7 +637,7 @@ async fn handle_invoke(manager: &Arc<AgentManager>, req: RpcRequest) -> RpcRespo
     )
 }
 
-fn handle_pact_create(db: &Arc<Database>, req: RpcRequest) -> RpcResponse {
+async fn handle_pact_create(db: &Arc<Database>, req: RpcRequest) -> RpcResponse {
     let params: PactCreateParams = try_params!(req);
 
     let pact_id = crate::shared::constants::generate_short_id();
@@ -634,22 +652,27 @@ fn handle_pact_create(db: &Arc<Database>, req: RpcRequest) -> RpcResponse {
         fired_at: None,
     };
 
+    let pact_for_db = pact.clone();
     try_op(
         req.id,
         "create pact",
-        db.insert_pact(&pact).map(|()| PactCreateResult {
-            id: pact_id,
-            source_id: params.source_id,
-        }),
+        db.run(move |db| db.insert_pact(&pact_for_db))
+            .await
+            .map(|()| PactCreateResult {
+                id: pact_id,
+                source_id: params.source_id,
+            }),
     )
 }
 
-fn handle_pact_list(db: &Arc<Database>, req: RpcRequest) -> RpcResponse {
+async fn handle_pact_list(db: &Arc<Database>, req: RpcRequest) -> RpcResponse {
     let params: PactListParams = parse_params(&req).unwrap_or(PactListParams { source_id: None });
+    let source_id = params.source_id;
     try_op(
         req.id,
         "list pacts",
-        db.list_pacts(params.source_id.as_deref())
+        db.run(move |db| db.list_pacts(source_id.as_deref()))
+            .await
             .map(|pacts| PactListResult { pacts }),
     )
 }
@@ -708,11 +731,12 @@ fn handle_scroll_status(keeper: &Arc<ScrollKeeper>, req: RpcRequest) -> RpcRespo
     try_op(req.id, "get status", keeper.status(&params.id))
 }
 
-fn handle_scroll_list(db: &Arc<Database>, req: RpcRequest) -> RpcResponse {
+async fn handle_scroll_list(db: &Arc<Database>, req: RpcRequest) -> RpcResponse {
     try_op(
         req.id,
         "list scrolls",
-        db.list_scrolls()
+        db.run(Database::list_scrolls)
+            .await
             .map(|scrolls| serde_json::json!({"scrolls": scrolls})),
     )
 }
@@ -729,11 +753,11 @@ async fn handle_scroll_abandon(keeper: &Arc<ScrollKeeper>, req: RpcRequest) -> R
     )
 }
 
-fn handle_queue_list(db: &Arc<Database>, req: RpcRequest) -> RpcResponse {
+async fn handle_queue_list(db: &Arc<Database>, req: RpcRequest) -> RpcResponse {
     try_op(
         req.id,
         "list queue",
-        db.list_queue().map(|rows| {
+        db.run(Database::list_queue).await.map(|rows| {
             let now = chrono::Utc::now();
             let entries: Vec<QueueEntry> = rows
                 .into_iter()
@@ -760,27 +784,21 @@ fn handle_queue_list(db: &Arc<Database>, req: RpcRequest) -> RpcResponse {
 /// agent must exist (so an unknown id is a clean error, not an empty reel);
 /// beyond that this is a straight read of the `events` table. All filtering
 /// and state reconstruction is the client's job.
-fn handle_replay(db: &Arc<Database>, req: RpcRequest) -> RpcResponse {
+async fn handle_replay(db: &Arc<Database>, req: RpcRequest) -> RpcResponse {
     let params: ReplayParams = try_params!(req);
 
-    match db.get_agent(&params.id) {
-        Ok(Some(_)) => {}
-        Ok(None) => {
-            return RpcResponse::error(
-                req.id,
-                -32000,
-                format!("no agent matching '{}'", params.id),
-            );
-        }
-        Err(e) => {
-            return rpc_fail(req.id, "load agent", e);
-        }
-    }
+    let id = params.id.clone();
+    // One trip to the blocking pool: agent existence check + event log read.
+    let outcome: Result<Option<Vec<crate::daemon::persistence::StoredEvent>>, anyhow::Error> = db
+        .run(move |db| match db.get_agent(&id) {
+            Ok(Some(_)) => db.read_stream_events(&id).map(Some),
+            Ok(None) => Ok(None),
+            Err(e) => Err(e),
+        })
+        .await;
 
-    try_op(
-        req.id,
-        "read event log",
-        db.read_stream_events(&params.id).map(|stored| {
+    match outcome {
+        Ok(Some(stored)) => {
             let entries: Vec<ReplayEntry> = stored
                 .into_iter()
                 .map(|s| ReplayEntry {
@@ -790,12 +808,21 @@ fn handle_replay(db: &Arc<Database>, req: RpcRequest) -> RpcResponse {
                     event: s.event,
                 })
                 .collect();
-            ReplayResponse {
-                agent_id: params.id,
-                entries,
-            }
-        }),
-    )
+            RpcResponse::success_json(
+                req.id,
+                &ReplayResponse {
+                    agent_id: params.id,
+                    entries,
+                },
+            )
+        }
+        Ok(None) => RpcResponse::error(
+            req.id,
+            -32000,
+            format!("no agent matching '{}'", params.id),
+        ),
+        Err(e) => rpc_fail(req.id, "read event log", e),
+    }
 }
 
 // --- Mail handlers ---
@@ -810,29 +837,42 @@ fn rpc_err(req_id: u64, code: &str) -> RpcResponse {
 /// Persist one rubric-scored evaluation, attributing the verdict from
 /// `evaluator_id` to `target_id`. Idempotency is per-call (each insert
 /// mints a new row id); callers that want dedupe should do so client-side.
-fn handle_eval_record(db: &Arc<Database>, req: RpcRequest) -> RpcResponse {
+async fn handle_eval_record(db: &Arc<Database>, req: RpcRequest) -> RpcResponse {
     let params: crate::shared::protocol::EvalRecordParams = try_params!(req);
-    if db.get_agent(&params.target_id).ok().flatten().is_none() {
-        return rpc_err(req.id, "target_not_found");
-    }
-    match db.insert_eval_result(
-        &params.target_id,
-        &params.evaluator_id,
-        params.score,
-        params.verdict.as_deref(),
-        params.rationale.as_deref(),
-    ) {
-        Ok(id) => RpcResponse::success_json(
+    let target_id = params.target_id.clone();
+    let evaluator_id = params.evaluator_id.clone();
+    let verdict = params.verdict.clone();
+    let rationale = params.rationale.clone();
+    let score = params.score;
+    let outcome = db
+        .run(move |db| -> Result<Option<anyhow::Result<String>>, anyhow::Error> {
+            if db.get_agent(&target_id)?.is_none() {
+                return Ok(None);
+            }
+            Ok(Some(db.insert_eval_result(
+                &target_id,
+                &evaluator_id,
+                score,
+                verdict.as_deref(),
+                rationale.as_deref(),
+            )))
+        })
+        .await;
+    match outcome {
+        Ok(None) => rpc_err(req.id, "target_not_found"),
+        Ok(Some(Ok(id))) => RpcResponse::success_json(
             req.id,
             &crate::shared::protocol::EvalRecordResult { id },
         ),
-        Err(e) => RpcResponse::error(req.id, -32000, format!("insert_eval_result: {e}")),
+        Ok(Some(Err(e))) => RpcResponse::error(req.id, -32000, format!("insert_eval_result: {e}")),
+        Err(e) => RpcResponse::error(req.id, -32000, format!("db: {e}")),
     }
 }
 
-fn handle_eval_list(db: &Arc<Database>, req: RpcRequest) -> RpcResponse {
+async fn handle_eval_list(db: &Arc<Database>, req: RpcRequest) -> RpcResponse {
     let params: crate::shared::protocol::EvalListParams = try_params!(req);
-    let rows = match db.list_eval_results(&params.target_id) {
+    let target_id = params.target_id.clone();
+    let rows = match db.run(move |db| db.list_eval_results(&target_id)).await {
         Ok(r) => r,
         Err(e) => return RpcResponse::error(req.id, -32000, format!("list_eval_results: {e}")),
     };
@@ -864,7 +904,8 @@ async fn handle_agent_result(
     req: RpcRequest,
 ) -> RpcResponse {
     let params: crate::shared::protocol::AgentResultParams = try_params!(req);
-    let agent = match db.get_agent(&params.id) {
+    let id = params.id.clone();
+    let agent = match db.run(move |db| db.get_agent(&id)).await {
         Ok(Some(a)) => a,
         Ok(None) => return rpc_err(req.id, "agent_not_found"),
         Err(e) => return RpcResponse::error(req.id, -32000, format!("db error: {e}")),
@@ -880,19 +921,34 @@ async fn handle_agent_result(
 /// Snapshot every configured budget with its USD cap and today's running
 /// spend. Read-only; runs against the same `budget_spend` rows the
 /// dispatch-time gate consults.
-fn handle_budget_list(
+async fn handle_budget_list(
     manager: &Arc<AgentManager>,
     db: &Arc<Database>,
     req: RpcRequest,
 ) -> RpcResponse {
     let today = chrono::Utc::now().format("%Y-%m-%d").to_string();
-    let mut budgets: Vec<crate::shared::protocol::BudgetStatus> = manager
+    let budget_meta: Vec<(String, crate::shared::config::BudgetConfig)> = manager
         .budgets()
         .iter()
-        .map(|(name, b)| crate::shared::protocol::BudgetStatus {
-            name: name.clone(),
+        .map(|(n, b)| (n.clone(), b.clone()))
+        .collect();
+    let today_for_db = today.clone();
+    let spend_meta = budget_meta.clone();
+    let spends: Vec<f64> = db
+        .run(move |db| {
+            spend_meta
+                .iter()
+                .map(|(name, _)| db.get_budget_spend(name, &today_for_db).unwrap_or(0.0))
+                .collect()
+        })
+        .await;
+    let mut budgets: Vec<crate::shared::protocol::BudgetStatus> = budget_meta
+        .into_iter()
+        .zip(spends)
+        .map(|((name, b), spent_usd)| crate::shared::protocol::BudgetStatus {
+            name,
             daily_usd: b.daily_usd,
-            spent_usd: db.get_budget_spend(name, &today).unwrap_or(0.0),
+            spent_usd,
             providers: b.providers.clone(),
             hard: b.hard,
         })
@@ -939,7 +995,7 @@ pub async fn handle_mail_send(
 
     match address {
         Address::Agent(recipient_id) => {
-            handle_direct_send(db, bus, &req, &params, recipient_id, wake_eligible)
+            handle_direct_send(db, bus, &req, &params, recipient_id, wake_eligible).await
         }
         Address::Topic(topic) => {
             handle_topic_send(db, bus, &req, &params, topic, wake_eligible, peer_registry).await
@@ -951,7 +1007,7 @@ pub async fn handle_mail_send(
             // Self via federated form: rewrite to local before reaching
             // federation routing.
             if target_daemon == daemon_id {
-                handle_direct_send(db, bus, &req, &params, agent_id, wake_eligible)
+                handle_direct_send(db, bus, &req, &params, agent_id, wake_eligible).await
             } else {
                 handle_federated_direct_send(
                     db,
@@ -1159,7 +1215,7 @@ pub async fn handle_mail_tender(
     RpcResponse::success_json(req_id, &result)
 }
 
-fn handle_direct_send(
+async fn handle_direct_send(
     db: &Arc<Database>,
     bus: &EventBus,
     req: &RpcRequest,
@@ -1167,33 +1223,44 @@ fn handle_direct_send(
     recipient_id: String,
     wake_eligible: bool,
 ) -> RpcResponse {
-    let agent = match db.get_agent(&recipient_id) {
-        Ok(a) => a,
-        Err(e) => return RpcResponse::error(req.id, -32000, format!("db error: {e}")),
-    };
-
     let preview = body_preview(&params.body, PREVIEW_CHARS);
     let mail_id = crate::shared::constants::generate_short_id();
     let now = unix_now();
-    let (state, fail_reason) = compute_mail_state(agent.as_ref());
-    let mail = new_outbound_mail(
-        MailDraft {
-            recipient_id,
-            sender: params.sender.clone(),
-            topic: None,
-            body: params.body.clone(),
-            state,
-            fail_reason,
-            wake_eligible,
-            in_reply_to: params.in_reply_to.clone(),
-        },
-        mail_id.clone(),
-        now,
-    );
 
-    if let Err(e) = db.insert_mail(&mail) {
-        return RpcResponse::error(req.id, -32000, format!("insert_mail: {e}"));
-    }
+    let recipient_for_db = recipient_id.clone();
+    let sender = params.sender.clone();
+    let body = params.body.clone();
+    let in_reply_to = params.in_reply_to.clone();
+    let mail_id_for_db = mail_id.clone();
+    // One trip: lookup recipient, build mail row, insert it. Returns the
+    // finished `Mail` (with computed state/fail_reason) for downstream events.
+    let outcome: Result<Result<Mail, anyhow::Error>, anyhow::Error> = db
+        .run(move |db| {
+            let agent = db.get_agent(&recipient_for_db)?;
+            let (state, fail_reason) = compute_mail_state(agent.as_ref());
+            let mail = new_outbound_mail(
+                MailDraft {
+                    recipient_id: recipient_for_db,
+                    sender,
+                    topic: None,
+                    body,
+                    state,
+                    fail_reason,
+                    wake_eligible,
+                    in_reply_to,
+                },
+                mail_id_for_db,
+                now,
+            );
+            Ok::<_, anyhow::Error>(db.insert_mail(&mail).map(|()| mail))
+        })
+        .await;
+    let mail = match outcome {
+        Ok(Ok(m)) => m,
+        Ok(Err(e)) => return RpcResponse::error(req.id, -32000, format!("insert_mail: {e}")),
+        Err(e) => return RpcResponse::error(req.id, -32000, format!("db error: {e}")),
+    };
+    let state = mail.state;
     emit_mail_events(bus, &mail, &preview);
 
     let delivered = u32::from(state == MailState::Pending);
@@ -1206,6 +1273,19 @@ fn handle_direct_send(
     )
 }
 
+/// Output of the single blocking-pool trip [`handle_topic_send`] uses to do
+/// per-subscriber state lookup + mail batch insert + federation fanout in
+/// one shot, returning data the async tail needs for bus emission and
+/// peer notification.
+struct TopicSendOut {
+    mails: Vec<Mail>,
+    delivered: u32,
+    insert_err: Option<String>,
+    full_peers: Vec<String>,
+    notify_peers: Vec<String>,
+    fanout_err: Option<String>,
+}
+
 async fn handle_topic_send(
     db: &Arc<Database>,
     bus: &EventBus,
@@ -1215,7 +1295,11 @@ async fn handle_topic_send(
     wake_eligible: bool,
     peer_registry: &Arc<PeerRegistry>,
 ) -> RpcResponse {
-    let subscribers = match db.list_subscribers_for_topic(&topic) {
+    let topic_for_db = topic.clone();
+    let subscribers = match db
+        .run(move |db| db.list_subscribers_for_topic(&topic_for_db))
+        .await
+    {
         Ok(s) => s,
         Err(e) => return RpcResponse::error(req.id, -32000, format!("db error: {e}")),
     };
@@ -1237,90 +1321,142 @@ async fn handle_topic_send(
     let preview = body_preview(&params.body, PREVIEW_CHARS);
     let now = unix_now();
 
-    // Determine each subscriber's initial state (Pending vs Failed for
-    // banished). Pre-compute mail rows so the batch insert is one txn.
-    let mut mails: Vec<Mail> = Vec::with_capacity(subscribers.len());
-    let mut delivered: u32 = 0;
+    // Pre-clone everything the closure needs so it owns 'static state.
+    let topic_for_db = topic.clone();
+    let sender_for_db = params.sender.clone();
+    let body_for_db = params.body.clone();
+    let in_reply_to_for_db = params.in_reply_to.clone();
+    let subs_for_db = subscribers.clone();
+    let mail_id_for_peer = crate::shared::constants::generate_short_id();
+    let mail_id_for_peer_for_db = mail_id_for_peer.clone();
 
-    for sub in &subscribers {
-        let agent = match db.get_agent(&sub.subscriber_id) {
-            Ok(a) => a,
-            Err(e) => return RpcResponse::error(req.id, -32000, format!("db error: {e}")),
-        };
-        let (state, fail_reason) = compute_mail_state(agent.as_ref());
-        if state == MailState::Pending {
-            delivered += 1;
-        }
-        mails.push(new_outbound_mail(
-            MailDraft {
-                recipient_id: sub.subscriber_id.clone(),
-                sender: params.sender.clone(),
-                topic: Some(topic.clone()),
-                body: params.body.clone(),
-                state,
-                fail_reason,
-                wake_eligible,
-                in_reply_to: params.in_reply_to.clone(),
-            },
-            crate::shared::constants::generate_short_id(),
-            now,
-        ));
-    }
-
-    if let Err(e) = db.insert_mail_batch(&mails) {
-        return RpcResponse::error(req.id, -32000, format!("insert_mail_batch: {e}"));
-    }
-
-    // Federation Task 12: enumerate `topic_federations` rows and append
-    // a `peer_outbox` row per outbound-or-both peer. Done in a separate
-    // step from the local mail batch — receivers dedupe by sender_seq so
-    // partial-fanout failure is recoverable.
-    let federated_peers = db
-        .list_outbound_federations_for_topic(&topic)
-        .unwrap_or_default();
-    if !federated_peers.is_empty() {
-        let mail_id_for_peer = mails
-            .first()
-            .map_or_else(crate::shared::constants::generate_short_id, |m| {
-                m.id.clone()
-            });
-        let recipient_addr = format!("topic://{topic}");
-        let body = params.body.clone();
-        let sender = params.sender.clone();
-        let created_at = now;
-        let mut fanout: Vec<OutboxFanoutRow> = Vec::new();
-        for fed in &federated_peers {
-            // Per-peer cap pre-check.
-            if let Ok(depth) = db.outbox_depth(&fed.peer_id)
-                && depth >= PEER_OUTBOX_MAX_DEPTH_DEFAULT
-            {
-                bus.publish(StreamEvent::PeerMailForwardFailed {
-                    peer_id: fed.peer_id.clone(),
-                    mail_id: mail_id_for_peer.clone(),
-                    reason: "peer_outbox_full".to_string(),
-                });
-                continue;
+    // Single trip to the blocking pool: per-subscriber state lookup, mail
+    // batch insert, federation enumeration, per-peer cap check, and outbox
+    // fanout insert. Returns rich data the async tail needs (events, peer
+    // notifications).
+    let out: TopicSendOut = db
+        .run(move |db| {
+            let mut mails: Vec<Mail> = Vec::with_capacity(subs_for_db.len());
+            let mut delivered: u32 = 0;
+            for sub in &subs_for_db {
+                let agent = match db.get_agent(&sub.subscriber_id) {
+                    Ok(a) => a,
+                    Err(e) => {
+                        return TopicSendOut {
+                            mails,
+                            delivered,
+                            insert_err: Some(format!("db error: {e}")),
+                            full_peers: Vec::new(),
+                            notify_peers: Vec::new(),
+                            fanout_err: None,
+                        };
+                    }
+                };
+                let (state, fail_reason) = compute_mail_state(agent.as_ref());
+                if state == MailState::Pending {
+                    delivered += 1;
+                }
+                mails.push(new_outbound_mail(
+                    MailDraft {
+                        recipient_id: sub.subscriber_id.clone(),
+                        sender: sender_for_db.clone(),
+                        topic: Some(topic_for_db.clone()),
+                        body: body_for_db.clone(),
+                        state,
+                        fail_reason,
+                        wake_eligible,
+                        in_reply_to: in_reply_to_for_db.clone(),
+                    },
+                    crate::shared::constants::generate_short_id(),
+                    now,
+                ));
             }
-            let outbox_id = crate::shared::constants::generate_short_id();
-            fanout.push((
-                fed.peer_id.clone(),
-                outbox_id,
-                mail_id_for_peer.clone(),
-                recipient_addr.clone(),
-                body.clone(),
-                sender.clone(),
-                created_at,
-            ));
-        }
-        if !fanout.is_empty() {
-            if let Err(e) = db.insert_mail_batch_with_outbox(&[], &fanout) {
-                tracing::warn!(error = %e, "topic federation outbox fanout failed");
-            } else {
-                for (peer_id, _, _, _, _, _, _) in &fanout {
-                    peer_registry.notify_outbox(peer_id).await;
+
+            if let Err(e) = db.insert_mail_batch(&mails) {
+                return TopicSendOut {
+                    mails,
+                    delivered,
+                    insert_err: Some(format!("insert_mail_batch: {e}")),
+                    full_peers: Vec::new(),
+                    notify_peers: Vec::new(),
+                    fanout_err: None,
+                };
+            }
+
+            // Federation fanout (Task 12).
+            let federated_peers = db
+                .list_outbound_federations_for_topic(&topic_for_db)
+                .unwrap_or_default();
+            let mut full_peers: Vec<String> = Vec::new();
+            let mut notify_peers: Vec<String> = Vec::new();
+            let mut fanout_err = None;
+            if !federated_peers.is_empty() {
+                let pick_id = mails.first().map_or_else(
+                    || mail_id_for_peer_for_db.clone(),
+                    |m| m.id.clone(),
+                );
+                let recipient_addr = format!("topic://{topic_for_db}");
+                let mut fanout: Vec<OutboxFanoutRow> = Vec::new();
+                for fed in &federated_peers {
+                    if let Ok(depth) = db.outbox_depth(&fed.peer_id)
+                        && depth >= PEER_OUTBOX_MAX_DEPTH_DEFAULT
+                    {
+                        full_peers.push(fed.peer_id.clone());
+                        continue;
+                    }
+                    let outbox_id = crate::shared::constants::generate_short_id();
+                    fanout.push((
+                        fed.peer_id.clone(),
+                        outbox_id,
+                        pick_id.clone(),
+                        recipient_addr.clone(),
+                        body_for_db.clone(),
+                        sender_for_db.clone(),
+                        now,
+                    ));
+                }
+                if !fanout.is_empty() {
+                    match db.insert_mail_batch_with_outbox(&[], &fanout) {
+                        Ok(()) => {
+                            for (peer_id, _, _, _, _, _, _) in &fanout {
+                                notify_peers.push(peer_id.clone());
+                            }
+                        }
+                        Err(e) => {
+                            fanout_err = Some(e.to_string());
+                        }
+                    }
                 }
             }
-        }
+
+            TopicSendOut {
+                mails,
+                delivered,
+                insert_err: None,
+                full_peers,
+                notify_peers,
+                fanout_err,
+            }
+        })
+        .await;
+
+    if let Some(err) = out.insert_err {
+        return RpcResponse::error(req.id, -32000, err);
+    }
+    let mails = out.mails;
+    let delivered = out.delivered;
+    for peer_id in &out.full_peers {
+        bus.publish(StreamEvent::PeerMailForwardFailed {
+            peer_id: peer_id.clone(),
+            mail_id: mail_id_for_peer.clone(),
+            reason: "peer_outbox_full".to_string(),
+        });
+    }
+    if let Some(err) = out.fanout_err {
+        tracing::warn!(error = %err, "topic federation outbox fanout failed");
+    }
+    for peer_id in &out.notify_peers {
+        peer_registry.notify_outbox(peer_id).await;
     }
 
     // Emit one MailSent + MailReceived per Pending row (and MailFailed per
@@ -1336,95 +1472,119 @@ async fn handle_topic_send(
     RpcResponse::success_json(req.id, &result)
 }
 
-fn handle_mail_list(db: &Arc<Database>, req: RpcRequest) -> RpcResponse {
+async fn handle_mail_list(db: &Arc<Database>, req: RpcRequest) -> RpcResponse {
     let params: MailListParams = try_params!(req);
     let limit = params.limit.unwrap_or(100);
     if limit > 1000 {
         return rpc_err(req.id, "limit_too_large");
     }
+    let agent_id = params.agent_id.clone();
+    let after_seq = params.after_seq;
+    let state = params.state;
     try_op(
         req.id,
         "list mail",
-        db.list_mail_by_recipient(&params.agent_id, params.after_seq, params.state, limit)
+        db.run(move |db| db.list_mail_by_recipient(&agent_id, after_seq, state, limit))
+            .await
             .map(|mails| MailListResult { mails }),
     )
 }
 
-fn handle_mail_ack(db: &Arc<Database>, bus: &EventBus, req: RpcRequest) -> RpcResponse {
+async fn handle_mail_ack(db: &Arc<Database>, bus: &EventBus, req: RpcRequest) -> RpcResponse {
     let params: MailAckParams = try_params!(req);
 
-    let mail = match db.get_mail(&params.mail_id) {
-        Ok(Some(m)) => m,
-        Ok(None) => return rpc_err(req.id, "mail_not_found"),
+    let mail_id = params.mail_id.clone();
+    // Lookup + state mutation in one trip; tail handles event emission.
+    let outcome: Result<Result<Option<Mail>, anyhow::Error>, anyhow::Error> = db
+        .run(move |db| -> Result<Result<Option<Mail>, anyhow::Error>, anyhow::Error> {
+            let Some(mail) = db.get_mail(&mail_id)? else {
+                return Ok(Ok(None));
+            };
+            match mail.state {
+                MailState::Pending => match db.set_mail_state(&mail.id, MailState::Delivered, None) {
+                    Ok(()) => Ok(Ok(Some(mail))),
+                    Err(e) => Ok(Err(e)),
+                },
+                // Delivered/Failed: return the mail unchanged so the tail can
+                // distinguish via its `state`.
+                _ => Ok(Ok(Some(mail))),
+            }
+        })
+        .await;
+    let mail = match outcome {
+        Ok(Ok(Some(m))) => m,
+        Ok(Ok(None)) => return rpc_err(req.id, "mail_not_found"),
+        Ok(Err(e)) => return RpcResponse::error(req.id, -32000, format!("set_state: {e}")),
         Err(e) => return RpcResponse::error(req.id, -32000, format!("db: {e}")),
     };
 
     match mail.state {
-        MailState::Delivered => {
-            let r = MailAckResult { acked: false };
-            RpcResponse::success_json(req.id, &r)
-        }
+        MailState::Delivered => RpcResponse::success_json(req.id, &MailAckResult { acked: false }),
         MailState::Failed => rpc_err(req.id, "cannot_ack_failed"),
         MailState::Pending => {
-            if let Err(e) = db.set_mail_state(&mail.id, MailState::Delivered, None) {
-                return RpcResponse::error(req.id, -32000, format!("set_state: {e}"));
-            }
             bus.publish(StreamEvent::MailDelivered {
                 mail_id: mail.id.clone(),
                 recipient_id: mail.recipient_id,
                 origin_daemon_id: None,
             });
-            let r = MailAckResult { acked: true };
-            RpcResponse::success_json(req.id, &r)
+            RpcResponse::success_json(req.id, &MailAckResult { acked: true })
         }
     }
 }
 
-fn handle_mail_subscribe(db: &Arc<Database>, req: RpcRequest) -> RpcResponse {
+async fn handle_mail_subscribe(db: &Arc<Database>, req: RpcRequest) -> RpcResponse {
     let params: MailSubscribeParams = try_params!(req);
 
     if !is_valid_topic_name(&params.topic) {
         return rpc_err(req.id, "invalid_topic_name");
     }
 
-    match db.get_agent(&params.agent_id) {
-        Ok(Some(_)) => {}
-        Ok(None) => return rpc_err(req.id, "unknown_agent"),
-        Err(e) => return RpcResponse::error(req.id, -32000, format!("db: {e}")),
-    }
-
     let new_id = crate::shared::constants::generate_short_id();
     let sub = Subscription {
         id: new_id,
-        subscriber_id: params.agent_id,
+        subscriber_id: params.agent_id.clone(),
         topic: params.topic,
         created_at: unix_now(),
     };
-    match db.insert_subscription(&sub) {
-        Ok(id) => {
-            let r = MailSubscribeResult {
-                subscription_id: id,
-            };
-            RpcResponse::success_json(req.id, &r)
+    let agent_id_for_db = params.agent_id;
+    let sub_for_db = sub.clone();
+    // Validate-then-insert in one trip.
+    let outcome: Result<Result<Option<anyhow::Result<String>>, anyhow::Error>, anyhow::Error> = db
+        .run(move |db| -> Result<Result<Option<anyhow::Result<String>>, anyhow::Error>, anyhow::Error> {
+            match db.get_agent(&agent_id_for_db)? {
+                Some(_) => Ok(Ok(Some(db.insert_subscription(&sub_for_db)))),
+                None => Ok(Ok(None)),
+            }
+        })
+        .await;
+    match outcome {
+        Ok(Ok(None)) => rpc_err(req.id, "unknown_agent"),
+        Ok(Ok(Some(Ok(id)))) => RpcResponse::success_json(
+            req.id,
+            &MailSubscribeResult { subscription_id: id },
+        ),
+        Ok(Ok(Some(Err(e)))) => {
+            RpcResponse::error(req.id, -32000, format!("insert_subscription: {e}"))
         }
-        Err(e) => RpcResponse::error(req.id, -32000, format!("insert_subscription: {e}")),
+        Ok(Err(e)) | Err(e) => RpcResponse::error(req.id, -32000, format!("db: {e}")),
     }
 }
 
-fn handle_mail_unsubscribe(db: &Arc<Database>, req: RpcRequest) -> RpcResponse {
+async fn handle_mail_unsubscribe(db: &Arc<Database>, req: RpcRequest) -> RpcResponse {
     let params: MailUnsubscribeParams = try_params!(req);
-    match db.delete_subscription(&params.subscription_id) {
+    let id = params.subscription_id;
+    match db.run(move |db| db.delete_subscription(&id)).await {
         Ok(true) => RpcResponse::success_json(req.id, &MailUnsubscribeResult::default()),
         Ok(false) => rpc_err(req.id, "subscription_not_found"),
         Err(e) => RpcResponse::error(req.id, -32000, format!("delete_subscription: {e}")),
     }
 }
 
-fn handle_mail_topics(db: &Arc<Database>, req: RpcRequest) -> RpcResponse {
+async fn handle_mail_topics(db: &Arc<Database>, req: RpcRequest) -> RpcResponse {
     try_op(
         req.id,
         "list_topics",
-        db.list_topics_with_counts().map(|rows| {
+        db.run(Database::list_topics_with_counts).await.map(|rows| {
             let topics: Vec<TopicCount> = rows
                 .into_iter()
                 .map(|(topic, n)| TopicCount {
@@ -1521,13 +1681,13 @@ async fn handle_workspace_assign(reg: &Arc<WorkspaceRegistry>, req: RpcRequest) 
     }
 }
 
-fn handle_memory_put(db: &Arc<Database>, bus: &EventBus, req: RpcRequest) -> RpcResponse {
+async fn handle_memory_put(db: &Arc<Database>, bus: &EventBus, req: RpcRequest) -> RpcResponse {
     let params: MemoryPutParams = try_params!(req);
     if validate_memory_key(&params.key).is_err() {
         return rpc_err(req.id, "invalid_memory_key");
     }
     // Workspace must exist and be Active.
-    let ws = try_rpc!(resolve_workspace(req.id, db, &params.workspace_id));
+    let ws = try_rpc!(resolve_workspace(req.id, db, &params.workspace_id).await);
     if ws.state != crate::shared::types::WorkspaceState::Active {
         return rpc_err(req.id, "workspace_destroying");
     }
@@ -1541,65 +1701,76 @@ fn handle_memory_put(db: &Arc<Database>, bus: &EventBus, req: RpcRequest) -> Rpc
         return rpc_err(req.id, "memory_value_too_large");
     }
 
-    // Total cap pre-check.
-    let total = db
-        .memory_total_size_for_workspace(&params.workspace_id)
-        .unwrap_or(0);
-    let (_cur_v, cur_size) = db
-        .memory_current_version_and_size(&params.workspace_id, &params.key)
-        .unwrap_or((0, 0));
-    let new_total = total
-        .saturating_sub(cur_size)
-        .saturating_add(bytes.len() as u64);
-    if new_total > cfg.daemon.workspace_total_cap_bytes {
-        return rpc_err(req.id, "memory_total_cap_exceeded");
-    }
-
-    let updated_by = params.sender.as_deref().unwrap_or("system");
-    let outcome = match db.memory_put_cas(
-        &params.workspace_id,
-        &params.key,
-        &bytes,
-        params.expected_version,
-        updated_by,
-    ) {
-        Ok(o) => o,
-        Err(e) => return RpcResponse::error(req.id, -32000, format!("put: {e}")),
-    };
+    let workspace_id = params.workspace_id.clone();
+    let key = params.key.clone();
+    let sender_owned = params.sender.clone();
+    let bus_clone = bus.clone();
+    let expected = params.expected_version;
+    let total_cap = cfg.daemon.workspace_total_cap_bytes;
+    // One trip: total-cap pre-check + CAS write + memory-topic fanout
+    // (which itself does mail-batch inserts). Bus emission for MemoryWritten
+    // stays on the caller side so the success branch is clean.
+    let outcome: Result<MemoryWriteOutcome, RpcResponse> = db
+        .run(move |db| {
+            let total = db
+                .memory_total_size_for_workspace(&workspace_id)
+                .unwrap_or(0);
+            let (_cur_v, cur_size) = db
+                .memory_current_version_and_size(&workspace_id, &key)
+                .unwrap_or((0, 0));
+            let new_total = total
+                .saturating_sub(cur_size)
+                .saturating_add(bytes.len() as u64);
+            if new_total > total_cap {
+                return Err(rpc_err(req.id, "memory_total_cap_exceeded"));
+            }
+            let updated_by = sender_owned.as_deref().unwrap_or("system");
+            let res = match db.memory_put_cas(&workspace_id, &key, &bytes, expected, updated_by) {
+                Ok(o) => o,
+                Err(e) => return Err(RpcResponse::error(req.id, -32000, format!("put: {e}"))),
+            };
+            if let MemoryWriteOutcome::Written { version } = &res {
+                let _ = publish_memory_topic_mail(
+                    db,
+                    &bus_clone,
+                    &workspace_id,
+                    &key,
+                    *version,
+                    "put",
+                    sender_owned.as_deref(),
+                );
+            }
+            Ok(res)
+        })
+        .await;
 
     match outcome {
-        MemoryWriteOutcome::Conflict { current_version } => RpcResponse::error(
+        Err(resp) => resp,
+        Ok(MemoryWriteOutcome::Conflict { current_version }) => RpcResponse::error(
             req.id,
             -32000,
             format!("cas_conflict:current_version={current_version}"),
         ),
-        MemoryWriteOutcome::Written { version } => {
+        Ok(MemoryWriteOutcome::Written { version }) => {
             bus.publish(StreamEvent::MemoryWritten {
                 workspace_id: params.workspace_id.clone(),
                 key: params.key.clone(),
                 version,
                 agent_id: params.sender.clone(),
             });
-            let _ = publish_memory_topic_mail(
-                db,
-                bus,
-                &params.workspace_id,
-                &params.key,
-                version,
-                "put",
-                params.sender.as_deref(),
-            );
             RpcResponse::success_json(req.id, &MemoryPutResult { version })
         }
     }
 }
 
-fn handle_memory_get(db: &Arc<Database>, req: RpcRequest) -> RpcResponse {
+async fn handle_memory_get(db: &Arc<Database>, req: RpcRequest) -> RpcResponse {
     let params: MemoryGetParams = try_params!(req);
     if validate_memory_key(&params.key).is_err() {
         return rpc_err(req.id, "invalid_memory_key");
     }
-    match db.memory_get(&params.workspace_id, &params.key) {
+    let workspace_id = params.workspace_id;
+    let key = params.key;
+    match db.run(move |db| db.memory_get(&workspace_id, &key)).await {
         Ok(Some(entry)) => {
             let result = MemoryGetResult {
                 value: entry.value,
@@ -1612,26 +1783,52 @@ fn handle_memory_get(db: &Arc<Database>, req: RpcRequest) -> RpcResponse {
     }
 }
 
-fn handle_memory_list(db: &Arc<Database>, req: RpcRequest) -> RpcResponse {
+async fn handle_memory_list(db: &Arc<Database>, req: RpcRequest) -> RpcResponse {
     let params: MemoryListParams = try_params!(req);
+    let workspace_id = params.workspace_id;
+    let prefix = params.prefix;
     try_op(
         req.id,
         "list",
-        db.memory_list_prefix(&params.workspace_id, params.prefix.as_deref())
+        db.run(move |db| db.memory_list_prefix(&workspace_id, prefix.as_deref()))
+            .await
             .map(|entries| MemoryListResult { entries }),
     )
 }
 
-fn handle_memory_delete(db: &Arc<Database>, bus: &EventBus, req: RpcRequest) -> RpcResponse {
+async fn handle_memory_delete(db: &Arc<Database>, bus: &EventBus, req: RpcRequest) -> RpcResponse {
     let params: MemoryDeleteParams = try_params!(req);
     if validate_memory_key(&params.key).is_err() {
         return rpc_err(req.id, "invalid_memory_key");
     }
-    let outcome =
-        match db.memory_delete_cas(&params.workspace_id, &params.key, params.expected_version) {
-            Ok(o) => o,
-            Err(e) => return RpcResponse::error(req.id, -32000, format!("delete: {e}")),
-        };
+    let workspace_id = params.workspace_id.clone();
+    let key = params.key.clone();
+    let sender_owned = params.sender.clone();
+    let bus_clone = bus.clone();
+    let expected = params.expected_version;
+    let outcome: Result<MemoryWriteOutcome, anyhow::Error> = db
+        .run(move |db| {
+            let res = db.memory_delete_cas(&workspace_id, &key, expected)?;
+            if let MemoryWriteOutcome::Written { version } = &res
+                && *version > 0
+            {
+                let _ = publish_memory_topic_mail(
+                    db,
+                    &bus_clone,
+                    &workspace_id,
+                    &key,
+                    *version,
+                    "delete",
+                    sender_owned.as_deref(),
+                );
+            }
+            Ok(res)
+        })
+        .await;
+    let outcome = match outcome {
+        Ok(o) => o,
+        Err(e) => return RpcResponse::error(req.id, -32000, format!("delete: {e}")),
+    };
     match outcome {
         MemoryWriteOutcome::Conflict { current_version } => RpcResponse::error(
             req.id,
@@ -1646,15 +1843,6 @@ fn handle_memory_delete(db: &Arc<Database>, bus: &EventBus, req: RpcRequest) -> 
                     key: params.key.clone(),
                     agent_id: params.sender.clone(),
                 });
-                let _ = publish_memory_topic_mail(
-                    db,
-                    bus,
-                    &params.workspace_id,
-                    &params.key,
-                    version,
-                    "delete",
-                    params.sender.as_deref(),
-                );
             }
             RpcResponse::success_json(req.id, &MemoryDeleteResult::default())
         }
@@ -1677,20 +1865,34 @@ async fn namespace_replicate(
     peer_registry: &Arc<PeerRegistry>,
     write: &crate::daemon::namespace_db::NamespaceWrite,
 ) {
-    let peers = match peer_registry.db.namespace_outbound_peers(&write.namespace) {
-        Ok(p) => p,
-        Err(e) => {
-            tracing::warn!(error = %e, ns = %write.namespace, "ns outbound_peers lookup failed");
-            return;
-        }
-    };
-    for peer_id in peers {
-        let op_id = crate::shared::constants::generate_short_id();
-        if let Err(e) = peer_registry.db.namespace_enqueue(&peer_id, &op_id, write) {
-            tracing::warn!(error = %e, peer_id = %peer_id, "ns enqueue failed");
-            continue;
-        }
-        peer_registry.notify_outbox(&peer_id).await;
+    let namespace = write.namespace.clone();
+    let write_owned = write.clone();
+    // Look up outbound peers and enqueue in one trip; tail just fires the
+    // notify-outbox calls on the async runtime.
+    let enqueued: Vec<String> = peer_registry
+        .db
+        .run(move |db| -> Vec<String> {
+            let peers = match db.namespace_outbound_peers(&namespace) {
+                Ok(p) => p,
+                Err(e) => {
+                    tracing::warn!(error = %e, ns = %namespace, "ns outbound_peers lookup failed");
+                    return Vec::new();
+                }
+            };
+            let mut ok = Vec::with_capacity(peers.len());
+            for peer_id in peers {
+                let op_id = crate::shared::constants::generate_short_id();
+                if let Err(e) = db.namespace_enqueue(&peer_id, &op_id, &write_owned) {
+                    tracing::warn!(error = %e, peer_id = %peer_id, "ns enqueue failed");
+                    continue;
+                }
+                ok.push(peer_id);
+            }
+            ok
+        })
+        .await;
+    for peer_id in &enqueued {
+        peer_registry.notify_outbox(peer_id).await;
     }
 }
 
@@ -1704,14 +1906,24 @@ async fn handle_ns_put(
     if !valid_ns_name(&params.namespace) || !valid_ns_name(&params.key) {
         return rpc_err(req.id, "invalid_namespace_or_key");
     }
-    let updated_by = params.sender.as_deref().unwrap_or("system");
-    let write = match db.namespace_put(
-        &params.namespace,
-        &params.key,
-        params.value.as_bytes(),
-        daemon_id,
-        updated_by,
-    ) {
+    let namespace = params.namespace.clone();
+    let key = params.key.clone();
+    let value = params.value.clone();
+    let sender = params.sender.clone();
+    let daemon_id_owned = daemon_id.to_string();
+    let write = match db
+        .run(move |db| {
+            let updated_by = sender.as_deref().unwrap_or("system");
+            db.namespace_put(
+                &namespace,
+                &key,
+                value.as_bytes(),
+                &daemon_id_owned,
+                updated_by,
+            )
+        })
+        .await
+    {
         Ok(w) => w,
         Err(e) => return RpcResponse::error(req.id, -32000, format!("ns put: {e}")),
     };
@@ -1725,9 +1937,14 @@ async fn handle_ns_put(
     )
 }
 
-fn handle_ns_get(db: &Arc<Database>, req: RpcRequest) -> RpcResponse {
+async fn handle_ns_get(db: &Arc<Database>, req: RpcRequest) -> RpcResponse {
     let params: crate::shared::protocol::NsGetParams = try_params!(req);
-    match db.namespace_get(&params.namespace, &params.key) {
+    let namespace = params.namespace;
+    let key = params.key;
+    match db
+        .run(move |db| db.namespace_get(&namespace, &key))
+        .await
+    {
         Ok(Some(e)) => RpcResponse::success_json(
             req.id,
             &crate::shared::protocol::NsGetResult {
@@ -1741,12 +1958,15 @@ fn handle_ns_get(db: &Arc<Database>, req: RpcRequest) -> RpcResponse {
     }
 }
 
-fn handle_ns_list(db: &Arc<Database>, req: RpcRequest) -> RpcResponse {
+async fn handle_ns_list(db: &Arc<Database>, req: RpcRequest) -> RpcResponse {
     let params: crate::shared::protocol::NsListParams = try_params!(req);
+    let namespace = params.namespace;
+    let prefix = params.prefix;
     try_op(
         req.id,
         "ns list",
-        db.namespace_list(&params.namespace, params.prefix.as_deref())
+        db.run(move |db| db.namespace_list(&namespace, prefix.as_deref()))
+            .await
             .map(|entries| {
                 let entries = entries
                     .into_iter()
@@ -1772,8 +1992,17 @@ async fn handle_ns_delete(
     if !valid_ns_name(&params.namespace) || !valid_ns_name(&params.key) {
         return rpc_err(req.id, "invalid_namespace_or_key");
     }
-    let updated_by = params.sender.as_deref().unwrap_or("system");
-    let write = match db.namespace_delete(&params.namespace, &params.key, daemon_id, updated_by) {
+    let namespace = params.namespace.clone();
+    let key = params.key.clone();
+    let sender = params.sender.clone();
+    let daemon_id_owned = daemon_id.to_string();
+    let write = match db
+        .run(move |db| {
+            let updated_by = sender.as_deref().unwrap_or("system");
+            db.namespace_delete(&namespace, &key, &daemon_id_owned, updated_by)
+        })
+        .await
+    {
         Ok(w) => w,
         Err(e) => return RpcResponse::error(req.id, -32000, format!("ns delete: {e}")),
     };
@@ -1791,15 +2020,16 @@ async fn handle_ns_federate(peer_registry: &Arc<PeerRegistry>, req: RpcRequest) 
         Ok(d) => d,
         Err(_) => return rpc_err(req.id, "invalid_direction"),
     };
-    let peer = try_rpc!(resolve_peer(req.id, peer_registry, &params.peer));
+    let peer = try_rpc!(resolve_peer(req.id, peer_registry, &params.peer).await);
     let id = crate::shared::constants::generate_short_id();
-    match peer_registry.db.namespace_upsert_federation(
-        &id,
-        &peer.id,
-        &params.namespace,
-        direction,
-        unix_now(),
-    ) {
+    let namespace = params.namespace.clone();
+    let peer_id = peer.id.clone();
+    let now = unix_now();
+    match peer_registry
+        .db
+        .run(move |db| db.namespace_upsert_federation(&id, &peer_id, &namespace, direction, now))
+        .await
+    {
         Ok(_) => RpcResponse::success_json(
             req.id,
             &crate::shared::protocol::NsFederateResult::default(),
@@ -1833,14 +2063,6 @@ async fn handle_federated_direct_send(
         return rpc_err(req.id, "peer_removing");
     }
 
-    let depth = match db.outbox_depth(&peer.id) {
-        Ok(d) => d,
-        Err(e) => return RpcResponse::error(req.id, -32000, format!("outbox_depth: {e}")),
-    };
-    if depth >= PEER_OUTBOX_MAX_DEPTH_DEFAULT {
-        return rpc_err(req.id, "peer_outbox_full");
-    }
-
     let now = unix_now();
     let mail_id = crate::shared::constants::generate_short_id();
     let outbox_id = crate::shared::constants::generate_short_id();
@@ -1861,10 +2083,36 @@ async fn handle_federated_direct_send(
         now,
     );
 
-    if let Err(e) =
-        db.insert_mail_with_outbox(&mail, &peer.id, &outbox_id, &recipient_addr, None, now)
-    {
-        return RpcResponse::error(req.id, -32000, format!("insert_mail_with_outbox: {e}"));
+    // Pre-check depth + insert in one trip so we don't bounce between
+    // workers and the blocking pool.
+    let peer_id = peer.id.clone();
+    let mail_for_db = mail.clone();
+    let outbox_id_for_db = outbox_id.clone();
+    let recipient_for_db = recipient_addr.clone();
+    let outcome: Result<Result<(), String>, anyhow::Error> = db
+        .run(move |db| -> Result<Result<(), String>, anyhow::Error> {
+            let depth = db.outbox_depth(&peer_id)?;
+            if depth >= PEER_OUTBOX_MAX_DEPTH_DEFAULT {
+                return Ok(Err("peer_outbox_full".to_string()));
+            }
+            match db.insert_mail_with_outbox(
+                &mail_for_db,
+                &peer_id,
+                &outbox_id_for_db,
+                &recipient_for_db,
+                None,
+                now,
+            ) {
+                Ok(_) => Ok(Ok(())),
+                Err(e) => Ok(Err(format!("insert_mail_with_outbox: {e}"))),
+            }
+        })
+        .await;
+    match outcome {
+        Ok(Ok(())) => {}
+        Ok(Err(code)) if code == "peer_outbox_full" => return rpc_err(req.id, "peer_outbox_full"),
+        Ok(Err(msg)) => return RpcResponse::error(req.id, -32000, msg),
+        Err(e) => return RpcResponse::error(req.id, -32000, format!("outbox_depth: {e}")),
     }
 
     bus.publish(StreamEvent::MailSent {
@@ -1963,17 +2211,19 @@ async fn handle_topic_federate(peer_registry: &Arc<PeerRegistry>, req: RpcReques
         Ok(d) => d,
         Err(_) => return rpc_err(req.id, "invalid_direction"),
     };
-    let peer = try_rpc!(resolve_peer(req.id, peer_registry, &params.peer));
+    let peer = try_rpc!(resolve_peer(req.id, peer_registry, &params.peer).await);
     let id = crate::shared::constants::generate_short_id();
     let now = unix_now();
-    let final_dir =
-        match peer_registry
-            .db
-            .upsert_topic_federation(&id, &peer.id, &params.topic, direction, now)
-        {
-            Ok(d) => d,
-            Err(e) => return RpcResponse::error(req.id, -32000, format!("federate: {e}")),
-        };
+    let peer_id = peer.id.clone();
+    let topic_for_db = params.topic.clone();
+    let final_dir = match peer_registry
+        .db
+        .run(move |db| db.upsert_topic_federation(&id, &peer_id, &topic_for_db, direction, now))
+        .await
+    {
+        Ok(d) => d,
+        Err(e) => return RpcResponse::error(req.id, -32000, format!("federate: {e}")),
+    };
     peer_registry
         .bus
         .publish(StreamEvent::TopicFederationAdded {
@@ -1995,10 +2245,13 @@ async fn handle_topic_unfederate(
     req: RpcRequest,
 ) -> RpcResponse {
     let params: TopicUnfederateParams = try_params!(req);
-    let peer = try_rpc!(resolve_peer(req.id, peer_registry, &params.peer));
+    let peer = try_rpc!(resolve_peer(req.id, peer_registry, &params.peer).await);
+    let peer_id = peer.id.clone();
+    let topic_for_db = params.topic.clone();
     match peer_registry
         .db
-        .delete_topic_federation(&peer.id, &params.topic)
+        .run(move |db| db.delete_topic_federation(&peer_id, &topic_for_db))
+        .await
     {
         Ok(removed) => {
             if removed {
@@ -2031,27 +2284,25 @@ async fn handle_workspace_federate(
         Ok(d) => d,
         Err(_) => return rpc_err(req.id, "invalid_direction"),
     };
-    let ws = try_rpc!(resolve_workspace(
-        req.id,
-        &peer_registry.db,
-        &params.workspace
-    ));
+    let ws = try_rpc!(resolve_workspace(req.id, &peer_registry.db, &params.workspace).await);
     // Only the *home* of a workspace can opt it into outbound federation —
     // shadows already point at a remote home and would re-export events
     // they don't originate.
     if matches!(ws.kind, WorkspaceKind::Shadow) {
         return rpc_err(req.id, "workspace_is_shadow_cannot_federate");
     }
-    let peer = try_rpc!(resolve_peer(req.id, peer_registry, &params.peer));
+    let peer = try_rpc!(resolve_peer(req.id, peer_registry, &params.peer).await);
     let id = crate::shared::constants::generate_short_id();
     let now = unix_now();
-    let final_dir = match peer_registry.db.upsert_workspace_federation(
-        &id,
-        &peer.id,
-        &params.workspace,
-        direction,
-        now,
-    ) {
+    let peer_id = peer.id.clone();
+    let workspace_for_db = params.workspace.clone();
+    let final_dir = match peer_registry
+        .db
+        .run(move |db| {
+            db.upsert_workspace_federation(&id, &peer_id, &workspace_for_db, direction, now)
+        })
+        .await
+    {
         Ok(d) => d,
         Err(e) => return RpcResponse::error(req.id, -32000, format!("federate: {e}")),
     };
@@ -2084,36 +2335,52 @@ async fn handle_workspace_federate_subscribe(
     if home_workspace_id.is_empty() {
         return rpc_err(req.id, "invalid_home_workspace_id");
     }
-    let peer = try_rpc!(resolve_peer(req.id, peer_registry, &params.peer));
+    let peer = try_rpc!(resolve_peer(req.id, peer_registry, &params.peer).await);
 
     let local_id = params
         .alias
         .unwrap_or_else(|| format!("{home_workspace_id}-shadow"));
 
-    // Insert the shadow row first so an existing-id collision fails before
-    // we touch the federations table.
-    if let Err(e) = peer_registry.db.insert_shadow_workspace(
-        &local_id,
-        home_daemon_id,
-        home_workspace_id,
-        &params.branch,
-        chrono::Utc::now(),
-    ) {
-        // SQLite UNIQUE violation (id or path) surfaces as a clear error.
-        return RpcResponse::error(req.id, -32000, format!("insert_shadow: {e}"));
-    }
-
+    let local_id_for_db = local_id.clone();
+    let home_daemon_owned = home_daemon_id.to_string();
+    let home_ws_owned = home_workspace_id.to_string();
+    let branch = params.branch.clone();
+    let peer_id = peer.id.clone();
     let fed_id = crate::shared::constants::generate_short_id();
-    if let Err(e) = peer_registry.db.upsert_workspace_federation(
-        &fed_id,
-        &peer.id,
-        &local_id,
-        FederationDirection::Inbound,
-        unix_now(),
-    ) {
-        // Best-effort rollback so we don't leave a dangling shadow row.
-        let _ = peer_registry.db.delete_workspace_row(&local_id);
-        return RpcResponse::error(req.id, -32000, format!("federate_subscribe: {e}"));
+    let now_ts = chrono::Utc::now();
+    let now_secs = unix_now();
+    // Insert shadow + federation in one trip; rollback the shadow row
+    // best-effort if the federation upsert fails. Keeps the original
+    // sequence so existing-id collisions still fail before federations.
+    let outcome: Result<Result<(), String>, anyhow::Error> = peer_registry
+        .db
+        .run(move |db| {
+            if let Err(e) = db.insert_shadow_workspace(
+                &local_id_for_db,
+                &home_daemon_owned,
+                &home_ws_owned,
+                &branch,
+                now_ts,
+            ) {
+                return Ok(Err(format!("insert_shadow: {e}")));
+            }
+            if let Err(e) = db.upsert_workspace_federation(
+                &fed_id,
+                &peer_id,
+                &local_id_for_db,
+                FederationDirection::Inbound,
+                now_secs,
+            ) {
+                let _ = db.delete_workspace_row(&local_id_for_db);
+                return Ok(Err(format!("federate_subscribe: {e}")));
+            }
+            Ok(Ok(()))
+        })
+        .await;
+    match outcome {
+        Ok(Ok(())) => {}
+        Ok(Err(msg)) => return RpcResponse::error(req.id, -32000, msg),
+        Err(e) => return RpcResponse::error(req.id, -32000, format!("db: {e}")),
     }
     RpcResponse::success_json(
         req.id,
@@ -2134,10 +2401,13 @@ async fn handle_workspace_unfederate(
     req: RpcRequest,
 ) -> RpcResponse {
     let params: WorkspaceUnfederateParams = try_params!(req);
-    let peer = try_rpc!(resolve_peer(req.id, peer_registry, &params.peer));
+    let peer = try_rpc!(resolve_peer(req.id, peer_registry, &params.peer).await);
+    let peer_id = peer.id.clone();
+    let workspace_for_db = params.workspace.clone();
     match peer_registry
         .db
-        .delete_workspace_federation(&peer.id, &params.workspace)
+        .run(move |db| db.delete_workspace_federation(&peer_id, &workspace_for_db))
+        .await
     {
         Ok(n) => RpcResponse::success_json(req.id, &WorkspaceUnfederateResult { removed: n > 0 }),
         Err(e) => RpcResponse::error(req.id, -32000, format!("unfederate: {e}")),

@@ -517,7 +517,8 @@ async fn http_list_scrolls(State(state): State<AppState>) -> axum::Json<serde_js
     json_result(
         state
             .db
-            .list_scrolls()
+            .run(super::persistence::Database::list_scrolls)
+            .await
             .map(|scrolls| serde_json::json!({"scrolls": scrolls})),
     )
 }
@@ -697,7 +698,11 @@ fn webhook_err(status: axum::http::StatusCode, code: &str) -> axum::response::Re
 /// which keeps the metrics surface out of the casual-browser attack surface
 /// without making metrics second-class.
 async fn http_metrics(State(state): State<AppState>) -> axum::response::Response {
-    let body = super::metrics::render(&state.db, state.started_at, env!("CARGO_PKG_VERSION"));
+    let db = state.db.clone();
+    let started_at = state.started_at;
+    let body = db
+        .run(move |db| super::metrics::render(db, started_at, env!("CARGO_PKG_VERSION")))
+        .await;
     axum::response::Response::builder()
         .status(axum::http::StatusCode::OK)
         // Prometheus expects this exact content-type for parsers to attach.

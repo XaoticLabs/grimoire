@@ -3,6 +3,7 @@ use chrono::{DateTime, Utc};
 use parking_lot::Mutex;
 use rusqlite::Connection;
 use std::path::Path;
+use std::sync::Arc;
 
 use crate::shared::protocol::StreamEvent;
 use crate::shared::types::{
@@ -109,6 +110,20 @@ impl Database {
         };
         db.migrate()?;
         Ok(db)
+    }
+
+    /// Run a synchronous DB closure on the blocking thread pool so the
+    /// caller's Tokio worker stays free. The Arc clone keeps lifetimes
+    /// simple — the closure owns its handle for the duration.
+    pub async fn run<F, R>(self: &Arc<Self>, f: F) -> R
+    where
+        F: FnOnce(&Self) -> R + Send + 'static,
+        R: Send + 'static,
+    {
+        let me = self.clone();
+        tokio::task::spawn_blocking(move || f(&me))
+            .await
+            .expect("DB blocking task panicked")
     }
 
     /// Test-only helper: run a closure with locked access to the underlying
