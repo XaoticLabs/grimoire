@@ -313,6 +313,9 @@ pub async fn handle_rpc(
         "peer.ping" => handle_peer_ping(peer_registry, req).await,
         "topic.federate" => handle_topic_federate(peer_registry, req).await,
         "topic.unfederate" => handle_topic_unfederate(peer_registry, req).await,
+        "topic.federations" => handle_topic_federations(peer_registry, req).await,
+        "ns.federations" => handle_ns_federations(peer_registry, req).await,
+        "workspace.federations" => handle_workspace_federations(peer_registry, req).await,
         "notify" => handle_notify(bus, req),
         "agent.replay" => handle_replay(db, req).await,
         _ => RpcResponse::error(req.id, -32601, format!("Unknown method: {}", req.method)),
@@ -2268,6 +2271,62 @@ async fn handle_topic_unfederate(
             RpcResponse::success_json(req.id, &TopicUnfederateResult { removed })
         }
         Err(e) => RpcResponse::error(req.id, -32000, format!("unfederate: {e}")),
+    }
+}
+
+// --- Federation listings ---
+// Read-only enumeration of `*_federations` rows. Used by `grim topic
+// federations` / `ns federations` / `workspace federations` and the
+// dashboard's Federation page.
+
+async fn handle_topic_federations(
+    peer_registry: &Arc<PeerRegistry>,
+    req: RpcRequest,
+) -> RpcResponse {
+    match peer_registry
+        .db
+        .run(|db| db.list_topic_federations())
+        .await
+    {
+        Ok(federations) => RpcResponse::success_json(
+            req.id,
+            &crate::shared::protocol::TopicFederationsResult { federations },
+        ),
+        Err(e) => RpcResponse::error(req.id, -32000, format!("topic.federations: {e}")),
+    }
+}
+
+async fn handle_ns_federations(
+    peer_registry: &Arc<PeerRegistry>,
+    req: RpcRequest,
+) -> RpcResponse {
+    match peer_registry
+        .db
+        .run(|db| db.list_namespace_federations())
+        .await
+    {
+        Ok(federations) => RpcResponse::success_json(
+            req.id,
+            &crate::shared::protocol::NsFederationsResult { federations },
+        ),
+        Err(e) => RpcResponse::error(req.id, -32000, format!("ns.federations: {e}")),
+    }
+}
+
+async fn handle_workspace_federations(
+    peer_registry: &Arc<PeerRegistry>,
+    req: RpcRequest,
+) -> RpcResponse {
+    match peer_registry
+        .db
+        .run(|db| db.list_workspace_federations())
+        .await
+    {
+        Ok(federations) => RpcResponse::success_json(
+            req.id,
+            &crate::shared::protocol::WorkspaceFederationsResult { federations },
+        ),
+        Err(e) => RpcResponse::error(req.id, -32000, format!("workspace.federations: {e}")),
     }
 }
 

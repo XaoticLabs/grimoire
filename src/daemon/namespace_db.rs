@@ -428,6 +428,42 @@ impl Database {
         Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
     }
 
+    /// List every namespace_federations row across all namespaces. Powers
+    /// the "active federations" view in CLI/web.
+    pub fn list_namespace_federations(
+        &self,
+    ) -> Result<Vec<crate::shared::types::NamespaceFederation>> {
+        use crate::shared::types::{FederationDirection, NamespaceFederation};
+        let conn = self.workspace_conn_lock();
+        let mut stmt = conn.prepare(
+            "SELECT id, peer_id, namespace, direction, created_at
+             FROM namespace_federations
+             ORDER BY namespace, peer_id",
+        )?;
+        let rows = stmt.query_map(params![], |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, String>(2)?,
+                r.get::<_, String>(3)?,
+                r.get::<_, i64>(4)?,
+            ))
+        })?;
+        let mut out = Vec::new();
+        for r in rows {
+            let (id, peer_id, namespace, dir, created_at) = r?;
+            let direction: FederationDirection = dir.parse().unwrap_or(FederationDirection::Both);
+            out.push(NamespaceFederation {
+                id,
+                peer_id,
+                namespace,
+                direction,
+                created_at,
+            });
+        }
+        Ok(out)
+    }
+
     /// Whether inbound replication into `namespace` from `peer_id` is
     /// authorized (direction `inbound` or `both`).
     pub fn namespace_inbound_authorized(&self, peer_id: &str, namespace: &str) -> Result<bool> {

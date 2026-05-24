@@ -664,6 +664,25 @@ pub struct NsFederateParams {
 
 pub type NsFederateResult = EmptyResult;
 
+// --- Federation listing ---
+// One row per (peer, scope) federation. `created_at` is unix seconds for the
+// topic/ns shape and ISO-8601 for workspaces (matches the underlying types).
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TopicFederationsResult {
+    pub federations: Vec<super::types::TopicFederation>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NsFederationsResult {
+    pub federations: Vec<super::types::NamespaceFederation>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkspaceFederationsResult {
+    pub federations: Vec<super::types::WorkspaceFederation>,
+}
+
 // --- Notify params/results ---
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

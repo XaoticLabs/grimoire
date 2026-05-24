@@ -7,7 +7,7 @@ use clap::Subcommand;
 use colored::Colorize;
 
 use crate::cli::client::DaemonClient;
-use crate::shared::protocol::{NsGetResult, NsListResult, NsPutResult};
+use crate::shared::protocol::{NsFederationsResult, NsGetResult, NsListResult, NsPutResult};
 
 #[derive(Debug, Subcommand)]
 pub enum NsCommand {
@@ -35,6 +35,8 @@ pub enum NsCommand {
         #[arg(long, default_value = "both")]
         direction: String,
     },
+    /// List every active namespace federation on this daemon.
+    Federations,
 }
 
 pub async fn run(cmd: NsCommand) -> Result<()> {
@@ -52,7 +54,36 @@ pub async fn run(cmd: NsCommand) -> Result<()> {
             peer,
             direction,
         } => run_federate(&namespace, &peer, &direction).await,
+        NsCommand::Federations => run_federations().await,
     }
+}
+
+async fn run_federations() -> Result<()> {
+    let mut client = DaemonClient::connect().await?;
+    let resp = client.call("ns.federations", serde_json::json!({})).await?;
+    if let Some(err) = resp.error {
+        eprintln!("{} {}", "Error:".red(), err.message);
+        std::process::exit(1);
+    }
+    let r: NsFederationsResult = serde_json::from_value(resp.result.unwrap_or_default())?;
+    if r.federations.is_empty() {
+        println!("no namespace federations");
+        return Ok(());
+    }
+    println!(
+        "{:<22} {:<24} {:<10} CREATED",
+        "NAMESPACE", "PEER", "DIRECTION"
+    );
+    for f in r.federations {
+        println!(
+            "{:<22} {:<24} {:<10} {}",
+            f.namespace,
+            f.peer_id,
+            f.direction.as_str(),
+            f.created_at
+        );
+    }
+    Ok(())
 }
 
 fn read_value(input: &str) -> Result<String> {

@@ -1928,13 +1928,108 @@
                             <div class="form-actions"><button class="btn btn-sm" onclick="submitWsFederate()">Federate workspace</button></div>
                         </div>
                     </div>
+                    <div class="card">
+                        <h3>Active federations
+                            <button class="btn btn-sm" style="float:right;background:var(--surface2);color:var(--text)" onclick="refreshFederations()">Refresh</button>
+                        </h3>
+                        <div style="margin-bottom:1.25rem">
+                            <div class="muted" style="font-size:0.75rem;text-transform:uppercase;letter-spacing:0.08em;margin-bottom:0.5rem">Topics</div>
+                            <table class="grid-table">
+                                <thead><tr><th>Topic</th><th>Peer</th><th>Direction</th><th>Created</th><th></th></tr></thead>
+                                <tbody id="fed-topic-tbody"></tbody>
+                            </table>
+                        </div>
+                        <div style="margin-bottom:1.25rem">
+                            <div class="muted" style="font-size:0.75rem;text-transform:uppercase;letter-spacing:0.08em;margin-bottom:0.5rem">Namespaces</div>
+                            <table class="grid-table">
+                                <thead><tr><th>Namespace</th><th>Peer</th><th>Direction</th><th>Created</th><th></th></tr></thead>
+                                <tbody id="fed-ns-tbody"></tbody>
+                            </table>
+                        </div>
+                        <div>
+                            <div class="muted" style="font-size:0.75rem;text-transform:uppercase;letter-spacing:0.08em;margin-bottom:0.5rem">Workspaces</div>
+                            <table class="grid-table">
+                                <thead><tr><th>Workspace</th><th>Peer</th><th>Direction</th><th>Created</th><th></th></tr></thead>
+                                <tbody id="fed-ws-tbody"></tbody>
+                            </table>
+                        </div>
+                    </div>
                     <p class="muted" style="font-size:0.8rem;color:var(--text-dim);margin-top:1rem">
-                        Equivalent CLI: <code>grim peer add/list/remove/ping</code>, <code>grim topic federate</code>, <code>grim ns federate</code>, <code>grim workspace federate</code>.
+                        Equivalent CLI: <code>grim peer add/list/remove/ping</code>, <code>grim topic federate/federations</code>, <code>grim ns federate/federations</code>, <code>grim workspace federate/federations</code>.
                     </p>
                 `;
                 el.dataset.rendered = '1';
             }
             refreshPeers();
+            refreshFederations();
+        }
+
+        // Direction comes back as the enum string ("inbound" | "outbound" | "both")
+        // for topic/ns and as the same lowercase string for workspaces — the
+        // shape converged on FederationDirection in shared/types.
+        function fedDirBadge(d) {
+            const color = ({
+                outbound:'var(--blue)', inbound:'var(--green)', both:'var(--purple)',
+            })[d] || 'var(--text-dim)';
+            return `<span class="badge" style="background:rgba(167,139,250,0.12);color:${color}">${esc(d||'')}</span>`;
+        }
+
+        function renderFedRows(tbody, rows, scopeKey, removeFn, cols) {
+            if (!rows.length) {
+                tbody.innerHTML = `<tr><td colspan="${cols}" class="muted" style="text-align:center;padding:1rem">none</td></tr>`;
+                return;
+            }
+            tbody.innerHTML = rows.map(r => {
+                // workspace federations use ISO timestamps; topic/ns use unix secs
+                const created = r.created_at;
+                const createdStr = typeof created === 'number'
+                    ? new Date(created * 1000).toLocaleString()
+                    : new Date(created).toLocaleString();
+                const scopeVal = r[scopeKey];
+                return `
+                    <tr>
+                        <td><code>${esc(scopeVal||'')}</code></td>
+                        <td><code>${esc((r.peer_id||'').slice(0,16))}</code></td>
+                        <td>${fedDirBadge(r.direction)}</td>
+                        <td class="muted" style="font-size:0.75rem">${esc(createdStr)}</td>
+                        <td class="actions"><button class="btn btn-sm btn-danger" onclick="${removeFn}('${escAttr(scopeVal)}','${escAttr(r.peer_id)}')">Remove</button></td>
+                    </tr>`;
+            }).join('');
+        }
+
+        async function refreshFederations() {
+            const ttb = document.getElementById('fed-topic-tbody');
+            const ntb = document.getElementById('fed-ns-tbody');
+            const wtb = document.getElementById('fed-ws-tbody');
+            if (!ttb) return;
+            const [t, n, w] = await Promise.allSettled([
+                grim('topic.federations', {}),
+                grim('ns.federations', {}),
+                grim('workspace.federations', {}),
+            ]);
+            if (t.status === 'fulfilled') renderFedRows(ttb, t.value.federations || [], 'topic', 'removeTopicFed', 5);
+            else ttb.innerHTML = `<tr><td colspan="5" class="muted">topic.federations failed: ${esc(t.reason.message)}</td></tr>`;
+            if (n.status === 'fulfilled') renderFedRows(ntb, n.value.federations || [], 'namespace', 'removeNsFed', 5);
+            else ntb.innerHTML = `<tr><td colspan="5" class="muted">ns.federations failed: ${esc(n.reason.message)}</td></tr>`;
+            if (w.status === 'fulfilled') renderFedRows(wtb, w.value.federations || [], 'workspace_id', 'removeWsFed', 5);
+            else wtb.innerHTML = `<tr><td colspan="5" class="muted">workspace.federations failed: ${esc(w.reason.message)}</td></tr>`;
+        }
+
+        async function removeTopicFed(topic, peer) {
+            if (!confirm(`Unfederate topic ${topic} from peer ${peer}?`)) return;
+            try { await grim('topic.unfederate', { topic, peer }); toast('removed', 'ok'); refreshFederations(); }
+            catch (e) { toast('topic.unfederate failed: ' + e.message, 'err'); }
+        }
+
+        async function removeNsFed(namespace, peer) {
+            // ns has no dedicated unfederate RPC today; surface that honestly.
+            toast('ns.unfederate not implemented yet — remove via direct DB or peer.remove', 'err');
+        }
+
+        async function removeWsFed(workspace, peer) {
+            if (!confirm(`Unfederate workspace ${workspace} from peer ${peer}?`)) return;
+            try { await grim('workspace.unfederate', { workspace, peer }); toast('removed', 'ok'); refreshFederations(); }
+            catch (e) { toast('workspace.unfederate failed: ' + e.message, 'err'); }
         }
 
         // --- Chronicle page ---------------------------------------------
@@ -2564,6 +2659,8 @@
                 else refreshSoon('scrolls', refreshScrollsList);
             }
         });
+        onSse('topic_federation_added',   () => { if (pageVisible('federation')) refreshSoon('feds', refreshFederations); });
+        onSse('topic_federation_removed', () => { if (pageVisible('federation')) refreshSoon('feds', refreshFederations); });
         onSse('peer_handshake_ok',       () => { if (pageVisible('federation')) refreshSoon('peers', refreshPeers); });
         onSse('peer_handshake_failed',   () => { if (pageVisible('federation')) refreshSoon('peers', refreshPeers); });
         onSse('peer_stream_connected',   () => { if (pageVisible('federation')) refreshSoon('peers', refreshPeers); });

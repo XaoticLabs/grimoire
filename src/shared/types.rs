@@ -931,6 +931,15 @@ pub struct TopicFederation {
     pub created_at: i64,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct NamespaceFederation {
+    pub id: String,
+    pub peer_id: PeerId,
+    pub namespace: String,
+    pub direction: FederationDirection,
+    pub created_at: i64,
+}
+
 #[cfg(test)]
 mod federation_type_tests {
     use super::*;

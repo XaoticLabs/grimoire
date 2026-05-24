@@ -5,7 +5,8 @@ use colored::Colorize;
 use crate::cli::client::DaemonClient;
 use crate::shared::protocol::{
     WorkspaceCreateResult, WorkspaceDestroyResult, WorkspaceFederateResult,
-    WorkspaceFederateSubscribeResult, WorkspaceListResult, WorkspaceUnfederateResult,
+    WorkspaceFederateSubscribeResult, WorkspaceFederationsResult, WorkspaceListResult,
+    WorkspaceUnfederateResult,
 };
 
 #[derive(Debug, Subcommand)]
@@ -60,6 +61,8 @@ pub enum WorkspaceCommand {
         #[arg(long)]
         peer: String,
     },
+    /// List every active workspace federation on this daemon.
+    Federations,
 }
 
 pub async fn run(cmd: WorkspaceCommand) -> Result<()> {
@@ -80,7 +83,41 @@ pub async fn run(cmd: WorkspaceCommand) -> Result<()> {
             branch,
         } => run_federate_subscribe(&home, &peer, alias.as_deref(), &branch).await,
         WorkspaceCommand::Unfederate { workspace, peer } => run_unfederate(&workspace, &peer).await,
+        WorkspaceCommand::Federations => run_federations().await,
     }
+}
+
+async fn run_federations() -> Result<()> {
+    let mut client = DaemonClient::connect().await?;
+    let resp = client
+        .call("workspace.federations", serde_json::json!({}))
+        .await?;
+    if let Some(err) = resp.error {
+        eprintln!("{} {}", "Error:".red(), err.message);
+        std::process::exit(1);
+    }
+    let r: WorkspaceFederationsResult = serde_json::from_value(
+        resp.result
+            .context("daemon returned `ok` with empty result payload")?,
+    )?;
+    if r.federations.is_empty() {
+        println!("no workspace federations");
+        return Ok(());
+    }
+    println!(
+        "{:<22} {:<24} {:<10} CREATED",
+        "WORKSPACE", "PEER", "DIRECTION"
+    );
+    for f in r.federations {
+        println!(
+            "{:<22} {:<24} {:<10} {}",
+            f.workspace_id,
+            f.peer_id,
+            f.direction.as_str(),
+            f.created_at
+        );
+    }
+    Ok(())
 }
 
 async fn run_federate(workspace: &str, peer: &str, direction: &str) -> Result<()> {

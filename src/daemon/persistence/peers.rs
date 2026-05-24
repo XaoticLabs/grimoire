@@ -300,6 +300,14 @@ impl super::Database {
         )
     }
 
+    pub fn list_topic_federations(&self) -> Result<Vec<crate::shared::types::TopicFederation>> {
+        self.query_vec(
+            "SELECT id, peer_id, topic, direction, created_at FROM topic_federations ORDER BY topic, peer_id",
+            params![],
+            row_to_topic_federation,
+        )
+    }
+
     pub fn topic_federation_inbound_authorized(&self, peer_id: &str, topic: &str) -> Result<bool> {
         let conn = self.conn_lock();
         let dir: Option<String> = conn

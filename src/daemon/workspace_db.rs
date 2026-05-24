@@ -447,6 +447,33 @@ impl Database {
 
     /// All federation rows for `workspace_id` regardless of direction —
     /// used by `workspace show` and by the producer-side fanout.
+    /// Every workspace_federations row across all workspaces.
+    pub fn list_workspace_federations(&self) -> Result<Vec<WorkspaceFederation>> {
+        let conn = self.workspace_conn_lock();
+        let mut stmt = conn.prepare(
+            "SELECT id, peer_id, workspace_id, direction, created_at
+             FROM workspace_federations
+             ORDER BY workspace_id, peer_id",
+        )?;
+        let mut rows = stmt.query(params![])?;
+        let mut out = Vec::new();
+        while let Some(row) = rows.next()? {
+            let dir_str: String = row.get(3)?;
+            let created: i64 = row.get(4)?;
+            out.push(WorkspaceFederation {
+                id: row.get(0)?,
+                peer_id: row.get(1)?,
+                workspace_id: row.get(2)?,
+                direction: dir_str.parse().unwrap_or(FederationDirection::Both),
+                created_at: Utc
+                    .timestamp_opt(created, 0)
+                    .single()
+                    .unwrap_or_else(Utc::now),
+            });
+        }
+        Ok(out)
+    }
+
     pub fn list_workspace_federations_for(
         &self,
         workspace_id: &str,
