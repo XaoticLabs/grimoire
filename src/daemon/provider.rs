@@ -98,17 +98,11 @@ pub trait Provider: Send + Sync {
     /// Extract the final result text from collected stdout lines
     fn extract_result(&self, stdout_lines: &[String]) -> Option<String>;
 
-    /// Extract total input+output token spend for this run. Providers that
-    /// don't expose usage in their stream return `None` (the default), and
-    /// `SandboxConfig.token_budget` is then unenforceable for that provider.
-    fn extract_usage(&self, _stdout_lines: &[String]) -> Option<u64> {
-        None
-    }
-
     /// Per-bucket token counts (input / output / cache-read / cache-creation)
-    /// used to attribute USD spend against `[providers.<name>.pricing]`.
-    /// Optional — providers that only report a total return `None` here and
-    /// budgets fall back to charging at `input_per_mtok` for the whole run.
+    /// used to attribute USD spend against `[providers.<name>.pricing]` and
+    /// to compare against `SandboxConfig.token_budget`. Providers that
+    /// don't surface usage telemetry return `None` (the default); such
+    /// providers are then unbillable and unbudgetable, by design.
     fn extract_token_breakdown(&self, _stdout_lines: &[String]) -> Option<TokenBreakdown> {
         None
     }
@@ -116,7 +110,7 @@ pub trait Provider: Send + Sync {
 
 /// Per-bucket token usage for one agent run. Fields match the pricing axes
 /// vendors publish; missing buckets stay at zero.
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct TokenBreakdown {
     pub input: u64,
     pub output: u64,

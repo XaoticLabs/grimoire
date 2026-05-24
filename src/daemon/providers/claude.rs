@@ -126,18 +126,10 @@ impl Provider for ClaudeProvider {
         None
     }
 
-    /// Pull `usage.input_tokens + usage.output_tokens` from the trailing
-    /// `result` event of a stream-json run (also tolerates the older
-    /// `usage` shape on `message_stop`).
-    fn extract_usage(&self, stdout_lines: &[String]) -> Option<u64> {
-        self.extract_token_breakdown(stdout_lines)
-            .map(|b| b.total())
-            .filter(|t| *t > 0)
-    }
-
-    /// Per-bucket breakdown from the same `usage` block. Used by the
-    /// daemon's budget layer to attribute USD spend accurately across
-    /// input / output / cache-read / cache-creation prices.
+    /// Per-bucket breakdown pulled from the trailing `result` event's
+    /// `usage` block (also tolerates the older `usage` shape on
+    /// `message_stop`). The daemon derives totals (`extract_usage` was
+    /// removed) and per-bucket USD via `[providers.claude.pricing]`.
     fn extract_token_breakdown(&self, stdout_lines: &[String]) -> Option<TokenBreakdown> {
         for line in stdout_lines.iter().rev() {
             let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else {
@@ -235,14 +227,19 @@ mod tests {
             r#"{"type":"assistant","message":"x"}"#.to_string(),
             r#"{"type":"result","result":"done","usage":{"input_tokens":100,"output_tokens":50,"cache_read_input_tokens":10,"cache_creation_input_tokens":5}}"#.to_string(),
         ];
-        assert_eq!(p.extract_usage(&lines), Some(165));
+        let b = p.extract_token_breakdown(&lines).unwrap();
+        assert_eq!(b.input, 100);
+        assert_eq!(b.output, 50);
+        assert_eq!(b.cache_read, 10);
+        assert_eq!(b.cache_creation, 5);
+        assert_eq!(b.total(), 165);
     }
 
     #[test]
     fn extract_usage_none_without_usage_block() {
         let p = claude();
         let lines = vec![r#"{"type":"result","result":"done"}"#.to_string()];
-        assert_eq!(p.extract_usage(&lines), None);
+        assert_eq!(p.extract_token_breakdown(&lines), None);
     }
 
     #[test]

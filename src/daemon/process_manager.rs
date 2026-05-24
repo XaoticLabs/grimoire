@@ -188,12 +188,10 @@ pub async fn monitor_agent(
         stdout_lines: Vec::new(),
     });
     let captured_session_id = consumed.session_id;
-    let tokens_used = provider_for_usage
-        .as_ref()
-        .and_then(|p| p.extract_usage(&consumed.stdout_lines));
     let token_breakdown = provider_for_usage
         .as_ref()
         .and_then(|p| p.extract_token_breakdown(&consumed.stdout_lines));
+    let tokens_used = token_breakdown.map(|b| b.total()).filter(|t| *t > 0);
 
     match exit_status {
         Ok(status) => {
