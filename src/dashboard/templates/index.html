@@ -2258,7 +2258,71 @@
             agentOutput.appendChild(el);
         }
 
-        // --- Global SSE (feeds per-agent previews on list view) ---
+        // --- Global SSE ---
+        // One EventSource pushes daemon events to every page. Per-page
+        // handlers below are debounced so a burst of events triggers one
+        // refresh, not N. Pages register interest by event-type prefix.
+        const sseHandlers = {};   // event-type → [fn(event)]
+        const debouncers = {};    // key → timer id
+
+        function onSse(type, fn) {
+            (sseHandlers[type] ||= []).push(fn);
+        }
+
+        function refreshSoon(key, fn, delay) {
+            clearTimeout(debouncers[key]);
+            debouncers[key] = setTimeout(fn, delay ?? 300);
+        }
+
+        function pageVisible(name) {
+            const el = document.querySelector(`[data-page="${name}"]`);
+            return el && !el.hidden;
+        }
+
+        // Wire built-in page reactions. Each handler short-circuits when its
+        // page isn't visible to avoid wasted RPCs.
+        onSse('output', (ev) => {
+            if (ev.stream !== 'stdout') return;
+            const summary = summarizeLine(ev.line);
+            if (summary) {
+                agentLatestLine[ev.agent_id] = summary;
+                if (pageVisible('agents') && !currentAgentId) {
+                    refreshSoon('agents', fetchAgents, 500);
+                }
+            }
+        });
+        onSse('state_change', () => {
+            if (pageVisible('agents') && !currentAgentId) refreshSoon('agents', fetchAgents);
+            if (pageVisible('health')) refreshSoon('health', refreshHealth, 500);
+        });
+        onSse('agent_created', () => {
+            if (pageVisible('agents') && !currentAgentId) refreshSoon('agents', fetchAgents);
+            if (pageVisible('health')) refreshSoon('health', refreshHealth, 500);
+        });
+        onSse('agent_queued', () => {
+            if (pageVisible('health')) refreshSoon('health', refreshHealth, 300);
+        });
+        onSse('mail_received', () => { if (pageVisible('mail')) refreshSoon('mail', refreshMailInbox); });
+        onSse('mail_sent',     () => { if (pageVisible('mail')) refreshSoon('mail', refreshMailInbox); });
+        onSse('mail_delivered',() => { if (pageVisible('mail')) refreshSoon('mail', refreshMailInbox); });
+        onSse('wake_source_registered', () => { if (pageVisible('wake')) refreshSoon('wake', refreshWake); });
+        onSse('wake_source_fired',      () => { if (pageVisible('wake')) refreshSoon('wake', refreshWake); });
+        onSse('wake_source_failed',     () => { if (pageVisible('wake')) refreshSoon('wake', refreshWake); });
+        onSse('wake_source_retired',    () => { if (pageVisible('wake')) refreshSoon('wake', refreshWake); });
+        onSse('workspace_created',   () => { if (pageVisible('workspaces')) refreshSoon('ws', refreshWorkspaces); });
+        onSse('workspace_destroyed', () => { if (pageVisible('workspaces')) refreshSoon('ws', refreshWorkspaces); });
+        onSse('scroll_progress',     () => { if (pageVisible('scrolls')) refreshSoon('scrolls', refreshScrollsList); });
+        onSse('task_state_change',   () => {
+            if (pageVisible('scrolls')) {
+                const { rest } = parseHash();
+                if (rest && rest[0]) refreshSoon('scrolldetail', () => showScrollDetail(rest[0]), 400);
+                else refreshSoon('scrolls', refreshScrollsList);
+            }
+        });
+        onSse('peer_handshake_ok',       () => { if (pageVisible('federation')) refreshSoon('peers', refreshPeers); });
+        onSse('peer_handshake_failed',   () => { if (pageVisible('federation')) refreshSoon('peers', refreshPeers); });
+        onSse('peer_stream_connected',   () => { if (pageVisible('federation')) refreshSoon('peers', refreshPeers); });
+        onSse('peer_stream_disconnected',() => { if (pageVisible('federation')) refreshSoon('peers', refreshPeers); });
 
         function connectSSE() {
             const es = new EventSource('/api/events');
@@ -2267,19 +2331,13 @@
                 statusText.textContent = 'connected';
             };
             es.onmessage = (e) => {
-                try {
-                    const event = JSON.parse(e.data);
-                    if (event.type === 'output' && event.stream === 'stdout') {
-                        const summary = summarizeLine(event.line);
-                        if (summary) {
-                            agentLatestLine[event.agent_id] = summary;
-                            // Re-render list if visible
-                            if (!currentAgentId) fetchAgents();
-                        }
-                    } else if (event.type === 'state_change' || event.type === 'agent_created') {
-                        fetchAgents();
-                    }
-                } catch (err) {}
+                let event;
+                try { event = JSON.parse(e.data); } catch { return; }
+                const handlers = sseHandlers[event.type];
+                if (!handlers) return;
+                for (const h of handlers) {
+                    try { h(event); } catch (err) { console.warn('sse handler', event.type, err); }
+                }
             };
             es.onerror = () => {
                 statusDot.style.background = 'var(--red)';
