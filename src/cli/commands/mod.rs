@@ -1,6 +1,6 @@
 pub mod banish;
-pub mod budget;
 pub mod bind;
+pub mod budget;
 pub mod chronicle;
 pub mod circle;
 pub mod demo;

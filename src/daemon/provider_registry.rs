@@ -139,8 +139,8 @@ impl ProviderRegistry {
                     binary: "true".to_string(),
                     args_template: vec![],
                     env: HashMap::new(),
-                sandbox: None,
-                pricing: None,
+                    sandbox: None,
+                    pricing: None,
                 },
             )),
         );

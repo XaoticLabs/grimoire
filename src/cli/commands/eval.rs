@@ -143,11 +143,7 @@ pub async fn run(
     let parsed = wait_for_verdict(&mut client, &result.id, timeout_secs).await?;
     let record_id = record_verdict(&mut client, target_id, &result.id, &parsed).await?;
     print_verdict(&result.id, &parsed);
-    println!(
-        "  {} recorded as eval {}",
-        "↳".dimmed(),
-        record_id.dimmed()
-    );
+    println!("  {} recorded as eval {}", "↳".dimmed(), record_id.dimmed());
     Ok(())
 }
 
@@ -223,10 +219,7 @@ async fn wait_for_verdict(
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(timeout_secs);
     loop {
         let resp: AgentResultResponse = client
-            .call_typed(
-                "agent.result",
-                serde_json::json!({ "id": evaluator_id }),
-            )
+            .call_typed("agent.result", serde_json::json!({ "id": evaluator_id }))
             .await?;
         let terminal = matches!(
             resp.state.as_str(),
@@ -234,7 +227,10 @@ async fn wait_for_verdict(
         );
         if terminal {
             let text = resp.result.ok_or_else(|| {
-                anyhow!("evaluator {evaluator_id} finished as {} with no result", resp.state)
+                anyhow!(
+                    "evaluator {evaluator_id} finished as {} with no result",
+                    resp.state
+                )
             })?;
             return parse_verdict(&text);
         }
@@ -256,8 +252,12 @@ fn parse_verdict(text: &str) -> Result<EvalVerdict> {
     if let Ok(v) = serde_json::from_str::<EvalVerdict>(text.trim()) {
         return Ok(v);
     }
-    let start = text.find('{').ok_or_else(|| anyhow!("no JSON object in evaluator reply"))?;
-    let end = text.rfind('}').ok_or_else(|| anyhow!("unterminated JSON in evaluator reply"))?;
+    let start = text
+        .find('{')
+        .ok_or_else(|| anyhow!("no JSON object in evaluator reply"))?;
+    let end = text
+        .rfind('}')
+        .ok_or_else(|| anyhow!("unterminated JSON in evaluator reply"))?;
     if end <= start {
         return Err(anyhow!("malformed JSON range in evaluator reply"));
     }

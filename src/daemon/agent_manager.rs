@@ -167,8 +167,7 @@ impl AgentManager {
     /// `budget.list` to enumerate caps alongside today's spend.
     pub const fn budgets(
         &self,
-    ) -> &std::collections::HashMap<String, crate::shared::config::BudgetConfig>
-    {
+    ) -> &std::collections::HashMap<String, crate::shared::config::BudgetConfig> {
         &self.config.budgets
     }
 
@@ -476,9 +475,9 @@ impl AgentManager {
             if used >= budget {
                 let reason = format!("token_budget_exceeded: used {used} >= budget {budget}");
                 tracing::warn!(agent_id = %agent_id, %reason, "Refusing dispatch");
-                let _ =
-                    self.db
-                        .update_agent_state(&agent_id, &AgentState::Banished, None);
+                let _ = self
+                    .db
+                    .update_agent_state(&agent_id, &AgentState::Banished, None);
                 return Err(anyhow::anyhow!(reason));
             }
         }

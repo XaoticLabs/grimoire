@@ -500,8 +500,7 @@ async fn handle_summon(
         if policy.provider_deny.contains(&provider_for_check) {
             return rpc_err(req.id, "policy_provider_denied");
         }
-        if !policy.provider_allow.is_empty()
-            && !policy.provider_allow.contains(&provider_for_check)
+        if !policy.provider_allow.is_empty() && !policy.provider_allow.contains(&provider_for_check)
         {
             return rpc_err(req.id, "policy_provider_not_allowed");
         }
@@ -816,11 +815,9 @@ async fn handle_replay(db: &Arc<Database>, req: RpcRequest) -> RpcResponse {
                 },
             )
         }
-        Ok(None) => RpcResponse::error(
-            req.id,
-            -32000,
-            format!("no agent matching '{}'", params.id),
-        ),
+        Ok(None) => {
+            RpcResponse::error(req.id, -32000, format!("no agent matching '{}'", params.id))
+        }
         Err(e) => rpc_fail(req.id, "read event log", e),
     }
 }
@@ -845,25 +842,26 @@ async fn handle_eval_record(db: &Arc<Database>, req: RpcRequest) -> RpcResponse 
     let rationale = params.rationale.clone();
     let score = params.score;
     let outcome = db
-        .run(move |db| -> Result<Option<anyhow::Result<String>>, anyhow::Error> {
-            if db.get_agent(&target_id)?.is_none() {
-                return Ok(None);
-            }
-            Ok(Some(db.insert_eval_result(
-                &target_id,
-                &evaluator_id,
-                score,
-                verdict.as_deref(),
-                rationale.as_deref(),
-            )))
-        })
+        .run(
+            move |db| -> Result<Option<anyhow::Result<String>>, anyhow::Error> {
+                if db.get_agent(&target_id)?.is_none() {
+                    return Ok(None);
+                }
+                Ok(Some(db.insert_eval_result(
+                    &target_id,
+                    &evaluator_id,
+                    score,
+                    verdict.as_deref(),
+                    rationale.as_deref(),
+                )))
+            },
+        )
         .await;
     match outcome {
         Ok(None) => rpc_err(req.id, "target_not_found"),
-        Ok(Some(Ok(id))) => RpcResponse::success_json(
-            req.id,
-            &crate::shared::protocol::EvalRecordResult { id },
-        ),
+        Ok(Some(Ok(id))) => {
+            RpcResponse::success_json(req.id, &crate::shared::protocol::EvalRecordResult { id })
+        }
         Ok(Some(Err(e))) => RpcResponse::error(req.id, -32000, format!("insert_eval_result: {e}")),
         Err(e) => RpcResponse::error(req.id, -32000, format!("db: {e}")),
     }
@@ -888,10 +886,7 @@ async fn handle_eval_list(db: &Arc<Database>, req: RpcRequest) -> RpcResponse {
             created_at: r.created_at,
         })
         .collect();
-    RpcResponse::success_json(
-        req.id,
-        &crate::shared::protocol::EvalListResult { results },
-    )
+    RpcResponse::success_json(req.id, &crate::shared::protocol::EvalListResult { results })
 }
 
 /// Return the provider-extracted final result text for an agent. Mirrors
@@ -945,13 +940,15 @@ async fn handle_budget_list(
     let mut budgets: Vec<crate::shared::protocol::BudgetStatus> = budget_meta
         .into_iter()
         .zip(spends)
-        .map(|((name, b), spent_usd)| crate::shared::protocol::BudgetStatus {
-            name,
-            daily_usd: b.daily_usd,
-            spent_usd,
-            providers: b.providers.clone(),
-            hard: b.hard,
-        })
+        .map(
+            |((name, b), spent_usd)| crate::shared::protocol::BudgetStatus {
+                name,
+                daily_usd: b.daily_usd,
+                spent_usd,
+                providers: b.providers.clone(),
+                hard: b.hard,
+            },
+        )
         .collect();
     budgets.sort_by(|a, b| a.name.cmp(&b.name));
     let result = crate::shared::protocol::BudgetListResult {
@@ -1067,10 +1064,9 @@ pub async fn handle_mail_ask(
 
     let replies = collect_mail_replies(db, posted.events, &posted.request_ids, timeout, 1).await;
     match replies.into_iter().next() {
-        Some(reply) => RpcResponse::success_json(
-            req_id,
-            &crate::shared::protocol::MailAskResult { reply },
-        ),
+        Some(reply) => {
+            RpcResponse::success_json(req_id, &crate::shared::protocol::MailAskResult { reply })
+        }
         None => rpc_err(req_id, "ask_timeout"),
     }
 }
@@ -1391,10 +1387,9 @@ async fn handle_topic_send(
             let mut notify_peers: Vec<String> = Vec::new();
             let mut fanout_err = None;
             if !federated_peers.is_empty() {
-                let pick_id = mails.first().map_or_else(
-                    || mail_id_for_peer_for_db.clone(),
-                    |m| m.id.clone(),
-                );
+                let pick_id = mails
+                    .first()
+                    .map_or_else(|| mail_id_for_peer_for_db.clone(), |m| m.id.clone());
                 let recipient_addr = format!("topic://{topic_for_db}");
                 let mut fanout: Vec<OutboxFanoutRow> = Vec::new();
                 for fed in &federated_peers {
@@ -1496,20 +1491,24 @@ async fn handle_mail_ack(db: &Arc<Database>, bus: &EventBus, req: RpcRequest) ->
     let mail_id = params.mail_id.clone();
     // Lookup + state mutation in one trip; tail handles event emission.
     let outcome: Result<Result<Option<Mail>, anyhow::Error>, anyhow::Error> = db
-        .run(move |db| -> Result<Result<Option<Mail>, anyhow::Error>, anyhow::Error> {
-            let Some(mail) = db.get_mail(&mail_id)? else {
-                return Ok(Ok(None));
-            };
-            match mail.state {
-                MailState::Pending => match db.set_mail_state(&mail.id, MailState::Delivered, None) {
-                    Ok(()) => Ok(Ok(Some(mail))),
-                    Err(e) => Ok(Err(e)),
-                },
-                // Delivered/Failed: return the mail unchanged so the tail can
-                // distinguish via its `state`.
-                _ => Ok(Ok(Some(mail))),
-            }
-        })
+        .run(
+            move |db| -> Result<Result<Option<Mail>, anyhow::Error>, anyhow::Error> {
+                let Some(mail) = db.get_mail(&mail_id)? else {
+                    return Ok(Ok(None));
+                };
+                match mail.state {
+                    MailState::Pending => {
+                        match db.set_mail_state(&mail.id, MailState::Delivered, None) {
+                            Ok(()) => Ok(Ok(Some(mail))),
+                            Err(e) => Ok(Err(e)),
+                        }
+                    }
+                    // Delivered/Failed: return the mail unchanged so the tail can
+                    // distinguish via its `state`.
+                    _ => Ok(Ok(Some(mail))),
+                }
+            },
+        )
         .await;
     let mail = match outcome {
         Ok(Ok(Some(m))) => m,
@@ -1550,18 +1549,25 @@ async fn handle_mail_subscribe(db: &Arc<Database>, req: RpcRequest) -> RpcRespon
     let sub_for_db = sub.clone();
     // Validate-then-insert in one trip.
     let outcome: Result<Result<Option<anyhow::Result<String>>, anyhow::Error>, anyhow::Error> = db
-        .run(move |db| -> Result<Result<Option<anyhow::Result<String>>, anyhow::Error>, anyhow::Error> {
-            match db.get_agent(&agent_id_for_db)? {
-                Some(_) => Ok(Ok(Some(db.insert_subscription(&sub_for_db)))),
-                None => Ok(Ok(None)),
-            }
-        })
+        .run(
+            move |db| -> Result<
+                Result<Option<anyhow::Result<String>>, anyhow::Error>,
+                anyhow::Error,
+            > {
+                match db.get_agent(&agent_id_for_db)? {
+                    Some(_) => Ok(Ok(Some(db.insert_subscription(&sub_for_db)))),
+                    None => Ok(Ok(None)),
+                }
+            },
+        )
         .await;
     match outcome {
         Ok(Ok(None)) => rpc_err(req.id, "unknown_agent"),
         Ok(Ok(Some(Ok(id)))) => RpcResponse::success_json(
             req.id,
-            &MailSubscribeResult { subscription_id: id },
+            &MailSubscribeResult {
+                subscription_id: id,
+            },
         ),
         Ok(Ok(Some(Err(e)))) => {
             RpcResponse::error(req.id, -32000, format!("insert_subscription: {e}"))
@@ -1941,10 +1947,7 @@ async fn handle_ns_get(db: &Arc<Database>, req: RpcRequest) -> RpcResponse {
     let params: crate::shared::protocol::NsGetParams = try_params!(req);
     let namespace = params.namespace;
     let key = params.key;
-    match db
-        .run(move |db| db.namespace_get(&namespace, &key))
-        .await
-    {
+    match db.run(move |db| db.namespace_get(&namespace, &key)).await {
         Ok(Some(e)) => RpcResponse::success_json(
             req.id,
             &crate::shared::protocol::NsGetResult {

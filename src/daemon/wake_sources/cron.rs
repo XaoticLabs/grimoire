@@ -60,11 +60,11 @@ impl CronSource {
 /// Parsed 5-field cron expression.
 #[derive(Debug, Clone)]
 struct Schedule {
-    minute: FieldSet,    // 0..=59
-    hour: FieldSet,      // 0..=23
-    dom: FieldSet,       // 1..=31
-    month: FieldSet,     // 1..=12
-    dow: FieldSet,       // 0..=6 (Sun=0)
+    minute: FieldSet, // 0..=59
+    hour: FieldSet,   // 0..=23
+    dom: FieldSet,    // 1..=31
+    month: FieldSet,  // 1..=12
+    dow: FieldSet,    // 0..=6 (Sun=0)
     dom_restricted: bool,
     dow_restricted: bool,
 }
@@ -136,9 +136,7 @@ impl Schedule {
     }
 
     fn matches(&self, t: DateTime<Utc>) -> bool {
-        self.minute.contains(t.minute())
-            && self.hour.contains(t.hour())
-            && self.date_matches(t)
+        self.minute.contains(t.minute()) && self.hour.contains(t.hour()) && self.date_matches(t)
     }
 
     fn date_matches(&self, t: DateTime<Utc>) -> bool {
@@ -147,9 +145,7 @@ impl Schedule {
         }
         let day_match = self.dom.contains(t.day());
         // chrono weekday: Monday=0..Sunday=6. Cron weekday: Sunday=0..Saturday=6.
-        let weekday_match = self
-            .dow
-            .contains(t.weekday().num_days_from_sunday());
+        let weekday_match = self.dow.contains(t.weekday().num_days_from_sunday());
         // Per POSIX cron, when BOTH dom and dow are restricted, the match is
         // an OR. When only one is restricted, it's the active filter. When
         // neither is restricted, both are "*" and trivially match.
@@ -189,16 +185,10 @@ fn parse_field(spec: &str, min: u32, max: u32) -> Result<FieldSet> {
                 .parse()
                 .map_err(|_| anyhow!("invalid_cron: bad value '{range_spec}'"))?;
             // Bare N with /K means N, N+K, N+2K, ... up to max.
-            if step > 1 {
-                (v, max)
-            } else {
-                (v, v)
-            }
+            if step > 1 { (v, max) } else { (v, v) }
         };
         if lo < min || hi > max || lo > hi {
-            return Err(anyhow!(
-                "invalid_cron: '{spec}' out of range {min}..={max}"
-            ));
+            return Err(anyhow!("invalid_cron: '{spec}' out of range {min}..={max}"));
         }
         let mut v = lo;
         while v <= hi {

@@ -79,7 +79,10 @@ pub fn apply_resource_limits(cmd: Command, sandbox: Option<&SandboxConfig>) -> C
 fn wrap_with_systemd_run(cmd: Command, s: &SandboxConfig) -> Command {
     let std_cmd = cmd.as_std();
     let program = std_cmd.get_program().to_os_string();
-    let args: Vec<_> = std_cmd.get_args().map(std::ffi::OsStr::to_os_string).collect();
+    let args: Vec<_> = std_cmd
+        .get_args()
+        .map(std::ffi::OsStr::to_os_string)
+        .collect();
     let envs: Vec<(std::ffi::OsString, Option<std::ffi::OsString>)> = std_cmd
         .get_envs()
         .map(|(k, v)| (k.to_os_string(), v.map(std::ffi::OsStr::to_os_string)))
@@ -109,10 +112,7 @@ fn wrap_with_systemd_run(cmd: Command, s: &SandboxConfig) -> Command {
         match v {
             Some(val) => {
                 wrapped.env(&k, val);
-                wrapped.arg(format!(
-                    "--setenv={}",
-                    k.to_string_lossy()
-                ));
+                wrapped.arg(format!("--setenv={}", k.to_string_lossy()));
             }
             None => {
                 wrapped.env_remove(&k);

@@ -482,9 +482,9 @@ async fn main() {
                                 )
                                 .await
                             }
-                            None => Err(anyhow::anyhow!(
-                                "--rubric is required unless --list is set"
-                            )),
+                            None => {
+                                Err(anyhow::anyhow!("--rubric is required unless --list is set"))
+                            }
                         }
                     }
                 }

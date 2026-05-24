@@ -227,14 +227,24 @@ fn walk(content: &str) -> Result<Doc> {
                     buf.push_str(&t);
                 } else if in_list_item {
                     item_buf.push_str(&t);
-                } else if matches!(scope, Scope::InTask { metadata_open: false }) {
+                } else if matches!(
+                    scope,
+                    Scope::InTask {
+                        metadata_open: false
+                    }
+                ) {
                     prompt_buf.push_str(&t);
                 }
             }
             Event::SoftBreak | Event::HardBreak => {
                 if in_list_item {
                     item_buf.push(' ');
-                } else if matches!(scope, Scope::InTask { metadata_open: false }) {
+                } else if matches!(
+                    scope,
+                    Scope::InTask {
+                        metadata_open: false
+                    }
+                ) {
                     prompt_buf.push('\n');
                 }
             }

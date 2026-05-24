@@ -229,9 +229,7 @@ pub mod test_helpers {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
             .await
             .expect("test setup: bind ephemeral port");
-        let addr = listener
-            .local_addr()
-            .expect("test setup: query bound addr");
+        let addr = listener.local_addr().expect("test setup: query bound addr");
         let routing: RoutingMap = Arc::new(Mutex::new(std::collections::HashMap::default()));
         let svc = WorkerControlService {
             registry: registry.clone(),

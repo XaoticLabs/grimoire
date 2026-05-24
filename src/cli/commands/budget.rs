@@ -62,10 +62,7 @@ async fn run_show(name: &str) -> Result<()> {
     println!("day:        {}", result.day);
     println!("spent_usd:  {:.4}", b.spent_usd);
     println!("daily_usd:  {:.4}", b.daily_usd);
-    println!(
-        "remaining:  {:.4}",
-        (b.daily_usd - b.spent_usd).max(0.0)
-    );
+    println!("remaining:  {:.4}", (b.daily_usd - b.spent_usd).max(0.0));
     println!("kind:       {cap_kind}");
     println!("providers:  {providers}");
     Ok(())

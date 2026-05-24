@@ -71,8 +71,7 @@ async fn manager_with(config: Config) -> (Arc<Database>, Arc<AgentManager>, Arc<
     let bus = EventBus::new(db.clone());
     let log = Arc::new(ExecutorLog::default());
     let executor: Arc<dyn Executor> = Arc::new(MockExecutor { log: log.clone() });
-    let manager =
-        AgentManager::new_with_executor(db.clone(), bus, config, executor).await;
+    let manager = AgentManager::new_with_executor(db.clone(), bus, config, executor).await;
     (db, manager, log)
 }
 
@@ -104,10 +103,7 @@ async fn enqueue_and_claim(
         )
         .await
         .unwrap();
-    let row = db
-        .peek_next_dispatch()
-        .unwrap()
-        .expect("queue row visible");
+    let row = db.peek_next_dispatch().unwrap().expect("queue row visible");
     assert_eq!(row.id, agent.id);
     assert!(db.claim_for_dispatch(&row.id).unwrap());
     row
@@ -224,7 +220,7 @@ fn token_breakdown_cost_uses_pricing_defaults_for_cache() {
     let pricing = ProviderPricing {
         input_per_mtok: 10.0,
         output_per_mtok: 50.0,
-        cache_read_per_mtok: None,    // defaults to input/10 = 1.0
+        cache_read_per_mtok: None,     // defaults to input/10 = 1.0
         cache_creation_per_mtok: None, // defaults to input*1.25 = 12.5
     };
     let b = TokenBreakdown {
@@ -239,7 +235,10 @@ fn token_breakdown_cost_uses_pricing_defaults_for_cache() {
 
 // --- Policy gate (RPC layer) ---------------------------------------------
 
-async fn rpc_summon(config: Config, params: serde_json::Value) -> grimoire::shared::protocol::RpcResponse {
+async fn rpc_summon(
+    config: Config,
+    params: serde_json::Value,
+) -> grimoire::shared::protocol::RpcResponse {
     let db = Arc::new(Database::open_in_memory().unwrap());
     let bus = EventBus::new(db.clone());
     let manager = AgentManager::new(db.clone(), bus.clone(), config).await;
@@ -319,11 +318,7 @@ async fn policy_denies_cwd_under_blocked_prefix() {
         cwd_deny_prefixes: vec![tmp.clone()],
         ..PolicyConfig::default()
     });
-    let resp = rpc_summon(
-        config,
-        json!({"task": "t", "cwd": tmp.to_str().unwrap()}),
-    )
-    .await;
+    let resp = rpc_summon(config, json!({"task": "t", "cwd": tmp.to_str().unwrap()})).await;
     let err = resp.error.expect("expected denial");
     assert_eq!(err.message, "policy_cwd_denied");
 }
