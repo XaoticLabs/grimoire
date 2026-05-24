@@ -157,6 +157,19 @@ impl AgentManager {
 
     /// Resolve an optional caller-provided cwd to a concrete path, falling back
     /// to config defaults and then process cwd.
+    /// Read-only accessor on the loaded `[policy]` block, used by
+    /// `handle_summon` to gate by provider / cwd allow-deny lists.
+    pub fn policy(&self) -> Option<&crate::shared::config::PolicyConfig> {
+        self.config.policy.as_ref()
+    }
+
+    /// Provider name a summon without `--provider` would default to.
+    /// Exposed for the policy gate so we can match the resolved name, not
+    /// `None`.
+    pub fn default_provider_name(&self) -> &str {
+        self.registry.default_name()
+    }
+
     pub fn resolve_cwd(&self, cwd: Option<PathBuf>) -> PathBuf {
         cwd.or_else(|| self.config.agent.default_cwd.clone())
             .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/")))

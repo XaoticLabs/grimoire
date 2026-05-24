@@ -471,6 +471,39 @@ async fn handle_summon(
     let cwd = workspace_path
         .clone()
         .unwrap_or_else(|| manager.resolve_cwd(params.cwd.clone()));
+
+    // Policy gate. Deny wins on conflict; an empty allow list means "any."
+    // Resolves cwd through `canonicalize` when possible so prefix matches
+    // survive symlinks; falls back to the unresolved path if the cwd
+    // doesn't yet exist (the agent's process will fail later, not here).
+    if let Some(policy) = manager.policy() {
+        let provider_for_check = params
+            .provider
+            .clone()
+            .unwrap_or_else(|| manager.default_provider_name().to_string());
+        if policy.provider_deny.contains(&provider_for_check) {
+            return rpc_err(req.id, "policy_provider_denied");
+        }
+        if !policy.provider_allow.is_empty()
+            && !policy.provider_allow.contains(&provider_for_check)
+        {
+            return rpc_err(req.id, "policy_provider_not_allowed");
+        }
+        let canon_cwd = std::fs::canonicalize(&cwd).unwrap_or_else(|_| cwd.clone());
+        let any_match = |prefixes: &[std::path::PathBuf]| {
+            prefixes.iter().any(|p| {
+                let canon_prefix = std::fs::canonicalize(p).unwrap_or_else(|_| p.clone());
+                canon_cwd.starts_with(&canon_prefix)
+            })
+        };
+        if !policy.cwd_deny_prefixes.is_empty() && any_match(&policy.cwd_deny_prefixes) {
+            return rpc_err(req.id, "policy_cwd_denied");
+        }
+        if !policy.cwd_allow_prefixes.is_empty() && !any_match(&policy.cwd_allow_prefixes) {
+            return rpc_err(req.id, "policy_cwd_not_allowed");
+        }
+    }
+
     let keep_alive = params.keep_alive.unwrap_or(false);
     let result = match manager
         .enqueue_with_options(
