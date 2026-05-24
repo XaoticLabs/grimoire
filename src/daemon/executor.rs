@@ -65,7 +65,7 @@ impl LocalExecutor {
     }
 
     pub fn test_with_command(cmd: &str, args: &[&str]) -> Self {
-        let db = Arc::new(Database::open_in_memory().unwrap());
+        let db = Arc::new(Database::open_in_memory().expect("in-memory DB opens for test"));
         let bus = EventBus::new(db.clone());
         let registry = Arc::new(ProviderRegistry::test_with_true_provider());
         Self {

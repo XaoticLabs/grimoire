@@ -1886,14 +1886,14 @@ impl Database {
         let mut sql = format!("SELECT {MAIL_COLS} FROM mail WHERE recipient_id = ?1");
         let mut args: Vec<Box<dyn rusqlite::ToSql>> = vec![Box::new(recipient_id.to_string())];
         if let Some(s) = after_seq {
-            write!(sql, " AND seq > ?{}", args.len() + 1).unwrap();
+            let _ = write!(sql, " AND seq > ?{}", args.len() + 1);
             args.push(Box::new(s));
         }
         if let Some(st) = state_filter {
-            write!(sql, " AND state = ?{}", args.len() + 1).unwrap();
+            let _ = write!(sql, " AND state = ?{}", args.len() + 1);
             args.push(Box::new(st.as_str().to_string()));
         }
-        write!(sql, " ORDER BY seq ASC LIMIT {limit}").unwrap();
+        let _ = write!(sql, " ORDER BY seq ASC LIMIT {limit}");
 
         let conn = self.conn.lock();
         let mut stmt = conn.prepare(&sql)?;

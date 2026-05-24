@@ -159,13 +159,15 @@ impl AgentManager {
     /// to config defaults and then process cwd.
     /// Read-only accessor on the loaded `[policy]` block, used by
     /// `handle_summon` to gate by provider / cwd allow-deny lists.
-    pub fn policy(&self) -> Option<&crate::shared::config::PolicyConfig> {
+    pub const fn policy(&self) -> Option<&crate::shared::config::PolicyConfig> {
         self.config.policy.as_ref()
     }
 
     /// Read-only accessor on the loaded `[budgets.*]` blocks. Used by
     /// `budget.list` to enumerate caps alongside today's spend.
-    pub fn budgets(&self) -> &std::collections::HashMap<String, crate::shared::config::BudgetConfig>
+    pub const fn budgets(
+        &self,
+    ) -> &std::collections::HashMap<String, crate::shared::config::BudgetConfig>
     {
         &self.config.budgets
     }

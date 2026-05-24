@@ -1,4 +1,6 @@
 #![cfg_attr(not(test), forbid(unsafe_code))]
+// Production code: no `.unwrap()`. Tests freely use it.
+#![cfg_attr(not(test), warn(clippy::unwrap_used))]
 #![warn(missing_docs)]
 //! # Grimoire — agent orchestration daemon
 //!

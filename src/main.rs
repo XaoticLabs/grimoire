@@ -1,4 +1,5 @@
 #![cfg_attr(not(test), forbid(unsafe_code))]
+#![cfg_attr(not(test), warn(clippy::unwrap_used))]
 // `grim` is the CLI entry point — printing diagnostics/usage hints to the
 // user's terminal is its job. Library/daemon code is still gated by the
 // global `print_stdout`/`print_stderr` lints.

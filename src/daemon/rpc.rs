@@ -1050,7 +1050,7 @@ async fn post_request_for_reply(
             wake_eligible: Some(true),
             in_reply_to: None,
         })
-        .unwrap(),
+        .expect("MailSendParams serializes to JSON infallibly"),
         auth_token: req.auth_token.clone(),
     };
     let send_resp = handle_mail_send(db, bus, peer_registry, daemon_id, send_req).await;

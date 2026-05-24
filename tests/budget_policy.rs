@@ -259,9 +259,10 @@ async fn rpc_summon(config: Config, params: serde_json::Value) -> grimoire::shar
 }
 
 fn config_with_policy(p: PolicyConfig) -> Config {
-    let mut c = Config::default();
-    c.policy = Some(p);
-    c
+    Config {
+        policy: Some(p),
+        ..Config::default()
+    }
 }
 
 #[tokio::test]
