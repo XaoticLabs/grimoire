@@ -26,12 +26,12 @@ fn parse_params<T: DeserializeOwned>(req: &RpcRequest) -> Result<T, RpcResponse>
         .map_err(|e| RpcResponse::error(req.id, -32602, format!("Invalid params: {e}")))
 }
 
-/// Standard "Failed to <action>: <err>" RPC error response (code -32000).
+/// Standard `"Failed to {action}: {err}"` RPC error response (code -32000).
 fn rpc_fail(req_id: u64, action: &str, err: impl std::fmt::Display) -> RpcResponse {
     RpcResponse::error(req_id, -32000, format!("Failed to {action}: {err}"))
 }
 
-/// `Ok` → success_json with the value serialized; `Err` → `Failed to <action>: <err>`.
+/// `Ok` → success_json with the value serialized; `Err` → `Failed to {action}: {err}`.
 /// Use `.map(|v| WrapperResult { ... })` upstream when the success type needs
 /// to be a wire wrapper.
 fn try_op<T: serde::Serialize, E: std::fmt::Display>(

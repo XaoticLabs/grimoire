@@ -89,7 +89,7 @@ impl ProviderRegistry {
         }
     }
 
-    /// Per-provider [`SandboxConfig`] resolved from `[providers.<name>.sandbox]`.
+    /// Per-provider [`SandboxConfig`](crate::shared::config::SandboxConfig) resolved from `[providers.<name>.sandbox]`.
     /// Returns `None` when the provider isn't sandbox-configured, leaving the
     /// agent unconfined (current default).
     pub fn sandbox_for(&self, name: &str) -> Option<crate::shared::config::SandboxConfig> {
