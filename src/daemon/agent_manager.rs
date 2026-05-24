@@ -465,6 +465,43 @@ impl AgentManager {
             }
         }
 
+        // Daily USD budget gate. For every budget that includes this
+        // provider, check today's running spend. Hard budgets refuse
+        // dispatch; soft budgets only log. Unlike the token gate above,
+        // this does NOT banish — the next day will let work through, so we
+        // requeue-via-Err and the scheduler retries naturally.
+        let today = chrono::Utc::now().format("%Y-%m-%d").to_string();
+        for (name, b) in &self.config.budgets {
+            let matches = b.providers.is_empty() || b.providers.contains(&provider_name);
+            if !matches {
+                continue;
+            }
+            let spent = self.db.get_budget_spend(name, &today).unwrap_or(0.0);
+            if spent < b.daily_usd {
+                continue;
+            }
+            if b.hard {
+                let reason = format!(
+                    "budget_exhausted: '{name}' spent ${spent:.4} >= ${:.4} today",
+                    b.daily_usd
+                );
+                tracing::warn!(
+                    agent_id = %agent_id,
+                    budget = %name,
+                    %reason,
+                    "Refusing dispatch"
+                );
+                return Err(anyhow::anyhow!(reason));
+            }
+            tracing::warn!(
+                agent_id = %agent_id,
+                budget = %name,
+                spent_usd = spent,
+                daily_cap_usd = b.daily_usd,
+                "Soft budget exceeded; dispatching anyway"
+            );
+        }
+
         let req = ExecuteRequest {
             agent_id: agent_id.clone(),
             task: row.task_text.clone(),
