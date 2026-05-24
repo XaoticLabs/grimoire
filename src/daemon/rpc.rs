@@ -272,6 +272,7 @@ pub async fn handle_rpc(
         "scroll.abandon" => handle_scroll_abandon(scroll_keeper, req).await,
         "daemon.status" => handle_status(manager, daemon_id, req).await,
         "agent.queue.list" => handle_queue_list(db, req).await,
+        "agent.processes" => handle_agent_processes(db, req).await,
         "agent.result" => handle_agent_result(manager, db, req).await,
         "budget.list" => handle_budget_list(manager, db, req).await,
         "eval.record" => handle_eval_record(db, req).await,
@@ -306,6 +307,7 @@ pub async fn handle_rpc(
         "ns.list" => handle_ns_list(db, req).await,
         "ns.delete" => handle_ns_delete(db, peer_registry, daemon_id, req).await,
         "ns.federate" => handle_ns_federate(peer_registry, req).await,
+        "ns.unfederate" => handle_ns_unfederate(peer_registry, req).await,
         "peer.add" => handle_peer_add(peer_registry, req).await,
         "peer.local-cert" => handle_peer_local_cert(peer_registry, req),
         "peer.list" => handle_peer_list(peer_registry, req).await,
@@ -2016,6 +2018,27 @@ async fn handle_ns_delete(
     RpcResponse::success_json(req.id, &crate::shared::protocol::NsDeleteResult::default())
 }
 
+async fn handle_ns_unfederate(
+    peer_registry: &Arc<PeerRegistry>,
+    req: RpcRequest,
+) -> RpcResponse {
+    let params: crate::shared::protocol::NsUnfederateParams = try_params!(req);
+    let peer = try_rpc!(resolve_peer(req.id, peer_registry, &params.peer).await);
+    let peer_id = peer.id.clone();
+    let ns = params.namespace.clone();
+    match peer_registry
+        .db
+        .run(move |db| db.delete_namespace_federation(&peer_id, &ns))
+        .await
+    {
+        Ok(removed) => RpcResponse::success_json(
+            req.id,
+            &crate::shared::protocol::NsUnfederateResult { removed },
+        ),
+        Err(e) => RpcResponse::error(req.id, -32000, format!("ns.unfederate: {e}")),
+    }
+}
+
 async fn handle_ns_federate(peer_registry: &Arc<PeerRegistry>, req: RpcRequest) -> RpcResponse {
     use crate::shared::types::FederationDirection;
     let params: crate::shared::protocol::NsFederateParams = try_params!(req);
@@ -2271,6 +2294,37 @@ async fn handle_topic_unfederate(
             RpcResponse::success_json(req.id, &TopicUnfederateResult { removed })
         }
         Err(e) => RpcResponse::error(req.id, -32000, format!("unfederate: {e}")),
+    }
+}
+
+async fn handle_agent_processes(db: &Arc<Database>, req: RpcRequest) -> RpcResponse {
+    use crate::daemon::process_manager::process_alive;
+    use crate::shared::protocol::{AgentProcess, AgentProcessesResult};
+    let outcome = db.run(|db| db.list_agents(None)).await;
+    match outcome {
+        Ok(agents) => {
+            let processes = agents
+                .into_iter()
+                .filter_map(|a| {
+                    let pid = a.pid?;
+                    let alive = process_alive(pid);
+                    let terminal = matches!(
+                        a.state,
+                        AgentState::Complete | AgentState::Failed | AgentState::Banished
+                    );
+                    Some(AgentProcess {
+                        agent_id: a.id,
+                        state: a.state.to_string(),
+                        task: a.task,
+                        pid,
+                        alive,
+                        stuck: alive && terminal,
+                    })
+                })
+                .collect();
+            RpcResponse::success_json(req.id, &AgentProcessesResult { processes })
+        }
+        Err(e) => RpcResponse::error(req.id, -32000, format!("agent.processes: {e}")),
     }
 }
 

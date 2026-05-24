@@ -1075,6 +1075,8 @@
                 document.getElementById('budget-tbody').innerHTML = `<tr><td colspan="5" class="muted">budget.list failed: ${esc(e.message)}</td></tr>`;
             }
 
+            refreshProcesses();
+
             // /metrics is a Prometheus text exposition — fetch raw and show.
             try {
                 const res = await fetch('/metrics');
@@ -1082,6 +1084,56 @@
                 document.getElementById('metrics-raw').textContent = text;
             } catch (e) {
                 document.getElementById('metrics-raw').textContent = 'fetch /metrics failed: ' + e.message;
+            }
+        }
+
+        async function refreshProcesses() {
+            const tbody = document.getElementById('proc-tbody');
+            if (!tbody) return;
+            try {
+                const r = await grim('agent.processes', {});
+                const procs = r.processes || [];
+                if (!procs.length) {
+                    tbody.innerHTML = `<tr><td colspan="6" class="muted" style="text-align:center;padding:1rem">no tracked processes</td></tr>`;
+                    return;
+                }
+                tbody.innerHTML = procs.map(p => {
+                    // Color encoding:
+                    //   stuck    → red row + STUCK badge (terminal agent, live PID)
+                    //   !alive   → muted (process gone but PID still in DB)
+                    //   alive    → green dot
+                    const dot = p.stuck ? 'var(--red)' : (p.alive ? 'var(--green)' : 'var(--text-dim)');
+                    const procLabel = p.alive
+                        ? (p.stuck ? '<span class="badge" style="background:rgba(248,113,113,0.18);color:var(--red)">STUCK</span>' : 'alive')
+                        : '<span class="muted">dead</span>';
+                    return `
+                        <tr${p.stuck ? ' style="background:rgba(248,113,113,0.04)"' : ''}>
+                            <td>
+                                <span style="display:inline-block;width:0.55rem;height:0.55rem;border-radius:50%;background:${dot};margin-right:0.5rem"></span>
+                                <a href="#/agents/${encodeURIComponent(p.agent_id)}" style="color:var(--accent);text-decoration:none"><code>${esc(p.agent_id.slice(0,12))}</code></a>
+                            </td>
+                            <td><code>${p.pid}</code></td>
+                            <td><span class="badge">${esc(p.state)}</span></td>
+                            <td>${procLabel}</td>
+                            <td><code style="font-family:inherit">${esc((p.task||'').slice(0,60))}</code></td>
+                            <td class="actions">
+                                ${p.alive ? `<button class="btn btn-sm btn-danger" onclick="banishFromProc('${escAttr(p.agent_id)}')">Banish</button>` : ''}
+                            </td>
+                        </tr>`;
+                }).join('');
+            } catch (e) {
+                tbody.innerHTML = `<tr><td colspan="6" class="muted">agent.processes failed: ${esc(e.message)}</td></tr>`;
+            }
+        }
+
+        async function banishFromProc(agent_id) {
+            if (!confirm(`Banish agent ${agent_id}? Sends SIGTERM to its process.`)) return;
+            try {
+                await grim('agent.banish', { id: agent_id });
+                toast('banished', 'ok');
+                refreshProcesses();
+            } catch (e) {
+                toast('agent.banish failed: ' + e.message, 'err');
             }
         }
 
@@ -1098,6 +1150,16 @@
                         </table>
                     </div>
                     <div class="card">
+                        <h3>Processes
+                            <button class="btn btn-sm" style="float:right;background:var(--surface2);color:var(--text)" onclick="refreshProcesses()">Refresh</button>
+                        </h3>
+                        <p class="muted" style="font-size:0.75rem;margin-bottom:0.75rem">Live OS processes backing agents. A "stuck" row is one where the agent reached a terminal state but its process is still alive, so banishing it actually does something.</p>
+                        <table class="grid-table">
+                            <thead><tr><th>Agent</th><th>PID</th><th>Agent state</th><th>Process</th><th>Task</th><th></th></tr></thead>
+                            <tbody id="proc-tbody"></tbody>
+                        </table>
+                    </div>
+                    <div class="card">
                         <h3>Budgets</h3>
                         <table class="grid-table">
                             <thead><tr><th>Name</th><th>Spend</th><th></th><th>Providers</th><th>Mode</th></tr></thead>
@@ -1111,7 +1173,7 @@
                         </details>
                     </div>
                     <p class="muted" style="font-size:0.8rem;color:var(--text-dim);margin-top:1rem">
-                        Equivalent CLI: <code>grim status</code>, <code>grim queue</code>, <code>grim budget</code>; metrics at <code>GET /metrics</code>.
+                        Equivalent CLI: <code>grim status</code>, <code>grim queue</code>, <code>grim ps</code>, <code>grim budget</code>; metrics at <code>GET /metrics</code>.
                     </p>
                 `;
                 el.dataset.rendered = '1';
@@ -1753,6 +1815,25 @@
         // Peers + cross-daemon federations (namespaces, workspaces, topics).
         // RPCs: peer.add/list/remove/ping/local-cert, ns.list, ns.federate,
         // topic.federate/unfederate, workspace.federate/unfederate.
+        // A peer is "stale" if we haven't heard from it in over a minute —
+        // matches the gossip cadence in src/daemon/peer_registry.rs.
+        const PEER_STALE_SECS = 60;
+
+        function peerPresence(p) {
+            const now = Math.floor(Date.now() / 1000);
+            const last = p.last_seen;
+            if (last == null) return { dot: 'var(--text-dim)', label: 'never seen' };
+            const age = now - last;
+            if (age > PEER_STALE_SECS) return { dot: 'var(--red)', label: `stale · last seen ${formatAge(age)} ago` };
+            return { dot: 'var(--green)', label: `live · ${formatAge(age)} ago` };
+        }
+
+        function outboxBadge(depth) {
+            if (!depth) return '<span class="muted">0</span>';
+            const color = depth > 1000 ? 'var(--red)' : depth > 100 ? 'var(--yellow)' : 'var(--text)';
+            return `<span style="color:${color}">${depth}</span>`;
+        }
+
         async function refreshPeers() {
             const tbody = document.getElementById('peer-tbody');
             if (!tbody) return;
@@ -1760,17 +1841,25 @@
                 const r = await grim('peer.list', {});
                 const peers = r.peers || [];
                 tbody.innerHTML = peers.length
-                    ? peers.map(p => `
+                    ? peers.map(p => {
+                        const pres = peerPresence(p);
+                        const handle = p.name || p.peer_id;
+                        return `
                         <tr>
-                            <td><code>${esc(p.id || p.peer_id || '')}</code></td>
-                            <td><code>${esc(p.endpoint || p.address || '')}</code></td>
-                            <td>${p.fingerprint ? '<code style="font-size:0.7rem">' + esc((p.fingerprint||'').slice(0,24)) + '…</code>' : '<span class="muted">—</span>'}</td>
-                            <td><span class="badge">${esc(p.state || p.status || 'unknown')}</span></td>
-                            <td class="actions">
-                                <button class="btn btn-sm" onclick="pingPeer('${escAttr(p.id || p.peer_id)}')">Ping</button>
-                                <button class="btn btn-sm btn-danger" onclick="removePeer('${escAttr(p.id || p.peer_id)}')">Remove</button>
+                            <td>
+                                <span style="display:inline-block;width:0.55rem;height:0.55rem;border-radius:50%;background:${pres.dot};margin-right:0.5rem"></span>
+                                <code>${esc(p.name || '')}</code>
+                                <div class="muted" style="font-size:0.7rem;margin-top:0.15rem">${esc(p.peer_id || '')}</div>
                             </td>
-                        </tr>`).join('')
+                            <td><code style="font-family:inherit">${esc(p.url || '')}</code><div class="muted" style="font-size:0.7rem">daemon ${esc(p.daemon_id || '—')}</div></td>
+                            <td><span class="badge">${esc(p.state || '')}</span><div class="muted" style="font-size:0.7rem">${esc(pres.label)}</div></td>
+                            <td>${outboxBadge(p.outbox_depth || 0)}</td>
+                            <td class="actions">
+                                <button class="btn btn-sm" onclick="pingPeer('${escAttr(handle)}')">Ping</button>
+                                <button class="btn btn-sm btn-danger" onclick="removePeer('${escAttr(handle)}')">Remove</button>
+                            </td>
+                        </tr>`;
+                    }).join('')
                     : `<tr><td colspan="5" class="muted" style="text-align:center;padding:2rem">no peers configured</td></tr>`;
             } catch (e) {
                 tbody.innerHTML = `<tr><td colspan="5" class="muted">peer.list failed: ${esc(e.message)}</td></tr>`;
@@ -1901,7 +1990,7 @@
                     <div class="card">
                         <h3>Peers</h3>
                         <table class="grid-table">
-                            <thead><tr><th>ID</th><th>Endpoint</th><th>Fingerprint</th><th>State</th><th></th></tr></thead>
+                            <thead><tr><th>Peer</th><th>Endpoint</th><th>State / presence</th><th>Outbox</th><th></th></tr></thead>
                             <tbody id="peer-tbody"></tbody>
                         </table>
                     </div>
@@ -2022,8 +2111,9 @@
         }
 
         async function removeNsFed(namespace, peer) {
-            // ns has no dedicated unfederate RPC today; surface that honestly.
-            toast('ns.unfederate not implemented yet — remove via direct DB or peer.remove', 'err');
+            if (!confirm(`Unfederate namespace ${namespace} from peer ${peer}?`)) return;
+            try { await grim('ns.unfederate', { namespace, peer }); toast('removed', 'ok'); refreshFederations(); }
+            catch (e) { toast('ns.unfederate failed: ' + e.message, 'err'); }
         }
 
         async function removeWsFed(workspace, peer) {
@@ -2633,7 +2723,10 @@
         });
         onSse('state_change', () => {
             if (pageVisible('agents') && !currentAgentId) refreshSoon('agents', fetchAgents);
-            if (pageVisible('health')) refreshSoon('health', refreshHealth, 500);
+            if (pageVisible('health')) {
+                refreshSoon('health', refreshHealth, 500);
+                refreshSoon('procs', refreshProcesses, 500);
+            }
         });
         onSse('agent_created', () => {
             if (pageVisible('agents') && !currentAgentId) refreshSoon('agents', fetchAgents);
@@ -2691,6 +2784,9 @@
 
         route();
         setInterval(() => { if (parseHash().name === 'agents' && !currentAgentId) fetchAgents(); }, 10000);
+        // Re-render peers every 15s so presence dots reflect staleness even
+        // without an event (last_seen is time-relative, not push-driven).
+        setInterval(() => { if (pageVisible('federation')) refreshPeers(); }, 15000);
         connectSSE();
         const _si = document.getElementById('summon-input');
         if (_si) _si.focus();

@@ -7,7 +7,9 @@ use clap::Subcommand;
 use colored::Colorize;
 
 use crate::cli::client::DaemonClient;
-use crate::shared::protocol::{NsFederationsResult, NsGetResult, NsListResult, NsPutResult};
+use crate::shared::protocol::{
+    NsFederationsResult, NsGetResult, NsListResult, NsPutResult, NsUnfederateResult,
+};
 
 #[derive(Debug, Subcommand)]
 pub enum NsCommand {
@@ -35,6 +37,9 @@ pub enum NsCommand {
         #[arg(long, default_value = "both")]
         direction: String,
     },
+    /// Drop a namespace federation row for a peer. Run on each side
+    /// independently. Does not touch local data, only stops replication.
+    Unfederate { namespace: String, peer: String },
     /// List every active namespace federation on this daemon.
     Federations,
 }
@@ -54,8 +59,30 @@ pub async fn run(cmd: NsCommand) -> Result<()> {
             peer,
             direction,
         } => run_federate(&namespace, &peer, &direction).await,
+        NsCommand::Unfederate { namespace, peer } => run_unfederate(&namespace, &peer).await,
         NsCommand::Federations => run_federations().await,
     }
+}
+
+async fn run_unfederate(namespace: &str, peer: &str) -> Result<()> {
+    let mut client = DaemonClient::connect().await?;
+    let resp = client
+        .call(
+            "ns.unfederate",
+            serde_json::json!({ "namespace": namespace, "peer": peer }),
+        )
+        .await?;
+    if let Some(err) = resp.error {
+        eprintln!("{} {}", "Error:".red(), err.message);
+        std::process::exit(1);
+    }
+    let r: NsUnfederateResult = serde_json::from_value(resp.result.unwrap_or_default())?;
+    if r.removed {
+        println!("Unfederated namespace {namespace} from peer {peer}");
+    } else {
+        println!("No federation row found for {namespace}/{peer}");
+    }
+    Ok(())
 }
 
 async fn run_federations() -> Result<()> {

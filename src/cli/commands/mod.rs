@@ -14,6 +14,7 @@ pub mod notify;
 pub mod ns;
 pub mod pact;
 pub mod peer;
+pub mod ps;
 pub mod queue;
 pub mod scroll;
 pub mod scry;

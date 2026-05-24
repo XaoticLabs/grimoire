@@ -664,6 +664,39 @@ pub struct NsFederateParams {
 
 pub type NsFederateResult = EmptyResult;
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NsUnfederateParams {
+    pub namespace: String,
+    pub peer: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NsUnfederateResult {
+    pub removed: bool,
+}
+
+// --- Process inventory ---
+// Per-agent OS-process visibility for the dashboard's "Processes" panel.
+// `alive` is a kill(pid, 0) check at request time; a "stuck" row is one
+// where the agent is in a terminal state but the OS process is still alive.
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentProcess {
+    pub agent_id: AgentId,
+    pub state: String,
+    pub task: Option<String>,
+    pub pid: u32,
+    pub alive: bool,
+    /// `true` iff the agent's state is terminal (Complete/Failed/Banished)
+    /// but `alive` is also true — i.e. the OS process outlived its agent.
+    pub stuck: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentProcessesResult {
+    pub processes: Vec<AgentProcess>,
+}
+
 // --- Federation listing ---
 // One row per (peer, scope) federation. `created_at` is unix seconds for the
 // topic/ns shape and ISO-8601 for workspaces (matches the underlying types).

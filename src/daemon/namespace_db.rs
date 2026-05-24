@@ -428,6 +428,16 @@ impl Database {
         Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
     }
 
+    /// Drop a namespace federation row. Mirrors `delete_topic_federation`.
+    pub fn delete_namespace_federation(&self, peer_id: &str, namespace: &str) -> Result<bool> {
+        let conn = self.workspace_conn_lock();
+        let n = conn.execute(
+            "DELETE FROM namespace_federations WHERE peer_id = ?1 AND namespace = ?2",
+            params![peer_id, namespace],
+        )?;
+        Ok(n > 0)
+    }
+
     /// List every namespace_federations row across all namespaces. Powers
     /// the "active federations" view in CLI/web.
     pub fn list_namespace_federations(

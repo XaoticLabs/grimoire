@@ -234,3 +234,13 @@ pub fn kill_process(pid: u32) -> Result<()> {
     kill(nix_pid, Signal::SIGTERM)?;
     Ok(())
 }
+
+/// Non-destructive liveness check: signal 0 returns Ok iff the pid exists
+/// and we have permission to send to it. Used by the dashboard's
+/// "Processes" panel to flag agents whose recorded PID has gone away.
+#[must_use]
+pub fn process_alive(pid: u32) -> bool {
+    use nix::sys::signal::kill;
+    use nix::unistd::Pid;
+    kill(Pid::from_raw(pid as i32), None).is_ok()
+}

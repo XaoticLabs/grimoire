@@ -261,6 +261,14 @@ enum Commands {
         json: bool,
     },
 
+    /// List OS processes backing live agents. Flags "stuck" rows where the
+    /// agent is terminal but its process is still alive.
+    Ps {
+        /// Emit raw JSON instead of human text
+        #[arg(long)]
+        json: bool,
+    },
+
     /// View or edit configuration
     Tome {
         /// Config key (e.g. agent.default_model)
@@ -527,6 +535,7 @@ async fn main() {
                 } => cli::commands::scroll::run(id, activate, abandon).await,
                 Commands::Status { json } => cli::commands::status::run(json).await,
                 Commands::Queue { json } => cli::commands::queue::run(json).await,
+                Commands::Ps { json } => cli::commands::ps::run(json).await,
                 Commands::Tome { key, value } => cli::commands::tome::run(key, value).await,
                 Commands::Scry => cli::commands::scry::run().await,
                 Commands::Budget { cmd } => cli::commands::budget::run(cmd).await,
