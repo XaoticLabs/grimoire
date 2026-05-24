@@ -1,6 +1,14 @@
-use anyhow::{Result, anyhow};
+//! Markdown spec → ScrollSpec parser.
+//!
+//! Walks `pulldown-cmark` events rather than line-prefix matching so the
+//! grammar can grow without re-implementing markdown semantics (indented
+//! list items, fenced code blocks ignored inside prompts, etc.). The
+//! on-disk format is unchanged from the legacy parser.
 
-/// Parsed spec before insertion into DB
+use anyhow::{Result, anyhow};
+use pulldown_cmark::{Event, HeadingLevel, Parser, Tag, TagEnd};
+
+/// Parsed spec before insertion into DB.
 #[derive(Debug)]
 pub struct ScrollSpec {
     pub name: String,
@@ -18,95 +26,52 @@ pub struct TaskSpec {
     pub model: Option<String>,
     pub cwd: Option<String>,
     pub file_patterns: Vec<String>,
-    pub depends_on: Vec<String>, // Names, resolved to IDs during insertion
+    pub depends_on: Vec<String>,
 }
 
-/// Parse a markdown spec file into a ScrollSpec.
+/// Parse a markdown spec file into a [`ScrollSpec`].
 ///
 /// Expected format:
 /// ```markdown
 /// # Scroll: My Project
+/// - workspace: my-workspace
 ///
 /// ## Task: Task Name
 /// - files: src/foo.rs, src/bar.rs
-/// - depends: Other Task, Another Task
+/// - depends: Other Task
 /// - provider: claude
-/// - model: sonnet
 ///
 /// The actual task prompt goes here...
 /// ```
 pub fn parse_scroll(content: &str) -> Result<ScrollSpec> {
-    let lines: Vec<&str> = content.lines().collect();
+    let doc = walk(content)?;
 
-    // Extract scroll name from first # heading
-    let name = lines
-        .iter()
-        .find(|l| l.starts_with("# "))
-        .map(|l| {
-            l.trim_start_matches("# ")
-                .trim_start_matches("Scroll:")
-                .trim_start_matches("Scroll: ")
-                .trim()
-                .to_string()
-        })
+    let name = doc
+        .scroll_name
         .ok_or_else(|| anyhow!("Spec must start with a '# Scroll: <name>' heading"))?;
-
     if name.is_empty() {
         return Err(anyhow!("Scroll name cannot be empty"));
     }
 
-    // Split into task sections on ## Task: headings
-    let mut tasks = Vec::new();
-    let mut current_task: Option<(String, Vec<&str>)> = None;
-    let mut workspace: Option<String> = None;
-    let mut workspace_repo: Option<String> = None;
-    let mut workspace_branch: Option<String> = None;
-
-    for line in &lines {
-        // Top-level workspace directives (between scroll heading and first task).
-        if current_task.is_none() {
-            let trimmed = line.trim();
-            if let Some(v) = trimmed.strip_prefix("- workspace_repo:") {
-                workspace_repo = Some(v.trim().to_string());
-                continue;
-            }
-            if let Some(v) = trimmed.strip_prefix("- workspace_branch:") {
-                workspace_branch = Some(v.trim().to_string());
-                continue;
-            }
-            if let Some(v) = trimmed.strip_prefix("- workspace:") {
-                workspace = Some(v.trim().to_string());
-                continue;
-            }
-        }
-        if let Some(task_name) = line
-            .strip_prefix("## Task:")
-            .or_else(|| line.strip_prefix("## Task: "))
-        {
-            // Save previous task
-            if let Some((name, body)) = current_task.take() {
-                tasks.push(parse_task_section(&name, &body)?);
-            }
-            current_task = Some((task_name.trim().to_string(), Vec::new()));
-        } else if let Some((_, ref mut body)) = current_task {
-            body.push(line);
-        }
-    }
-
-    // Save last task
-    if let Some((name, body)) = current_task {
-        tasks.push(parse_task_section(&name, &body)?);
-    }
-
-    if tasks.is_empty() {
+    if doc.tasks.is_empty() {
         return Err(anyhow!(
             "Scroll must contain at least one '## Task:' section"
         ));
     }
 
-    // Validate dependency references
-    let task_names: Vec<&str> = tasks.iter().map(|r| r.name.as_str()).collect();
-    for task in &tasks {
+    // Reject tasks with no prompt body.
+    for task in &doc.tasks {
+        if task.prompt.is_empty() {
+            return Err(anyhow!(
+                "Task '{}' has no task text. Add task description after the metadata lines.",
+                task.name
+            ));
+        }
+    }
+
+    // Validate dependency references.
+    let task_names: Vec<&str> = doc.tasks.iter().map(|t| t.name.as_str()).collect();
+    for task in &doc.tasks {
         for dep in &task.depends_on {
             if !task_names.contains(&dep.as_str()) {
                 return Err(anyhow!(
@@ -117,9 +82,6 @@ pub fn parse_scroll(content: &str) -> Result<ScrollSpec> {
                 ));
             }
         }
-    }
-
-    for task in &tasks {
         if task.depends_on.contains(&task.name) {
             return Err(anyhow!("Task '{}' cannot depend on itself", task.name));
         }
@@ -127,87 +89,203 @@ pub fn parse_scroll(content: &str) -> Result<ScrollSpec> {
 
     Ok(ScrollSpec {
         name,
-        tasks,
-        workspace,
-        workspace_repo,
-        workspace_branch,
+        tasks: doc.tasks,
+        workspace: doc.workspace,
+        workspace_repo: doc.workspace_repo,
+        workspace_branch: doc.workspace_branch,
     })
 }
 
-fn parse_task_section(name: &str, body: &[&str]) -> Result<TaskSpec> {
-    let mut provider = None;
-    let mut model = None;
-    let mut cwd = None;
-    let mut file_patterns = Vec::new();
-    let mut depends_on = Vec::new();
-    let mut task_lines = Vec::new();
-    let mut in_metadata = true;
+/// Working state while consuming markdown events.
+#[derive(Default)]
+struct Doc {
+    scroll_name: Option<String>,
+    workspace: Option<String>,
+    workspace_repo: Option<String>,
+    workspace_branch: Option<String>,
+    tasks: Vec<TaskSpec>,
+}
 
-    for line in body {
-        let trimmed = line.trim();
-        if trimmed.is_empty() && in_metadata {
-            continue;
-        }
+#[derive(PartialEq, Eq)]
+enum Scope {
+    /// Before any `## Task:` heading. List items are workspace directives.
+    PreTask,
+    /// Inside a `## Task:` section. List items are task metadata until
+    /// the first paragraph; then everything is prompt body.
+    InTask { metadata_open: bool },
+}
 
-        if in_metadata {
-            if let Some(val) = trimmed.strip_prefix("- files:") {
-                file_patterns = val
-                    .split(',')
-                    .map(|s| s.trim().to_string())
-                    .filter(|s| !s.is_empty())
-                    .collect();
-                continue;
+fn walk(content: &str) -> Result<Doc> {
+    let parser = Parser::new(content);
+    let mut doc = Doc::default();
+    let mut scope = Scope::PreTask;
+    let mut current: Option<TaskSpec> = None;
+    let mut prompt_buf = String::new();
+
+    // Heading state.
+    let mut h1_buf: Option<String> = None;
+    let mut h2_buf: Option<String> = None;
+
+    // List item text accumulator.
+    let mut in_list_item = false;
+    let mut item_buf = String::new();
+
+    for ev in parser {
+        match ev {
+            Event::Start(Tag::Heading {
+                level: HeadingLevel::H1,
+                ..
+            }) => {
+                h1_buf = Some(String::new());
             }
-            if let Some(val) = trimmed.strip_prefix("- depends:") {
-                let val = val.trim();
-                if !val.is_empty() && val != "(none)" && val != "none" {
-                    depends_on = val
-                        .split(',')
-                        .map(|s| s.trim().to_string())
-                        .filter(|s| !s.is_empty())
-                        .collect();
+            Event::End(TagEnd::Heading(HeadingLevel::H1)) => {
+                if let Some(raw) = h1_buf.take()
+                    && doc.scroll_name.is_none()
+                {
+                    let cleaned = raw
+                        .trim()
+                        .trim_start_matches("Scroll:")
+                        .trim_start_matches("Scroll: ")
+                        .trim();
+                    doc.scroll_name = Some(cleaned.to_string());
                 }
-                continue;
             }
-            if let Some(val) = trimmed.strip_prefix("- provider:") {
-                provider = Some(val.trim().to_string());
-                continue;
+            Event::Start(Tag::Heading {
+                level: HeadingLevel::H2,
+                ..
+            }) => {
+                // Close any in-flight task.
+                finalize_task(&mut current, &mut prompt_buf, &mut doc);
+                scope = Scope::PreTask; // until we confirm this is a Task: heading
+                h2_buf = Some(String::new());
             }
-            if let Some(val) = trimmed.strip_prefix("- model:") {
-                model = Some(val.trim().to_string());
-                continue;
+            Event::End(TagEnd::Heading(HeadingLevel::H2)) => {
+                if let Some(raw) = h2_buf.take() {
+                    let trimmed = raw.trim();
+                    if let Some(name) = trimmed
+                        .strip_prefix("Task:")
+                        .map(str::trim)
+                        .filter(|s| !s.is_empty())
+                    {
+                        current = Some(TaskSpec {
+                            name: name.to_string(),
+                            prompt: String::new(),
+                            provider: None,
+                            model: None,
+                            cwd: None,
+                            file_patterns: Vec::new(),
+                            depends_on: Vec::new(),
+                        });
+                        scope = Scope::InTask {
+                            metadata_open: true,
+                        };
+                    }
+                }
             }
-            if let Some(val) = trimmed.strip_prefix("- cwd:") {
-                cwd = Some(val.trim().to_string());
-                continue;
-            }
-            // If we hit a non-metadata line, switch to task collection
-            if !trimmed.starts_with("- ") {
-                in_metadata = false;
-            }
-        }
 
-        if !in_metadata {
-            task_lines.push(*line);
+            Event::Start(Tag::Item) => {
+                in_list_item = true;
+                item_buf.clear();
+            }
+            Event::End(TagEnd::Item) => {
+                in_list_item = false;
+                let line = item_buf.trim().to_string();
+                match &mut scope {
+                    Scope::PreTask => apply_workspace_directive(&line, &mut doc),
+                    Scope::InTask { metadata_open } if *metadata_open => {
+                        if let Some(task) = current.as_mut() {
+                            apply_task_metadata(&line, task);
+                        }
+                    }
+                    Scope::InTask { .. } => {
+                        // List items after prompt text begins are part of the prompt.
+                        if !prompt_buf.is_empty() {
+                            prompt_buf.push('\n');
+                        }
+                        prompt_buf.push_str("- ");
+                        prompt_buf.push_str(&line);
+                    }
+                }
+            }
+
+            Event::Start(Tag::Paragraph) => {
+                if let Scope::InTask {
+                    ref mut metadata_open,
+                } = scope
+                {
+                    *metadata_open = false;
+                    if !prompt_buf.is_empty() {
+                        prompt_buf.push_str("\n\n");
+                    }
+                }
+            }
+
+            Event::Text(t) | Event::Code(t) => {
+                if let Some(buf) = h1_buf.as_mut() {
+                    buf.push_str(&t);
+                } else if let Some(buf) = h2_buf.as_mut() {
+                    buf.push_str(&t);
+                } else if in_list_item {
+                    item_buf.push_str(&t);
+                } else if matches!(scope, Scope::InTask { metadata_open: false }) {
+                    prompt_buf.push_str(&t);
+                }
+            }
+            Event::SoftBreak | Event::HardBreak => {
+                if in_list_item {
+                    item_buf.push(' ');
+                } else if matches!(scope, Scope::InTask { metadata_open: false }) {
+                    prompt_buf.push('\n');
+                }
+            }
+            _ => {}
         }
     }
 
-    let prompt = task_lines.join("\n").trim().to_string();
-    if prompt.is_empty() {
-        return Err(anyhow!(
-            "Task '{name}' has no task text. Add task description after the metadata lines."
-        ));
-    }
+    finalize_task(&mut current, &mut prompt_buf, &mut doc);
+    Ok(doc)
+}
 
-    Ok(TaskSpec {
-        name: name.to_string(),
-        prompt,
-        provider,
-        model,
-        cwd,
-        file_patterns,
-        depends_on,
-    })
+fn finalize_task(current: &mut Option<TaskSpec>, prompt_buf: &mut String, doc: &mut Doc) {
+    if let Some(mut task) = current.take() {
+        task.prompt = std::mem::take(prompt_buf).trim().to_string();
+        doc.tasks.push(task);
+    }
+    prompt_buf.clear();
+}
+
+fn apply_workspace_directive(line: &str, doc: &mut Doc) {
+    if let Some(v) = line.strip_prefix("workspace_repo:") {
+        doc.workspace_repo = Some(v.trim().to_string());
+    } else if let Some(v) = line.strip_prefix("workspace_branch:") {
+        doc.workspace_branch = Some(v.trim().to_string());
+    } else if let Some(v) = line.strip_prefix("workspace:") {
+        doc.workspace = Some(v.trim().to_string());
+    }
+}
+
+fn apply_task_metadata(line: &str, task: &mut TaskSpec) {
+    if let Some(v) = line.strip_prefix("files:") {
+        task.file_patterns = split_csv(v);
+    } else if let Some(v) = line.strip_prefix("depends:") {
+        let v = v.trim();
+        if !v.is_empty() && v != "(none)" && v != "none" {
+            task.depends_on = split_csv(v);
+        }
+    } else if let Some(v) = line.strip_prefix("provider:") {
+        task.provider = Some(v.trim().to_string());
+    } else if let Some(v) = line.strip_prefix("model:") {
+        task.model = Some(v.trim().to_string());
+    } else if let Some(v) = line.strip_prefix("cwd:") {
+        task.cwd = Some(v.trim().to_string());
+    }
+}
+
+fn split_csv(s: &str) -> Vec<String> {
+    s.split(',')
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect()
 }
 
 #[cfg(test)]
@@ -266,7 +344,6 @@ Build the frontend login page.
 
 Do something.
 ";
-
         let result = parse_scroll(content);
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("doesn't exist"));
@@ -275,8 +352,7 @@ Do something.
     #[test]
     fn test_empty_scroll() {
         let content = "# Scroll: Empty\n";
-        let result = parse_scroll(content);
-        assert!(result.is_err());
+        assert!(parse_scroll(content).is_err());
     }
 
     #[test]
@@ -358,7 +434,6 @@ Do A.
 
 Do A again.
 ";
-        // Duplicate names are allowed by the parser (distinct task IDs assigned later)
         let spec = parse_scroll(content).unwrap();
         assert_eq!(spec.tasks.len(), 2);
     }
@@ -381,5 +456,22 @@ Do A again.
         let result = parse_scroll(content);
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("no task text"));
+    }
+
+    #[test]
+    fn test_workspace_directives() {
+        let content = r"# Scroll: Workspaced
+- workspace: my-ws
+- workspace_repo: github.com/x/y
+- workspace_branch: main
+
+## Task: A
+
+Do A.
+";
+        let spec = parse_scroll(content).unwrap();
+        assert_eq!(spec.workspace.as_deref(), Some("my-ws"));
+        assert_eq!(spec.workspace_repo.as_deref(), Some("github.com/x/y"));
+        assert_eq!(spec.workspace_branch.as_deref(), Some("main"));
     }
 }
