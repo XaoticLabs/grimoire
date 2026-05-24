@@ -110,6 +110,11 @@ pub struct SummonParams {
     /// Workspace name to summon into. Mutually exclusive with `cwd`.
     #[serde(default)]
     pub workspace: Option<String>,
+    /// Supervision-tree parent. When set, banishing the parent cascades:
+    /// every live child of `parent_agent_id` is also banished. Lets a
+    /// coordinator agent spawn helpers and know they'll all die together.
+    #[serde(default)]
+    pub parent_agent_id: Option<AgentId>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -725,6 +725,26 @@ impl AgentManager {
             if let Err(e) = self.db.clear_supervision(id) {
                 tracing::warn!(agent_id = %id, error = %e, "clear_supervision on banish failed");
             }
+            // Cascade: supervision-tree children die with their parent.
+            // Recursive: each child's `banish` likewise cascades to its own
+            // children, so the whole subtree collapses in one call.
+            match self.db.list_live_children(id) {
+                Ok(children) => {
+                    for child in children {
+                        if let Err(e) = Box::pin(self.banish(&child)).await {
+                            tracing::warn!(
+                                parent = %id,
+                                child = %child,
+                                error = %e,
+                                "cascade banish of child failed"
+                            );
+                        }
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!(parent = %id, error = %e, "list_live_children failed");
+                }
+            }
         }
         Ok(result)
     }

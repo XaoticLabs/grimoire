@@ -496,6 +496,31 @@ async fn handle_summon(
         tracing::warn!(workspace = %name, agent = %result.id, error = %e, "workspace assign after summon failed");
     }
 
+    // Wire the supervision-tree edge so a subsequent parent banish cascades.
+    if let Some(parent) = &params.parent_agent_id {
+        if parent == &result.id {
+            let _ = manager.banish(&result.id).await;
+            return rpc_err(req.id, "self_parent");
+        }
+        match db.get_agent(parent) {
+            Ok(Some(_)) => {
+                if let Err(e) = db.set_agent_parent(&result.id, Some(parent)) {
+                    tracing::warn!(
+                        agent = %result.id,
+                        parent = %parent,
+                        error = %e,
+                        "set_agent_parent failed"
+                    );
+                }
+            }
+            Ok(None) => {
+                let _ = manager.banish(&result.id).await;
+                return rpc_err(req.id, "parent_not_found");
+            }
+            Err(e) => return rpc_fail(req.id, "summon", e),
+        }
+    }
+
     // Self-escalation check, post-id-generation, before any further state.
     if let Some(addr) = &params.escalate_to {
         let self_addr = format!("agent://{}", result.id);

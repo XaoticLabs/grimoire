@@ -32,6 +32,7 @@ pub async fn run(
     max_restarts: Option<String>,
     escalate_to: Option<String>,
     workspace: Option<String>,
+    parent: Option<String>,
 ) -> Result<()> {
     let mut client = DaemonClient::connect().await?;
 
@@ -43,6 +44,10 @@ pub async fn run(
         None => (None, None),
     };
 
+    let parent_id = match parent {
+        Some(p) => Some(crate::cli::client::resolve_agent_id(&p).await?),
+        None => None,
+    };
     let params = serde_json::json!({
         "task": task,
         "name": name,
@@ -54,6 +59,7 @@ pub async fn run(
         "restart_window_secs": window_t,
         "escalate_to": escalate_to,
         "workspace": workspace,
+        "parent_agent_id": parent_id,
     });
 
     let response = client.call("agent.summon", params).await?;

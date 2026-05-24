@@ -68,6 +68,11 @@ enum Commands {
         /// Workspace name to summon into. Mutually exclusive with `--cwd`.
         #[arg(long)]
         workspace: Option<String>,
+
+        /// Supervision-tree parent (agent id or prefix). When set, banishing
+        /// the parent cascades to this agent and any of its descendants.
+        #[arg(long)]
+        parent: Option<String>,
     },
 
     /// List all agents in the circle
@@ -399,6 +404,7 @@ async fn main() {
                     max_restarts,
                     escalate_to,
                     workspace,
+                    parent,
                 } => {
                     cli::commands::summon::run(
                         &task,
@@ -410,6 +416,7 @@ async fn main() {
                         max_restarts,
                         escalate_to,
                         workspace,
+                        parent,
                     )
                     .await
                 }

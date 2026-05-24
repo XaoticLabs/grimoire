@@ -350,6 +350,13 @@ impl Database {
             "tokens_used",
             "tokens_used INTEGER NOT NULL DEFAULT 0",
         )?;
+        // Supervision tree: when set, this agent dies with its parent.
+        // Kept as a DB-only column (out of `Agent`) to minimise blast radius;
+        // looked up via `db.list_children` only when a parent banishes.
+        add_column_if_missing(&conn, "agents", "parent_agent_id", "parent_agent_id TEXT")?;
+        conn.execute_batch(
+            "CREATE INDEX IF NOT EXISTS idx_agents_parent ON agents(parent_agent_id);",
+        )?;
 
         conn.execute_batch(
             "
@@ -693,6 +700,29 @@ impl Database {
             |r| r.get(0),
         )?;
         Ok(total.max(0) as u64)
+    }
+
+    /// Set or clear the parent of an agent. Used by `agent.summon --parent`
+    /// to wire the supervision tree at creation time.
+    pub fn set_agent_parent(&self, id: &str, parent_id: Option<&str>) -> Result<()> {
+        self.update_agent_field(id, "parent_agent_id", &parent_id)
+    }
+
+    /// Children of `parent_id` whose state is still in-flight (Queued,
+    /// Summoning, Active, Dormant). Completed / Banished / Failed children
+    /// are excluded — there's nothing to cascade onto.
+    pub fn list_live_children(&self, parent_id: &str) -> Result<Vec<String>> {
+        let conn = self.conn.lock();
+        let mut stmt = conn.prepare(
+            "SELECT id FROM agents \
+             WHERE parent_agent_id = ?1 \
+               AND state IN ('Queued','Summoning','Active','Dormant')",
+        )?;
+        let ids = stmt
+            .query_map(params![parent_id], |r| r.get::<_, String>(0))?
+            .filter_map(Result::ok)
+            .collect();
+        Ok(ids)
     }
 
     pub fn get_agent_tokens(&self, id: &str) -> Result<u64> {
