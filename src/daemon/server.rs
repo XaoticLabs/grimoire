@@ -535,7 +535,7 @@ async fn http_inscribe_scroll(
         .and_then(serde_json::Value::as_u64)
         .map(|v| v as u32);
 
-    let content = match std::fs::read_to_string(&spec_path) {
+    let content = match tokio::fs::read_to_string(&spec_path).await {
         Ok(c) => c,
         Err(e) => {
             return axum::Json(serde_json::json!({"error": format!("Failed to read spec: {}", e)}));

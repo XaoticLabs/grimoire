@@ -257,7 +257,7 @@ pub async fn handle_rpc(
         "agent.invoke" => handle_invoke(manager, req).await,
         "pact.create" => handle_pact_create(db, req),
         "pact.list" => handle_pact_list(db, req),
-        "scroll.inscribe" => handle_scroll_inscribe(scroll_keeper, req),
+        "scroll.inscribe" => handle_scroll_inscribe(scroll_keeper, req).await,
         "scroll.activate" => handle_scroll_activate(scroll_keeper, req).await,
         "scroll.status" => handle_scroll_status(scroll_keeper, req),
         "scroll.list" => handle_scroll_list(db, req),
@@ -656,10 +656,10 @@ fn handle_pact_list(db: &Arc<Database>, req: RpcRequest) -> RpcResponse {
 
 // --- Scroll handlers ---
 
-fn handle_scroll_inscribe(keeper: &Arc<ScrollKeeper>, req: RpcRequest) -> RpcResponse {
+async fn handle_scroll_inscribe(keeper: &Arc<ScrollKeeper>, req: RpcRequest) -> RpcResponse {
     let params: ScrollInscribeParams = try_params!(req);
 
-    let content = match std::fs::read_to_string(&params.spec_path) {
+    let content = match tokio::fs::read_to_string(&params.spec_path).await {
         Ok(c) => c,
         Err(e) => {
             return RpcResponse::error(
