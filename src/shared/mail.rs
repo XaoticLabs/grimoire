@@ -5,7 +5,9 @@
 //! Two schemes are supported:
 //!
 //!   * `agent://<id>`, where `<id>` is the 8-char short id (`[0-9a-f]{8}`).
-//!   * `topic://<name>`, where `<name>` matches `^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$`.
+//!   * `topic://<name>`, where `<name>` is one or more slash-separated
+//!     segments each matching `[a-zA-Z0-9][a-zA-Z0-9._:-]*`, total length
+//!     capped at 128.
 //!
 //! Anything else, including a bare string with no `://`, is rejected.
 
@@ -122,22 +124,35 @@ pub fn is_valid_agent_id(s: &str) -> bool {
         .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
 }
 
-/// `^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$`.
+/// Topic names are slash-separated segments. Each segment matches
+/// `[a-zA-Z0-9][a-zA-Z0-9._:-]*` and the full string is capped at 128
+/// chars. Slashes carry no semantics to the bus — they're just a naming
+/// convention — but the daemon already publishes to multi-segment topics
+/// (e.g. `workspace/<id>/files`, `workspace/<id>/memory/<prefix>`), so
+/// subscribers must be able to name them too.
 pub fn is_valid_topic_name(s: &str) -> bool {
     if s.is_empty() || s.len() > 128 {
         return false;
     }
-    let mut bytes = s.bytes();
-    let Some(first) = bytes.next() else {
-        return false;
-    };
-    if !(first.is_ascii_alphanumeric()) {
+    // Reject leading, trailing, or consecutive slashes — there's no valid
+    // interpretation, and accepting them invites collisions in any
+    // subscriber matching scheme.
+    if s.starts_with('/') || s.ends_with('/') || s.contains("//") {
         return false;
     }
-    for b in bytes {
-        let ok = b.is_ascii_alphanumeric() || b == b'.' || b == b'_' || b == b':' || b == b'-';
-        if !ok {
+    for segment in s.split('/') {
+        let mut bytes = segment.bytes();
+        let Some(first) = bytes.next() else {
             return false;
+        };
+        if !first.is_ascii_alphanumeric() {
+            return false;
+        }
+        for b in bytes {
+            let ok = b.is_ascii_alphanumeric() || b == b'.' || b == b'_' || b == b':' || b == b'-';
+            if !ok {
+                return false;
+            }
         }
     }
     true
@@ -273,5 +288,51 @@ mod tests {
             parse_address("agent://grimd-1a2b3c4d/").unwrap_err(),
             AddressParseError::InvalidFederatedAgentId
         );
+    }
+
+    // --- Topic name validator ---
+
+    #[test]
+    fn topic_name_accepts_single_segment() {
+        assert!(is_valid_topic_name("pr-opened"));
+        assert!(is_valid_topic_name("alerts.build"));
+        assert!(is_valid_topic_name("foo_bar:baz"));
+    }
+
+    #[test]
+    fn topic_name_accepts_slash_separated_segments() {
+        // The daemon publishes workspace/<id>/files internally; subscribers
+        // must be able to name them too.
+        assert!(is_valid_topic_name("workspace/abc123/files"));
+        assert!(is_valid_topic_name("workspace/abc123/memory/findings"));
+        assert!(is_valid_topic_name("qa/escalations"));
+    }
+
+    #[test]
+    fn topic_name_rejects_leading_trailing_or_double_slash() {
+        assert!(!is_valid_topic_name("/foo"));
+        assert!(!is_valid_topic_name("foo/"));
+        assert!(!is_valid_topic_name("foo//bar"));
+    }
+
+    #[test]
+    fn topic_name_rejects_segment_with_non_alnum_first_char() {
+        assert!(!is_valid_topic_name("foo/.hidden"));
+        assert!(!is_valid_topic_name("foo/-leading"));
+    }
+
+    #[test]
+    fn topic_name_rejects_disallowed_chars() {
+        assert!(!is_valid_topic_name("foo bar"));
+        assert!(!is_valid_topic_name("foo$bar"));
+        assert!(!is_valid_topic_name("foo/bar baz"));
+    }
+
+    #[test]
+    fn topic_name_enforces_length_cap() {
+        let long = "a".repeat(129);
+        assert!(!is_valid_topic_name(&long));
+        let max = "a".repeat(128);
+        assert!(is_valid_topic_name(&max));
     }
 }

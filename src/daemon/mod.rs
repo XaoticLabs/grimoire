@@ -213,6 +213,7 @@ pub async fn start() -> Result<()> {
 
     // Start servers (UDS + HTTP)
     let webhooks = Arc::new(config.webhooks.clone());
+    let http_port = config.daemon.port;
     server::run(
         manager,
         db,
@@ -224,6 +225,7 @@ pub async fn start() -> Result<()> {
         daemon_id,
         auth_token,
         webhooks,
+        http_port,
     )
     .await?;
 

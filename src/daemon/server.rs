@@ -64,6 +64,7 @@ pub async fn run(
     daemon_id: String,
     auth_token: Arc<AuthToken>,
     webhooks: Arc<std::collections::HashMap<String, crate::shared::config::WebhookConfig>>,
+    http_port: u16,
 ) -> Result<()> {
     let state = AppState {
         manager: manager.clone(),
@@ -87,7 +88,7 @@ pub async fn run(
     });
 
     let http_handle = tokio::spawn(async move {
-        if let Err(e) = run_http_server(state).await {
+        if let Err(e) = run_http_server(state, http_port).await {
             error!("HTTP server error: {}", e);
         }
     });
@@ -305,7 +306,7 @@ async fn write_response(
 
 const AUTH_COOKIE_NAME: &str = "grim_auth";
 
-async fn run_http_server(state: AppState) -> Result<()> {
+async fn run_http_server(state: AppState, port: u16) -> Result<()> {
     // Protected routes: everything that touches state, plus the dashboard
     // HTML itself. The SPA leaks no useful surface unauthenticated, but
     // shielding `/` means a stray browser tab can't even render the chrome.
@@ -345,7 +346,6 @@ async fn run_http_server(state: AppState) -> Result<()> {
         .merge(public)
         .with_state(state);
 
-    let port = constants::DAEMON_PORT;
     let addr = format!("127.0.0.1:{port}");
     let listener = tokio::net::TcpListener::bind(&addr).await?;
     info!(addr = %addr, "HTTP server listening");
