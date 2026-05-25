@@ -697,6 +697,33 @@ pub struct AgentProcessesResult {
     pub processes: Vec<AgentProcess>,
 }
 
+// --- Supervisor tree ---
+// One row per agent with supervision metadata in a shape the dashboard can
+// group by `parent_id` to render parent → child trees. `last_restart_*` is
+// the most recent `restart_history` row, summarising the agent's tail.
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SupervisorNode {
+    pub agent_id: AgentId,
+    pub name: Option<String>,
+    pub state: String,
+    pub task: Option<String>,
+    pub parent_id: Option<AgentId>,
+    pub restart_policy: String,
+    pub restart_count: u32,
+    pub max_restarts: Option<u32>,
+    pub window_secs: Option<u32>,
+    pub escalate_to: Option<String>,
+    pub escalation_depth: u32,
+    pub last_restart_at: Option<i64>,
+    pub last_restart_outcome: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SupervisorTreeResult {
+    pub nodes: Vec<SupervisorNode>,
+}
+
 // --- Federation listing ---
 // One row per (peer, scope) federation. `created_at` is unix seconds for the
 // topic/ns shape and ISO-8601 for workspaces (matches the underlying types).

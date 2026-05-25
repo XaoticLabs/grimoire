@@ -273,6 +273,7 @@ pub async fn handle_rpc(
         "daemon.status" => handle_status(manager, daemon_id, req).await,
         "agent.queue.list" => handle_queue_list(db, req).await,
         "agent.processes" => handle_agent_processes(db, req).await,
+        "agent.supervisor-tree" => handle_supervisor_tree(db, req).await,
         "agent.result" => handle_agent_result(manager, db, req).await,
         "budget.list" => handle_budget_list(manager, db, req).await,
         "eval.record" => handle_eval_record(db, req).await,
@@ -2322,6 +2323,15 @@ async fn handle_agent_processes(db: &Arc<Database>, req: RpcRequest) -> RpcRespo
             RpcResponse::success_json(req.id, &AgentProcessesResult { processes })
         }
         Err(e) => RpcResponse::error(req.id, -32000, format!("agent.processes: {e}")),
+    }
+}
+
+async fn handle_supervisor_tree(db: &Arc<Database>, req: RpcRequest) -> RpcResponse {
+    use crate::shared::protocol::SupervisorTreeResult;
+    let outcome = db.run(Database::list_supervisor_nodes).await;
+    match outcome {
+        Ok(nodes) => RpcResponse::success_json(req.id, &SupervisorTreeResult { nodes }),
+        Err(e) => RpcResponse::error(req.id, -32000, format!("agent.supervisor-tree: {e}")),
     }
 }
 

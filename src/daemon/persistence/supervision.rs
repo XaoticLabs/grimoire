@@ -2,6 +2,7 @@ use anyhow::Result;
 use chrono::Utc;
 use rusqlite::params;
 
+use crate::shared::protocol::SupervisorNode;
 use crate::shared::types::{AgentId, RestartHistoryOutcome, RestartPolicy, SupervisionConfig};
 
 impl super::Database {
@@ -132,6 +133,46 @@ impl super::Database {
             .ok()
             .flatten();
         Ok(v)
+    }
+
+    /// One row per agent with everything the supervisor dashboard needs to
+    /// render the tree. Single query — no N+1.
+    pub fn list_supervisor_nodes(&self) -> Result<Vec<SupervisorNode>> {
+        let conn = self.conn_lock();
+        let mut stmt = conn.prepare(
+            "SELECT a.id, a.name, a.state, a.task, a.parent_agent_id, \
+                    a.restart_policy, a.restart_count, a.max_restarts, \
+                    a.restart_window_secs, a.escalate_to, a.escalation_depth, \
+                    (SELECT MAX(attempted_at) FROM restart_history h \
+                     WHERE h.agent_id = a.id), \
+                    (SELECT outcome FROM restart_history h \
+                     WHERE h.agent_id = a.id \
+                     ORDER BY attempted_at DESC, id DESC LIMIT 1) \
+             FROM agents a \
+             ORDER BY a.created_at DESC",
+        )?;
+        let rows = stmt.query_map([], |r| {
+            let restart_count: i64 = r.get::<_, Option<i64>>(6)?.unwrap_or(0);
+            let escalation_depth: i64 = r.get::<_, Option<i64>>(10)?.unwrap_or(0);
+            Ok(SupervisorNode {
+                agent_id: r.get(0)?,
+                name: r.get(1)?,
+                state: r.get(2)?,
+                task: r.get(3)?,
+                parent_id: r.get(4)?,
+                restart_policy: r
+                    .get::<_, Option<String>>(5)?
+                    .unwrap_or_else(|| "never".to_string()),
+                restart_count: restart_count.max(0) as u32,
+                max_restarts: r.get::<_, Option<u32>>(7)?,
+                window_secs: r.get::<_, Option<u32>>(8)?,
+                escalate_to: r.get(9)?,
+                escalation_depth: escalation_depth.max(0) as u32,
+                last_restart_at: r.get::<_, Option<i64>>(11)?,
+                last_restart_outcome: r.get(12)?,
+            })
+        })?;
+        Ok(rows.filter_map(std::result::Result::ok).collect())
     }
 
     pub fn list_failed_with_active_policy(&self) -> Result<Vec<AgentId>> {

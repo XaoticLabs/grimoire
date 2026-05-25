@@ -193,6 +193,54 @@ fn list_failed_with_active_policy_excludes_never() {
 }
 
 #[test]
+fn list_supervisor_nodes_returns_supervision_fields_and_last_history() {
+    let db = Database::open_in_memory().unwrap();
+    let parent = seed_agent(&db, "parent01", AgentState::Active);
+    let _child = seed_agent(&db, "child001", AgentState::Failed);
+    db.set_agent_parent("child001", Some(&parent.id)).unwrap();
+    db.set_supervision(
+        "child001",
+        &SupervisionConfig {
+            policy: RestartPolicy::OnFailure,
+            max_restarts: Some(2),
+            window_secs: Some(60),
+            escalate_to: Some("topic://escalations".to_string()),
+        },
+    )
+    .unwrap();
+    let now = chrono::Utc::now().timestamp();
+    db.insert_restart_history_row("child001", now - 10, RestartHistoryOutcome::Scheduled, None)
+        .unwrap();
+    db.insert_restart_history_row(
+        "child001",
+        now,
+        RestartHistoryOutcome::BudgetExhausted,
+        Some("max attempts hit"),
+    )
+    .unwrap();
+
+    let nodes = db.list_supervisor_nodes().unwrap();
+    assert_eq!(nodes.len(), 2);
+
+    let child = nodes.iter().find(|n| n.agent_id == "child001").unwrap();
+    assert_eq!(child.parent_id.as_deref(), Some("parent01"));
+    assert_eq!(child.restart_policy, "on_failure");
+    assert_eq!(child.max_restarts, Some(2));
+    assert_eq!(child.window_secs, Some(60));
+    assert_eq!(child.escalate_to.as_deref(), Some("topic://escalations"));
+    assert_eq!(child.last_restart_at, Some(now));
+    assert_eq!(
+        child.last_restart_outcome.as_deref(),
+        Some("budget_exhausted")
+    );
+
+    let parent_node = nodes.iter().find(|n| n.agent_id == "parent01").unwrap();
+    assert!(parent_node.parent_id.is_none());
+    assert_eq!(parent_node.restart_policy, "never");
+    assert!(parent_node.last_restart_at.is_none());
+}
+
+#[test]
 fn mark_torn_restarting_as_failed_returns_ids_and_flips_state() {
     let db = Database::open_in_memory().unwrap();
     seed_agent(&db, "rstr0001", AgentState::Restarting);

@@ -445,6 +445,7 @@
         <a href="#/federation" data-route="federation">Federation</a>
         <a href="#/chronicle" data-route="chronicle">Chronicle</a>
         <a href="#/webhooks" data-route="webhooks">Webhooks</a>
+        <a href="#/supervisor" data-route="supervisor">Supervisor</a>
     </nav>
 
     <main>
@@ -495,6 +496,7 @@
         <div data-page="federation" hidden></div>
         <div data-page="chronicle" hidden></div>
         <div data-page="webhooks" hidden></div>
+        <div data-page="supervisor" hidden></div>
     </main>
     <div class="toast" id="toast"></div>
     <div class="modal-backdrop" id="modal-backdrop" onclick="if(event.target===this)closeModal()">
@@ -541,6 +543,7 @@
             federation: { render: renderFederationPage },
             chronicle:  { render: renderChroniclePage },
             webhooks:   { render: renderWebhooksPage },
+            supervisor: { render: renderSupervisorPage, refresh: refreshSupervisor },
         };
 
         function parseHash() {
@@ -2300,6 +2303,176 @@
             refreshWebhooks();
         }
 
+        // --- Supervisor page ---------------------------------------------
+        // Renders parent → child supervision trees. Each row shows restart
+        // policy, restart count vs. cap, escalation target, and the most
+        // recent restart_history outcome. Backed by `agent.supervisor-tree`.
+        function renderSupervisorPage() {
+            const el = document.querySelector('[data-page="supervisor"]');
+            if (!el.dataset.rendered) {
+                el.innerHTML = `
+                    <div class="card">
+                        <h3>Supervision trees</h3>
+                        <p class="muted" style="font-size:0.8rem;margin-bottom:0.75rem">
+                            One row per agent. Children sit under their parent; restart counts surface against the configured cap; the latest <code>restart_history</code> outcome is shown on the right. Live-updates on supervision stream events (<code>restart_scheduled</code>, <code>restarted</code>, <code>escalated</code>, <code>restart_budget_exhausted</code>).
+                        </p>
+                        <div style="margin-bottom:0.75rem;display:flex;gap:1rem;flex-wrap:wrap;font-size:0.85rem" id="supervisor-summary"></div>
+                        <table class="grid-table">
+                            <thead><tr>
+                                <th>Agent</th>
+                                <th>State</th>
+                                <th>Policy</th>
+                                <th>Restarts</th>
+                                <th>Escalation</th>
+                                <th>Last restart</th>
+                            </tr></thead>
+                            <tbody id="supervisor-tbody"></tbody>
+                        </table>
+                        <div style="margin-top:1rem">
+                            <button class="btn btn-sm" onclick="refreshSupervisor()">Refresh</button>
+                        </div>
+                        <p class="muted" style="font-size:0.75rem;margin-top:1rem">
+                            Equivalent CLI: <code>grim circle</code> (restart column), <code>grim status &lt;id&gt;</code> (supervision block), <code>grim chronicle &lt;id&gt; --kinds restart_scheduled,restarted,escalated</code>.
+                        </p>
+                    </div>
+                `;
+                el.dataset.rendered = '1';
+            }
+            refreshSupervisor();
+        }
+
+        function supervisorStateColor(state) {
+            const s = String(state || '').toLowerCase();
+            if (s === 'active' || s === 'summoning') return 'var(--green)';
+            if (s === 'failed') return 'var(--red)';
+            if (s === 'restarting') return 'var(--yellow, #d4a200)';
+            if (s === 'dormant') return 'var(--blue, #4a90e2)';
+            if (s === 'banished') return 'var(--muted)';
+            return 'var(--fg)';
+        }
+
+        function supervisorOutcomeBadge(outcome) {
+            if (!outcome) return '<span class="muted">—</span>';
+            const cls = {
+                succeeded: 'badge-ok',
+                scheduled: 'badge-cron',
+                failed_again: 'badge-err',
+                budget_exhausted: 'badge-err',
+            }[outcome] || '';
+            return `<span class="badge ${cls}">${esc(outcome)}</span>`;
+        }
+
+        function relTime(unixSecs) {
+            if (!unixSecs) return '';
+            const delta = Math.floor(Date.now() / 1000) - unixSecs;
+            if (delta < 60) return `${delta}s ago`;
+            if (delta < 3600) return `${Math.floor(delta/60)}m ago`;
+            if (delta < 86400) return `${Math.floor(delta/3600)}h ago`;
+            return `${Math.floor(delta/86400)}d ago`;
+        }
+
+        async function refreshSupervisor() {
+            const tbody = document.getElementById('supervisor-tbody');
+            const summary = document.getElementById('supervisor-summary');
+            if (!tbody) return;
+            try {
+                const result = await grim('agent.supervisor-tree', {});
+                const nodes = result.nodes || [];
+                renderSupervisorTable(tbody, summary, nodes);
+            } catch (e) {
+                tbody.innerHTML = `<tr><td colspan="6" class="muted">agent.supervisor-tree failed: ${esc(e.message)}</td></tr>`;
+            }
+        }
+
+        // Build a parent → children index, then walk roots in created-DESC
+        // order (the SQL already returns that order). Orphans (parent_id
+        // present but parent not in the result set) are rendered as roots
+        // with a "(orphan)" hint.
+        function renderSupervisorTable(tbody, summary, nodes) {
+            const byParent = new Map();
+            const byId = new Map();
+            for (const n of nodes) byId.set(n.agent_id, n);
+            for (const n of nodes) {
+                const key = n.parent_id && byId.has(n.parent_id) ? n.parent_id : '__root__';
+                if (!byParent.has(key)) byParent.set(key, []);
+                byParent.get(key).push(n);
+            }
+
+            const roots = (byParent.get('__root__') || []).slice();
+            // Find orphans whose parent_id refers to an agent not in the list.
+            for (const n of nodes) {
+                if (n.parent_id && !byId.has(n.parent_id) && !roots.includes(n)) {
+                    roots.push(n);
+                }
+            }
+
+            const rows = [];
+            function walk(node, depth, isOrphan) {
+                rows.push(renderSupervisorRow(node, depth, isOrphan));
+                const kids = byParent.get(node.agent_id) || [];
+                for (const k of kids) walk(k, depth + 1, false);
+            }
+            for (const r of roots) {
+                const orphan = !!r.parent_id;
+                walk(r, 0, orphan);
+            }
+
+            tbody.innerHTML = rows.length ? rows.join('') :
+                `<tr><td colspan="6" class="muted">no agents yet — <a href="#/agents">summon one</a></td></tr>`;
+
+            // Summary tiles
+            const total = nodes.length;
+            const supervised = nodes.filter(n => n.restart_policy && n.restart_policy !== 'never').length;
+            const restartsTotal = nodes.reduce((acc, n) => acc + (n.restart_count || 0), 0);
+            const escalated = nodes.filter(n => (n.escalation_depth || 0) > 0).length;
+            const exhausted = nodes.filter(n => n.last_restart_outcome === 'budget_exhausted').length;
+            summary.innerHTML = `
+                <span><b>${total}</b> agents</span>
+                <span><b>${supervised}</b> supervised</span>
+                <span><b>${restartsTotal}</b> total restarts</span>
+                <span><b>${escalated}</b> escalated</span>
+                ${exhausted ? `<span style="color:var(--red)"><b>${exhausted}</b> budget-exhausted</span>` : ''}
+            `;
+        }
+
+        function renderSupervisorRow(n, depth, isOrphan) {
+            const indent = depth * 18;
+            const treeMark = depth > 0 ? '<span class="muted" style="margin-right:0.4rem">└─</span>' : '';
+            const orphanHint = isOrphan ? ' <span class="muted" style="font-size:0.75rem">(orphan)</span>' : '';
+            const taskSnippet = n.task ? `<div class="muted" style="font-size:0.75rem;margin-top:0.15rem">${esc(n.task.slice(0, 80))}</div>` : '';
+            const policy = n.restart_policy || 'never';
+            const policyDisplay = policy === 'never'
+                ? '<span class="muted">never</span>'
+                : `<span>${esc(policy)}${n.window_secs ? ` <span class="muted">(${n.max_restarts ?? '∞'}/${n.window_secs}s)</span>` : ''}</span>`;
+            const restartCount = n.restart_count || 0;
+            const cap = n.max_restarts;
+            const restartsCell = policy === 'never' && restartCount === 0
+                ? '<span class="muted">—</span>'
+                : (cap != null
+                    ? `<span${restartCount >= cap ? ' style="color:var(--red);font-weight:600"' : ''}>${restartCount} / ${cap}</span>`
+                    : String(restartCount));
+            const escCell = n.escalate_to
+                ? `<code style="font-size:0.75rem">${esc(n.escalate_to)}</code>${n.escalation_depth ? ` <span class="muted">(d${n.escalation_depth})</span>` : ''}`
+                : '<span class="muted">—</span>';
+            const lastCell = n.last_restart_at
+                ? `${supervisorOutcomeBadge(n.last_restart_outcome)} <span class="muted" style="font-size:0.75rem">${relTime(n.last_restart_at)}</span>`
+                : '<span class="muted">—</span>';
+            return `
+                <tr>
+                    <td style="padding-left:${indent}px">
+                        ${treeMark}<a href="#/agents/${esc(n.agent_id)}"><code>${esc(n.agent_id.slice(0, 12))}</code></a>${orphanHint}
+                        ${n.name ? ` <span>${esc(n.name)}</span>` : ''}
+                        ${taskSnippet}
+                    </td>
+                    <td><span style="color:${supervisorStateColor(n.state)}">${esc(n.state)}</span></td>
+                    <td>${policyDisplay}</td>
+                    <td>${restartsCell}</td>
+                    <td>${escCell}</td>
+                    <td>${lastCell}</td>
+                </tr>
+            `;
+        }
+
         const agentsEl = document.getElementById('agents');
         const statusDot = document.getElementById('status-dot');
         const statusText = document.getElementById('status-text');
@@ -2758,6 +2931,14 @@
         onSse('peer_handshake_failed',   () => { if (pageVisible('federation')) refreshSoon('peers', refreshPeers); });
         onSse('peer_stream_connected',   () => { if (pageVisible('federation')) refreshSoon('peers', refreshPeers); });
         onSse('peer_stream_disconnected',() => { if (pageVisible('federation')) refreshSoon('peers', refreshPeers); });
+        onSse('restart_scheduled',         () => { if (pageVisible('supervisor')) refreshSoon('sup', refreshSupervisor); });
+        onSse('restarted',                 () => { if (pageVisible('supervisor')) refreshSoon('sup', refreshSupervisor); });
+        onSse('restart_budget_exhausted',  () => { if (pageVisible('supervisor')) refreshSoon('sup', refreshSupervisor); });
+        onSse('escalated',                 () => { if (pageVisible('supervisor')) refreshSoon('sup', refreshSupervisor); });
+        // Agent state changes (Failed → Restarting etc.) also matter to the
+        // supervisor view; piggyback on the existing state_change handler.
+        onSse('state_change',              () => { if (pageVisible('supervisor')) refreshSoon('sup', refreshSupervisor, 500); });
+        onSse('agent_created',             () => { if (pageVisible('supervisor')) refreshSoon('sup', refreshSupervisor, 500); });
 
         function connectSSE() {
             const es = new EventSource('/api/events');
