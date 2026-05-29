@@ -8,12 +8,18 @@ use crate::shared::types::{Scroll, ScrollState, Task, TaskConflict, TaskState};
 
 use super::agent_manager::AgentManager;
 use super::event_bus::EventBus;
+use super::peer_registry::PeerRegistry;
 use super::persistence::Database;
 use super::scroll_parser::ScrollSpec;
+use tokio::sync::Mutex;
 
 pub struct ScrollKeeper {
     db: Arc<Database>,
     manager: Arc<AgentManager>,
+    /// Late-bound: set after `peer_registry` is created in
+    /// `daemon::start`. Required only for peer-dispatched tasks; local
+    /// scrolls work without it.
+    peer_registry: Mutex<Option<Arc<PeerRegistry>>>,
 }
 
 /// Status snapshot for a scroll
@@ -38,8 +44,20 @@ pub struct TaskStatus {
 }
 
 impl ScrollKeeper {
-    pub const fn new(db: Arc<Database>, manager: Arc<AgentManager>) -> Self {
-        Self { db, manager }
+    pub fn new(db: Arc<Database>, manager: Arc<AgentManager>) -> Self {
+        Self {
+            db,
+            manager,
+            peer_registry: Mutex::new(None),
+        }
+    }
+
+    /// Late-bind the peer registry so scrolls can dispatch tasks with
+    /// `peer:` directives. Called from `daemon::start` after
+    /// `PeerRegistry::new`. Idempotent for repeated calls (the latest
+    /// wins).
+    pub async fn set_peer_registry(&self, registry: Arc<PeerRegistry>) {
+        *self.peer_registry.lock().await = Some(registry);
     }
 
     /// Start listening to the event bus for agent completions
@@ -68,6 +86,20 @@ impl ScrollKeeper {
                             | AgentState::Active
                             | AgentState::Dormant => {}
                         }
+                    }
+                    Ok(StreamEvent::RemoteAgentStateChanged {
+                        ref sender_daemon_id,
+                        ref agent_id,
+                        ref new_state,
+                        ..
+                    }) => {
+                        // F5b: a federated peer is reporting that one
+                        // of our dispatched tasks just transitioned.
+                        // Resolve `(sender_daemon_id, remote_agent_id)`
+                        // to the local dispatch row and update the
+                        // task state to match.
+                        self.handle_remote_state_change(sender_daemon_id, agent_id, new_state)
+                            .await;
                     }
                     Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
                         warn!(skipped = n, "ScrollKeeper lagged, some events missed");
@@ -128,6 +160,7 @@ impl ScrollKeeper {
                 order_index: idx as u32,
                 created_at: now,
                 updated_at: now,
+                peer_name: task_spec.peer.clone(),
             };
 
             self.db.insert_task(&task)?;
@@ -448,6 +481,31 @@ impl ScrollKeeper {
                 continue;
             }
 
+            // F5b: peer-targeted tasks are dispatched, not spawned.
+            // The receiver enqueues an agent of its own and federates
+            // lifecycle back; the task's local `agent_id` is filled in
+            // by the dispatch ack handler.
+            if let Some(peer_name) = task.peer_name.clone() {
+                match self.dispatch_to_peer(task, &peer_name).await {
+                    Ok(()) => {
+                        info!(
+                            scroll_id = %scroll_id,
+                            task = %task.name,
+                            peer = %peer_name,
+                            "Task dispatched to peer"
+                        );
+                        spawned += 1;
+                    }
+                    Err(e) => {
+                        error!(task = %task.name, peer = %peer_name, error = %e,
+                            "Failed to dispatch task to peer");
+                        self.db.update_task_state(&task.id, &TaskState::Failed)?;
+                        self.skip_downstream(&task.id);
+                    }
+                }
+                continue;
+            }
+
             let cwd_opt = task.cwd.as_ref().map(PathBuf::from);
             let cwd = self.manager.resolve_cwd(cwd_opt);
 
@@ -481,6 +539,105 @@ impl ScrollKeeper {
             }
         }
 
+        Ok(())
+    }
+
+    /// F5b: a `RemoteAgentStateChanged` arrived. Look up the
+    /// dispatch row and, on a terminal remote state, mirror it onto
+    /// the local task. Non-terminal transitions are ignored — the
+    /// task already sits in `active` once `update_task_agent` runs at
+    /// dispatch time.
+    async fn handle_remote_state_change(
+        &self,
+        sender_daemon_id: &str,
+        remote_agent_id: &str,
+        new_state: &crate::shared::types::AgentState,
+    ) {
+        use crate::shared::types::AgentState;
+        if !matches!(
+            new_state,
+            AgentState::Complete | AgentState::Failed | AgentState::Banished
+        ) {
+            return;
+        }
+        let Ok(Some(peer)) = self.db.get_peer_by_daemon_id(sender_daemon_id) else {
+            return;
+        };
+        let peer_id = peer.id;
+        let Ok(Some(dispatch)) = self
+            .db
+            .scroll_dispatch_find_by_remote(&peer_id, remote_agent_id)
+        else {
+            return;
+        };
+        let task_state = if matches!(new_state, AgentState::Complete) {
+            TaskState::Complete
+        } else {
+            TaskState::Failed
+        };
+        if let Err(e) = self.db.update_task_state(&dispatch.task_id, &task_state) {
+            warn!(error = %e, task = %dispatch.task_id, "remote dispatch task_state update failed");
+            return;
+        }
+        let dispatch_state = if matches!(task_state, TaskState::Complete) {
+            "complete"
+        } else {
+            "failed"
+        };
+        let _ = self.db.scroll_dispatch_set_state(
+            &dispatch.scroll_id,
+            &dispatch.task_id,
+            &peer_id,
+            dispatch_state,
+        );
+        info!(
+            scroll = %dispatch.scroll_id,
+            task = %dispatch.task_id,
+            remote = %remote_agent_id,
+            state = ?task_state,
+            "remote dispatched task settled",
+        );
+        if task_state == TaskState::Failed {
+            self.skip_downstream(&dispatch.task_id);
+        }
+        // Kick the scroll's DAG so anything waiting on this task can
+        // move forward.
+        if let Err(e) = self.schedule_tasks(&dispatch.scroll_id).await {
+            warn!(error = %e, "schedule_tasks after remote completion failed");
+        }
+    }
+
+    /// Dispatch a single peer-targeted task to its named peer. Writes
+    /// the durable `scroll_task_dispatches` row, enqueues the wire
+    /// outbox row, and pokes the drainer. Marks the local task
+    /// `Active` so DAG accounting sees it as in-flight.
+    async fn dispatch_to_peer(&self, task: &Task, peer_name: &str) -> anyhow::Result<()> {
+        use crate::daemon::peer_client::ScrollDispatchPayload;
+        let Some(registry) = self.peer_registry.lock().await.clone() else {
+            return Err(anyhow::anyhow!("peer_registry_not_bound"));
+        };
+        let Some(peer) = self.db.get_peer_by_name(peer_name)? else {
+            return Err(anyhow::anyhow!("peer_not_found: {peer_name}"));
+        };
+        let payload = ScrollDispatchPayload {
+            scroll_id: task.scroll_id.clone(),
+            task_id: task.id.clone(),
+            task_name: task.name.clone(),
+            prompt: task.prompt.clone(),
+            provider: task.provider.clone().unwrap_or_default(),
+            model: task.model.clone().unwrap_or_default(),
+            cwd: task.cwd.clone().unwrap_or_default(),
+            file_patterns: task.file_patterns.clone(),
+        };
+        let bytes = serde_json::to_vec(&payload)?;
+        let dispatch_id = crate::shared::constants::generate_short_id();
+        self.db
+            .scroll_dispatch_insert(&dispatch_id, &task.scroll_id, &task.id, &peer.id)?;
+        self.db.scroll_dispatch_enqueue(&peer.id, &bytes)?;
+        // The task is now considered in-flight; the receiver's local
+        // agent id will be patched in by the ack handler.
+        self.db.update_task_state(&task.id, &TaskState::Active)?;
+        registry.notify_outbox(&peer.id).await;
         Ok(())
     }
 

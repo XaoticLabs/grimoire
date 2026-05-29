@@ -304,6 +304,8 @@ pub async fn handle_rpc(
         "workspace.unfederate" => handle_workspace_unfederate(peer_registry, req).await,
         "agent.lifecycle-federate" => handle_agent_lifecycle_federate(peer_registry, req).await,
         "agent.lifecycle-unfederate" => handle_agent_lifecycle_unfederate(peer_registry, req).await,
+        "peer.set-accept-dispatch" => handle_peer_set_accept_dispatch(peer_registry, req).await,
+        "scroll.dispatch-task" => handle_scroll_dispatch_task(peer_registry, req).await,
         "memory.put" => handle_memory_put(db, bus, req).await,
         "memory.get" => handle_memory_get(db, req).await,
         "memory.list" => handle_memory_list(db, req).await,
@@ -2721,5 +2723,97 @@ async fn handle_agent_lifecycle_unfederate(
             RpcResponse::success_json(req.id, &AgentLifecycleUnfederateResult { removed: n > 0 })
         }
         Err(e) => RpcResponse::error(req.id, -32000, format!("lifecycle_unfederate: {e}")),
+    }
+}
+
+async fn handle_peer_set_accept_dispatch(
+    peer_registry: &Arc<PeerRegistry>,
+    req: RpcRequest,
+) -> RpcResponse {
+    use crate::shared::protocol::{PeerSetAcceptDispatchParams, PeerSetAcceptDispatchResult};
+    let params: PeerSetAcceptDispatchParams = try_params!(req);
+    let peer = try_rpc!(resolve_peer(req.id, peer_registry, &params.peer).await);
+    let peer_id = peer.id.clone();
+    let accept = params.accept;
+    match peer_registry
+        .db
+        .run(move |db| db.set_peer_accept_scroll_dispatch(&peer_id, accept))
+        .await
+    {
+        Ok(()) => RpcResponse::success_json(
+            req.id,
+            &PeerSetAcceptDispatchResult {
+                peer: params.peer,
+                accept,
+            },
+        ),
+        Err(e) => RpcResponse::error(req.id, -32000, format!("set_accept_dispatch: {e}")),
+    }
+}
+
+/// F5a: dispatch one scroll task to a peer.
+///
+/// The coordinator looks up the task, serializes the payload, writes
+/// the durable `scroll_task_dispatches` row, and enqueues the wire
+/// outbox row. The receiver's local agent id flows back via the
+/// `ScrollTaskDispatchAck` ack handler, which patches the row.
+async fn handle_scroll_dispatch_task(
+    peer_registry: &Arc<PeerRegistry>,
+    req: RpcRequest,
+) -> RpcResponse {
+    use crate::daemon::peer_client::ScrollDispatchPayload;
+    use crate::shared::protocol::{ScrollDispatchTaskParams, ScrollDispatchTaskResult};
+    let params: ScrollDispatchTaskParams = try_params!(req);
+    let peer = try_rpc!(resolve_peer(req.id, peer_registry, &params.peer).await);
+    let peer_id = peer.id.clone();
+    let scroll_id = params.scroll_id.clone();
+    let task_id = params.task_id.clone();
+
+    let outcome: Result<u64, String> = peer_registry
+        .db
+        .run(move |db| -> Result<u64, String> {
+            let task = match db.get_task(&task_id) {
+                Ok(Some(t)) => t,
+                Ok(None) => return Err("task_not_found".into()),
+                Err(e) => return Err(format!("get_task: {e}")),
+            };
+            if task.scroll_id != scroll_id {
+                return Err("task_scroll_mismatch".into());
+            }
+            let payload = ScrollDispatchPayload {
+                scroll_id: scroll_id.clone(),
+                task_id: task_id.clone(),
+                task_name: task.name,
+                prompt: task.prompt,
+                provider: task.provider.unwrap_or_default(),
+                model: task.model.unwrap_or_default(),
+                cwd: task.cwd.unwrap_or_default(),
+                file_patterns: task.file_patterns,
+            };
+            let bytes = serde_json::to_vec(&payload).map_err(|e| format!("encode: {e}"))?;
+            let dispatch_id = crate::shared::constants::generate_short_id();
+            if let Err(e) = db.scroll_dispatch_insert(&dispatch_id, &scroll_id, &task_id, &peer_id)
+            {
+                return Err(format!("insert_dispatch: {e}"));
+            }
+            db.scroll_dispatch_enqueue(&peer_id, &bytes)
+                .map_err(|e| format!("enqueue: {e}"))
+        })
+        .await;
+
+    match outcome {
+        Ok(seq) => {
+            peer_registry.notify_outbox(&peer.id).await;
+            RpcResponse::success_json(
+                req.id,
+                &ScrollDispatchTaskResult {
+                    scroll_id: params.scroll_id,
+                    task_id: params.task_id,
+                    peer: params.peer,
+                    sender_seq: seq,
+                },
+            )
+        }
+        Err(msg) => RpcResponse::error(req.id, -32000, msg),
     }
 }

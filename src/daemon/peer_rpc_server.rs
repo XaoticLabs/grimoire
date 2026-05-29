@@ -195,6 +195,20 @@ impl PeerService for PeerSvc {
                             }))
                             .await;
                     }
+                    Some(peer_outbound::Msg::ScrollTaskDispatch(d)) => {
+                        let ack = super::peer_client::apply_scroll_task_dispatch(
+                            &db,
+                            &bus,
+                            &peer_for_loop,
+                            &d,
+                        )
+                        .await;
+                        let _ = out_tx
+                            .send(Ok(PeerInbound {
+                                msg: Some(peer_inbound::Msg::ScrollTaskDispatchAck(ack)),
+                            }))
+                            .await;
+                    }
                     Some(peer_outbound::Msg::Goodbye(_)) => break,
                     _ => {} // ignore Hello/HelloAck/etc
                 }

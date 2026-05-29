@@ -1,12 +1,45 @@
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, anyhow};
 use colored::Colorize;
 
 use crate::cli::client::DaemonClient;
 use crate::daemon::scroll_keeper::ScrollStatus;
+use crate::shared::protocol::ScrollDispatchTaskResult;
 use crate::shared::types::Scroll;
 
-pub async fn run(id: Option<String>, activate: bool, abandon: bool) -> Result<()> {
+pub async fn run(
+    id: Option<String>,
+    activate: bool,
+    abandon: bool,
+    dispatch_task: Option<String>,
+    to: Option<String>,
+) -> Result<()> {
     let mut client = DaemonClient::connect().await?;
+
+    if let (Some(scroll_id), Some(task_id), Some(peer)) = (id.as_ref(), dispatch_task, to) {
+        let resp = client
+            .call(
+                "scroll.dispatch-task",
+                serde_json::json!({
+                    "scroll_id": scroll_id,
+                    "task_id": task_id,
+                    "peer": peer,
+                }),
+            )
+            .await?;
+        if let Some(err) = resp.error {
+            return Err(anyhow!("scroll dispatch-task failed: {}", err.message));
+        }
+        let result: ScrollDispatchTaskResult =
+            serde_json::from_value(resp.result.unwrap_or_default())?;
+        println!(
+            "Dispatched task {} (scroll {}) to peer {} (seq {}).",
+            result.task_id.dimmed(),
+            result.scroll_id.dimmed(),
+            result.peer.bold(),
+            result.sender_seq,
+        );
+        return Ok(());
+    }
 
     if let Some(ref scroll_id) = id {
         if activate {

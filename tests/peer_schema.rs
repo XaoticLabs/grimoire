@@ -245,6 +245,60 @@ fn find_shadow_workspace_resolves() {
     );
 }
 
+/// F5a: scroll dispatch wire layer round-trips.
+///
+/// - `peers.accept_scroll_dispatch` defaults to off; `set_*` toggles it.
+/// - `scroll_dispatch_insert` + `set_remote_agent_id` updates the
+///   durable row.
+/// - `scroll_dispatch_inbox_record` is idempotent; replays yield the
+///   stored `local_agent_id` instead of spawning a duplicate.
+#[test]
+fn scroll_dispatch_schema_and_inbox() {
+    let db = fresh_db();
+    let peer = fake_peer("zeta", "0123456789abcdef0123456789abcdef");
+    db.insert_peer(&peer).unwrap();
+
+    // accept flag defaults off, toggle on, then back off.
+    assert!(!db.peer_accept_scroll_dispatch(&peer.id).unwrap());
+    db.set_peer_accept_scroll_dispatch(&peer.id, true).unwrap();
+    assert!(db.peer_accept_scroll_dispatch(&peer.id).unwrap());
+    db.set_peer_accept_scroll_dispatch(&peer.id, false).unwrap();
+    assert!(!db.peer_accept_scroll_dispatch(&peer.id).unwrap());
+
+    // Dispatch row insert + remote agent assignment.
+    db.scroll_dispatch_insert("disp1", "scr1", "task1", &peer.id)
+        .unwrap();
+    db.scroll_dispatch_set_remote_agent("scr1", "task1", &peer.id, "remote-agent-a")
+        .unwrap();
+    let row = db
+        .scroll_dispatch_find_by_remote(&peer.id, "remote-agent-a")
+        .unwrap()
+        .unwrap();
+    assert_eq!(row.task_id, "task1");
+    assert_eq!(row.state, "dispatched");
+
+    // Inbox dedupe: first sighting returns Ok(None), replay returns
+    // the recorded local agent id.
+    assert!(
+        db.scroll_dispatch_inbox_lookup("homeA", 7)
+            .unwrap()
+            .is_none()
+    );
+    db.scroll_dispatch_inbox_record("homeA", 7, "local-agent-x")
+        .unwrap();
+    assert_eq!(
+        db.scroll_dispatch_inbox_lookup("homeA", 7).unwrap(),
+        Some("local-agent-x".to_string())
+    );
+    // Replay record is a no-op (INSERT OR IGNORE).
+    db.scroll_dispatch_inbox_record("homeA", 7, "ghost-agent")
+        .unwrap();
+    assert_eq!(
+        db.scroll_dispatch_inbox_lookup("homeA", 7).unwrap(),
+        Some("local-agent-x".to_string())
+    );
+}
+
 /// F4b: agent-lifecycle federation rows merge direction the same way
 /// workspace/namespace federations do; `outbound_peers` honors
 /// direction; inbox dedupe is `INSERT OR IGNORE` on

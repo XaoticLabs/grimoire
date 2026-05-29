@@ -13,8 +13,8 @@ use tracing::debug;
 use crate::shared::peer_proto::peer_client::PeerClient as TonicPeerClient;
 use crate::shared::peer_proto::{
     AgentLifecycleAck, AgentLifecycleDeliver, Hello, MailAck, MemoryAck, MemoryDeliver,
-    PeerInbound, PeerOutbound, WorkspaceEventAck, WorkspaceEventDeliver, peer_inbound,
-    peer_outbound,
+    PeerInbound, PeerOutbound, ScrollTaskDispatch, ScrollTaskDispatchAck, WorkspaceEventAck,
+    WorkspaceEventDeliver, peer_inbound, peer_outbound,
 };
 use crate::shared::protocol::StreamEvent;
 use crate::shared::types::{AgentState, Peer, PeerState};
@@ -172,11 +172,13 @@ async fn run_once(
     let mut in_flight_memory: Option<InFlight> = None;
     let mut in_flight_workspace: Option<InFlight> = None;
     let mut in_flight_lifecycle: Option<InFlight> = None;
+    let mut in_flight_dispatch: Option<InFlight> = None;
 
     let mail_backend = MailOutbox { db: &registry.db };
     let memory_backend = MemoryOutbox { db: &registry.db };
     let workspace_backend = WorkspaceEventOutbox { db: &registry.db };
     let lifecycle_backend = AgentLifecycleOutbox { db: &registry.db };
+    let dispatch_backend = ScrollDispatchOutbox { db: &registry.db };
 
     // Initial pump in case rows were queued while disconnected.
     let removing = peer_removing(registry, &peer.id);
@@ -212,6 +214,14 @@ async fn run_once(
         &mut in_flight_lifecycle,
     )
     .await?;
+    pump_one_row(
+        &dispatch_backend,
+        &peer.id,
+        removing,
+        &out_tx,
+        &mut in_flight_dispatch,
+    )
+    .await?;
 
     loop {
         tokio::select! {
@@ -230,13 +240,14 @@ async fn run_once(
                     Ok(None) => return Err(anyhow::anyhow!("stream closed")),
                     Err(e) => return Err(e.into()),
                 };
-                handle_inbound(registry, peer, msg, &out_tx, &mail_backend, &memory_backend, &workspace_backend, &lifecycle_backend, &mut in_flight_mail, &mut in_flight_memory, &mut in_flight_workspace, &mut in_flight_lifecycle).await?;
+                handle_inbound(registry, peer, msg, &out_tx, &mail_backend, &memory_backend, &workspace_backend, &lifecycle_backend, &dispatch_backend, &mut in_flight_mail, &mut in_flight_memory, &mut in_flight_workspace, &mut in_flight_lifecycle, &mut in_flight_dispatch).await?;
                 let _ = registry.db.set_peer_last_seen(&peer.id, unix_now());
                 let removing = peer_removing(registry, &peer.id);
                 pump_one_row(&mail_backend, &peer.id, removing, &out_tx, &mut in_flight_mail).await?;
                 pump_one_row(&memory_backend, &peer.id, removing, &out_tx, &mut in_flight_memory).await?;
                 pump_one_row(&workspace_backend, &peer.id, removing, &out_tx, &mut in_flight_workspace).await?;
                 pump_one_row(&lifecycle_backend, &peer.id, removing, &out_tx, &mut in_flight_lifecycle).await?;
+                pump_one_row(&dispatch_backend, &peer.id, removing, &out_tx, &mut in_flight_dispatch).await?;
             }
             () = notify_outbox.notified() => {
                 let removing = peer_removing(registry, &peer.id);
@@ -244,6 +255,7 @@ async fn run_once(
                 pump_one_row(&memory_backend, &peer.id, removing, &out_tx, &mut in_flight_memory).await?;
                 pump_one_row(&workspace_backend, &peer.id, removing, &out_tx, &mut in_flight_workspace).await?;
                 pump_one_row(&lifecycle_backend, &peer.id, removing, &out_tx, &mut in_flight_lifecycle).await?;
+                pump_one_row(&dispatch_backend, &peer.id, removing, &out_tx, &mut in_flight_dispatch).await?;
             }
         }
     }
@@ -270,10 +282,12 @@ async fn handle_inbound(
     memory_backend: &MemoryOutbox<'_>,
     workspace_backend: &WorkspaceEventOutbox<'_>,
     lifecycle_backend: &AgentLifecycleOutbox<'_>,
+    dispatch_backend: &ScrollDispatchOutbox<'_>,
     in_flight_mail: &mut Option<InFlight>,
     in_flight_memory: &mut Option<InFlight>,
     in_flight_workspace: &mut Option<InFlight>,
     in_flight_lifecycle: &mut Option<InFlight>,
+    in_flight_dispatch: &mut Option<InFlight>,
 ) -> anyhow::Result<()> {
     // Each arm is enumerated explicitly so dispatch for a new variant is a
     // compile error rather than silently routed to a wildcard.
@@ -375,6 +389,39 @@ async fn handle_inbound(
                 if !ack.ok {
                     tracing::warn!(peer = %peer.name, seq = ack.sender_seq, reason = %ack.reason,
                         "agent lifecycle delivery rejected");
+                }
+            }
+            Ok(())
+        }
+        Some(peer_inbound::Msg::ScrollTaskDispatch(d)) => {
+            let ack = apply_scroll_task_dispatch(&registry.db, &registry.bus, peer, &d).await;
+            let _ = out_tx
+                .send(PeerOutbound {
+                    msg: Some(peer_outbound::Msg::ScrollTaskDispatchAck(ack)),
+                })
+                .await;
+            Ok(())
+        }
+        Some(peer_inbound::Msg::ScrollTaskDispatchAck(ack)) => {
+            let key = ack.sender_seq.to_string();
+            if matches!(in_flight_dispatch.as_ref(), Some(f) if f.ack_key == key) {
+                let slot = in_flight_dispatch.take().expect("just matched");
+                if ack.ok
+                    && !ack.local_agent_id.is_empty()
+                    && !ack.scroll_id.is_empty()
+                    && !ack.task_id.is_empty()
+                {
+                    let _ = registry.db.scroll_dispatch_set_remote_agent(
+                        &ack.scroll_id,
+                        &ack.task_id,
+                        &peer.id,
+                        &ack.local_agent_id,
+                    );
+                }
+                handle_ack_outcome(dispatch_backend, &slot, ack.ok);
+                if !ack.ok {
+                    tracing::warn!(peer = %peer.name, seq = ack.sender_seq, reason = %ack.reason,
+                        "scroll task dispatch rejected");
                 }
             }
             Ok(())
@@ -745,6 +792,212 @@ impl OutboxBackend for WorkspaceEventOutbox<'_> {
             )),
         }
     }
+}
+
+/// F5a: receive a `ScrollTaskDispatch` from a coordinator peer and
+/// queue a local agent for it.
+///
+/// Gates:
+/// - Peer must have `accept_scroll_dispatch = 1` (opt-in).
+/// - Inbox dedupe: replays return the previously-assigned
+///   `local_agent_id` instead of spawning a duplicate.
+///
+/// The receiver does NOT acquire any scroll DB rows on its side —
+/// scrolls are coordinator-owned. The dispatched agent is a plain
+/// queued agent; it shows up in `grim ps` like anything else and is
+/// surfaced to the coordinator only via F4b lifecycle federation.
+pub async fn apply_scroll_task_dispatch(
+    db: &Database,
+    bus: &crate::daemon::event_bus::EventBus,
+    peer: &Peer,
+    d: &ScrollTaskDispatch,
+) -> ScrollTaskDispatchAck {
+    use crate::daemon::persistence::QueueRow;
+    use crate::shared::types::{Agent, AgentState, RestartPolicy};
+    use chrono::Utc;
+
+    match db.peer_accept_scroll_dispatch(&peer.id) {
+        Ok(true) => {}
+        Ok(false) => {
+            return ScrollTaskDispatchAck {
+                sender_seq: d.sender_seq,
+                ok: false,
+                reason: "peer_not_accepting_scroll_dispatch".into(),
+                local_agent_id: String::new(),
+                scroll_id: d.scroll_id.clone(),
+                task_id: d.task_id.clone(),
+            };
+        }
+        Err(e) => {
+            return ScrollTaskDispatchAck {
+                sender_seq: d.sender_seq,
+                ok: false,
+                reason: format!("authz_error: {e}"),
+                local_agent_id: String::new(),
+                scroll_id: d.scroll_id.clone(),
+                task_id: d.task_id.clone(),
+            };
+        }
+    }
+
+    if let Ok(Some(existing)) = db.scroll_dispatch_inbox_lookup(&peer.daemon_id, d.sender_seq) {
+        return ScrollTaskDispatchAck {
+            sender_seq: d.sender_seq,
+            ok: true,
+            reason: String::new(),
+            local_agent_id: existing,
+            scroll_id: d.scroll_id.clone(),
+            task_id: d.task_id.clone(),
+        };
+    }
+
+    let agent_id = crate::shared::constants::generate_short_id();
+    let now = Utc::now();
+    let cwd_str = if d.cwd.is_empty() { "." } else { &d.cwd };
+    let cwd = std::path::PathBuf::from(cwd_str);
+    let task_text = if d.prompt.is_empty() {
+        d.task_name.clone()
+    } else {
+        d.prompt.clone()
+    };
+    let provider_opt = (!d.provider.is_empty()).then(|| d.provider.clone());
+    let model_opt = (!d.model.is_empty()).then(|| d.model.clone());
+
+    let agent = Agent {
+        id: agent_id.clone(),
+        name: Some(format!("dispatched:{}", d.task_name)),
+        state: AgentState::Queued,
+        task: Some(task_text.clone()),
+        model: model_opt.clone(),
+        provider: provider_opt.clone(),
+        cwd: cwd.clone(),
+        pid: None,
+        session_id: None,
+        exit_code: None,
+        created_at: now,
+        updated_at: now,
+        worker_id: None,
+        restart_policy: RestartPolicy::Never,
+        restart_count: 0,
+        workspace_id: None,
+    };
+    if let Err(e) = db.insert_agent(&agent) {
+        return ScrollTaskDispatchAck {
+            sender_seq: d.sender_seq,
+            ok: false,
+            reason: format!("insert_agent: {e}"),
+            local_agent_id: String::new(),
+            scroll_id: d.scroll_id.clone(),
+            task_id: d.task_id.clone(),
+        };
+    }
+    let queue = QueueRow {
+        id: agent_id.clone(),
+        lane: "default".to_string(),
+        priority: 0,
+        enqueued_at: now,
+        provider_name: provider_opt,
+        cwd: cwd.to_string_lossy().to_string(),
+        model: model_opt,
+        task_text,
+        block_reason: None,
+    };
+    if let Err(e) = db.enqueue_task(&queue) {
+        return ScrollTaskDispatchAck {
+            sender_seq: d.sender_seq,
+            ok: false,
+            reason: format!("enqueue: {e}"),
+            local_agent_id: String::new(),
+            scroll_id: d.scroll_id.clone(),
+            task_id: d.task_id.clone(),
+        };
+    }
+    let _ = db.scroll_dispatch_inbox_record(&peer.daemon_id, d.sender_seq, &agent_id);
+
+    bus.publish(crate::shared::protocol::StreamEvent::AgentCreated { agent });
+    bus.publish(crate::shared::protocol::StreamEvent::AgentQueued {
+        agent_id: agent_id.clone(),
+        lane: "default".to_string(),
+        block_reason: None,
+    });
+
+    ScrollTaskDispatchAck {
+        sender_seq: d.sender_seq,
+        ok: true,
+        reason: String::new(),
+        local_agent_id: agent_id,
+        scroll_id: d.scroll_id.clone(),
+        task_id: d.task_id.clone(),
+    }
+}
+
+/// F5a: scroll-dispatch outbox backend.
+struct ScrollDispatchOutbox<'a> {
+    db: &'a Database,
+}
+
+impl OutboxBackend for ScrollDispatchOutbox<'_> {
+    type Row = crate::daemon::persistence::scroll_dispatch::ScrollDispatchOutboxRow;
+
+    fn next_row(&self, peer_id: &str, now: i64) -> anyhow::Result<Option<Self::Row>> {
+        self.db.scroll_dispatch_next_outbox(peer_id, now)
+    }
+    fn mark_in_flight(&self, row_id: &str) -> anyhow::Result<()> {
+        self.db.scroll_dispatch_mark_in_flight(row_id)
+    }
+    fn mark_delivered(&self, row_id: &str) -> anyhow::Result<()> {
+        self.db.scroll_dispatch_mark_delivered(row_id)
+    }
+    fn mark_failed_retry(&self, row_id: &str, next_attempt_at: i64) -> anyhow::Result<()> {
+        self.db
+            .scroll_dispatch_mark_failed_retry(row_id, next_attempt_at)
+    }
+    fn row_id(row: &Self::Row) -> &str {
+        &row.id
+    }
+    fn row_attempts(row: &Self::Row) -> u32 {
+        row.attempts
+    }
+    fn row_ack_key(row: &Self::Row) -> String {
+        row.sender_seq.to_string()
+    }
+    fn row_to_outbound(row: &Self::Row) -> PeerOutbound {
+        // Payload was serialized at enqueue time as a JSON envelope
+        // carrying the same fields the proto message holds. Decode
+        // here so the over-the-wire proto stays the source of truth.
+        let parsed: ScrollDispatchPayload =
+            serde_json::from_slice(&row.payload).unwrap_or_default();
+        PeerOutbound {
+            msg: Some(peer_outbound::Msg::ScrollTaskDispatch(ScrollTaskDispatch {
+                sender_seq: row.sender_seq,
+                scroll_id: parsed.scroll_id,
+                task_id: parsed.task_id,
+                task_name: parsed.task_name,
+                prompt: parsed.prompt,
+                provider: parsed.provider,
+                model: parsed.model,
+                cwd: parsed.cwd,
+                file_patterns: parsed.file_patterns,
+            })),
+        }
+    }
+}
+
+/// Wire shape of the dispatch outbox payload (JSON in the BLOB column).
+#[derive(serde::Serialize, serde::Deserialize, Default)]
+pub struct ScrollDispatchPayload {
+    pub scroll_id: String,
+    pub task_id: String,
+    pub task_name: String,
+    pub prompt: String,
+    #[serde(default)]
+    pub provider: String,
+    #[serde(default)]
+    pub model: String,
+    #[serde(default)]
+    pub cwd: String,
+    #[serde(default)]
+    pub file_patterns: Vec<String>,
 }
 
 /// F4b: agent-lifecycle federation backend. Drives

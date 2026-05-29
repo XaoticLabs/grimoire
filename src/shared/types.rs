@@ -603,6 +603,13 @@ pub struct Task {
     pub order_index: u32,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+    /// F5a: when set, the scroll coordinator dispatches this task to
+    /// the named peer instead of spawning a local agent. The receiver
+    /// queues a local agent and federates lifecycle back; the
+    /// coordinator's `agent_id` is set to the receiver's local id once
+    /// the dispatch ack arrives.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub peer_name: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -806,6 +813,7 @@ mod tests {
             order_index: 0,
             created_at: Utc::now(),
             updated_at: Utc::now(),
+            peer_name: None,
         }
     }
 }

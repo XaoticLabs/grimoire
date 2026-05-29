@@ -48,6 +48,15 @@ pub enum PeerCommand {
     },
     /// Remove the lifecycle federation with a peer.
     LifecycleUnfederate { name: String },
+    /// F5a: toggle whether this daemon accepts inbound scroll task
+    /// dispatches from `name`. Default is off; this gate must be on
+    /// for the receiver to spawn agents on behalf of a coordinator.
+    SetAcceptDispatch {
+        name: String,
+        /// `true` to accept, `false` to refuse.
+        #[arg(long, default_value_t = true)]
+        accept: bool,
+    },
 }
 
 pub async fn run(cmd: PeerCommand) -> Result<()> {
@@ -66,7 +75,31 @@ pub async fn run(cmd: PeerCommand) -> Result<()> {
             run_lifecycle_federate(&name, &direction).await
         }
         PeerCommand::LifecycleUnfederate { name } => run_lifecycle_unfederate(&name).await,
+        PeerCommand::SetAcceptDispatch { name, accept } => {
+            run_set_accept_dispatch(&name, accept).await
+        }
     }
+}
+
+async fn run_set_accept_dispatch(peer: &str, accept: bool) -> Result<()> {
+    use crate::shared::protocol::PeerSetAcceptDispatchResult;
+    let mut client = DaemonClient::connect().await?;
+    let resp = client
+        .call(
+            "peer.set-accept-dispatch",
+            serde_json::json!({ "peer": peer, "accept": accept }),
+        )
+        .await?;
+    if let Some(err) = resp.error {
+        return Err(anyhow!("set-accept-dispatch failed: {}", err.message));
+    }
+    let result: PeerSetAcceptDispatchResult =
+        serde_json::from_value(resp.result.unwrap_or_default())?;
+    println!(
+        "Peer {} accept_scroll_dispatch = {}.",
+        result.peer, result.accept
+    );
+    Ok(())
 }
 
 async fn run_lifecycle_federate(peer: &str, direction: &str) -> Result<()> {

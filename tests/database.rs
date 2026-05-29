@@ -550,6 +550,7 @@ fn scroll_task_lifecycle() {
         order_index: 0,
         created_at: now,
         updated_at: now,
+        peer_name: None,
     };
     let task_b = Task {
         id: "task-b".to_string(),
@@ -565,6 +566,7 @@ fn scroll_task_lifecycle() {
         order_index: 1,
         created_at: now,
         updated_at: now,
+        peer_name: None,
     };
     let task_c = Task {
         id: "task-c".to_string(),
@@ -580,6 +582,7 @@ fn scroll_task_lifecycle() {
         order_index: 2,
         created_at: now,
         updated_at: now,
+        peer_name: None,
     };
     db.insert_task(&task_a).unwrap();
     db.insert_task(&task_b).unwrap();
@@ -638,6 +641,7 @@ fn scroll_state_transitions_and_active_count() {
         order_index: 0,
         created_at: now,
         updated_at: now,
+        peer_name: None,
     };
     db.insert_task(&task).unwrap();
     db.update_scroll_state("scroll-st", &ScrollState::Active)
@@ -745,6 +749,7 @@ fn dependency_edges_for_scroll() {
             order_index: 0,
             created_at: now,
             updated_at: now,
+            peer_name: None,
         };
         db.insert_task(&task).unwrap();
     }

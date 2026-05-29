@@ -27,6 +27,11 @@ pub struct TaskSpec {
     pub cwd: Option<String>,
     pub file_patterns: Vec<String>,
     pub depends_on: Vec<String>,
+    /// F5a: when set, the coordinator dispatches this task to the
+    /// named peer instead of spawning a local agent. The peer must
+    /// have `accept_scroll_dispatch = 1` and lifecycle federation in
+    /// the inbound direction back to the coordinator.
+    pub peer: Option<String>,
 }
 
 /// Parse a markdown spec file into a [`ScrollSpec`].
@@ -175,6 +180,7 @@ fn walk(content: &str) -> Result<Doc> {
                             cwd: None,
                             file_patterns: Vec::new(),
                             depends_on: Vec::new(),
+                            peer: None,
                         });
                         scope = Scope::InTask {
                             metadata_open: true,
@@ -288,6 +294,11 @@ fn apply_task_metadata(line: &str, task: &mut TaskSpec) {
         task.model = Some(v.trim().to_string());
     } else if let Some(v) = line.strip_prefix("cwd:") {
         task.cwd = Some(v.trim().to_string());
+    } else if let Some(v) = line.strip_prefix("peer:") {
+        let v = v.trim();
+        if !v.is_empty() {
+            task.peer = Some(v.to_string());
+        }
     }
 }
 
@@ -343,6 +354,22 @@ Build the frontend login page.
         assert_eq!(spec.tasks[2].name, "Frontend");
         assert_eq!(spec.tasks[2].provider.as_deref(), Some("aider"));
         assert_eq!(spec.tasks[2].depends_on, vec!["API Routes"]);
+    }
+
+    /// F5a: `peer:` directive on a task marks it for cross-peer
+    /// dispatch and is preserved on the parsed `TaskSpec`.
+    #[test]
+    fn peer_directive_attached_to_task() {
+        let content = r"# Scroll: Federated
+
+## Task: Remote Build
+- peer: build-bot
+
+Run the build on the build-bot peer.
+";
+        let spec = parse_scroll(content).unwrap();
+        assert_eq!(spec.tasks.len(), 1);
+        assert_eq!(spec.tasks[0].peer.as_deref(), Some("build-bot"));
     }
 
     #[test]

@@ -203,6 +203,12 @@ pub async fn start() -> Result<()> {
     let _ = db.agent_lifecycle_reset_in_flight();
     agent_lifecycle_publisher::spawn(db.clone(), event_bus.clone(), peer_registry.clone());
 
+    // F5b: hand peer_registry to scroll_keeper so peer-targeted tasks
+    // dispatch via the outbox path. Also revert any in-flight
+    // scroll-dispatch outbox rows so the drainer reships them.
+    let _ = db.scroll_dispatch_reset_in_flight();
+    scroll_keeper.set_peer_registry(peer_registry.clone()).await;
+
     if let Some(addr) = config.daemon.peer_listen_addr.clone() {
         spawn_peer_listener(addr, peer_registry.clone(), tls_identity.clone());
     }

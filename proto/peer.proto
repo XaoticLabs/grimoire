@@ -99,6 +99,38 @@ message AgentLifecycleAck {
   string reason = 3;
 }
 
+// F5a: cross-peer scroll task dispatch. The coordinator ships one
+// task spec; the receiver queues a local agent (in its own scheduler)
+// and acks with the assigned `local_agent_id`. Lifecycle of that
+// agent flows back via F4b `AgentLifecycleDeliver`, which is how the
+// coordinator learns the task completed.
+message ScrollTaskDispatch {
+  uint64 sender_seq = 1;
+  string scroll_id = 2;
+  string task_id = 3;
+  string task_name = 4;
+  string prompt = 5;
+  string provider = 6;
+  string model = 7;
+  string cwd = 8;
+  repeated string file_patterns = 9;
+}
+
+message ScrollTaskDispatchAck {
+  uint64 sender_seq = 1;
+  bool ok = 2;
+  string reason = 3;
+  // Filled when `ok=true`; the receiver's local agent id for the
+  // dispatched task. Coordinator stores it on the
+  // `scroll_task_dispatches` row so lifecycle events can be matched
+  // back to the originating task.
+  string local_agent_id = 4;
+  // Echo back so the coordinator can look up the dispatch row
+  // without keeping a per-flight side-table.
+  string scroll_id = 5;
+  string task_id = 6;
+}
+
 message PeerOutbound {
   oneof msg {
     Hello hello = 1;
@@ -116,6 +148,8 @@ message PeerOutbound {
     WorkspaceEventAck workspace_event_ack = 13;
     AgentLifecycleDeliver agent_lifecycle_deliver = 14;
     AgentLifecycleAck agent_lifecycle_ack = 15;
+    ScrollTaskDispatch scroll_task_dispatch = 16;
+    ScrollTaskDispatchAck scroll_task_dispatch_ack = 17;
   }
 }
 
@@ -135,5 +169,7 @@ message PeerInbound {
     WorkspaceEventAck workspace_event_ack = 13;
     AgentLifecycleDeliver agent_lifecycle_deliver = 14;
     AgentLifecycleAck agent_lifecycle_ack = 15;
+    ScrollTaskDispatch scroll_task_dispatch = 16;
+    ScrollTaskDispatchAck scroll_task_dispatch_ack = 17;
   }
 }

@@ -245,6 +245,18 @@ enum Commands {
         /// Abandon a scroll
         #[arg(long)]
         abandon: bool,
+
+        /// F5a: dispatch one task of this scroll to a peer instead of
+        /// running it locally. Pair with `--to <peer>`. The receiver
+        /// must have `peer set-accept-dispatch` enabled for the
+        /// coordinator.
+        #[arg(long = "dispatch-task", requires_all = ["id", "to"])]
+        dispatch_task: Option<String>,
+
+        /// Peer name to dispatch the task to. Used with
+        /// `--dispatch-task`.
+        #[arg(long)]
+        to: Option<String>,
     },
 
     /// Show daemon status
@@ -528,7 +540,9 @@ async fn main() {
                     id,
                     activate,
                     abandon,
-                } => cli::commands::scroll::run(id, activate, abandon).await,
+                    dispatch_task,
+                    to,
+                } => cli::commands::scroll::run(id, activate, abandon, dispatch_task, to).await,
                 Commands::Status { json } => cli::commands::status::run(json).await,
                 Commands::Queue { json } => cli::commands::queue::run(json).await,
                 Commands::Ps { json } => cli::commands::ps::run(json).await,

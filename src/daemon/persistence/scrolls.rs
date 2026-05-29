@@ -54,8 +54,8 @@ impl super::Database {
     pub fn insert_task(&self, task: &Task) -> Result<()> {
         let file_patterns_json = serde_json::to_string(&task.file_patterns)?;
         self.exec(
-            "INSERT INTO tasks (id, scroll_id, name, prompt, state, agent_id, provider, model, cwd, file_patterns, order_index, created_at, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+            "INSERT INTO tasks (id, scroll_id, name, prompt, state, agent_id, provider, model, cwd, file_patterns, order_index, created_at, updated_at, peer_name)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
             params![
                 task.id,
                 task.scroll_id,
@@ -70,6 +70,7 @@ impl super::Database {
                 task.order_index,
                 task.created_at.to_rfc3339(),
                 task.updated_at.to_rfc3339(),
+                task.peer_name,
             ],
         )?;
         Ok(())
@@ -85,16 +86,25 @@ impl super::Database {
 
     pub fn get_tasks_for_scroll(&self, scroll_id: &str) -> Result<Vec<Task>> {
         self.query_vec(
-            "SELECT id, scroll_id, name, prompt, state, agent_id, provider, model, cwd, file_patterns, order_index, created_at, updated_at
+            "SELECT id, scroll_id, name, prompt, state, agent_id, provider, model, cwd, file_patterns, order_index, created_at, updated_at, peer_name
              FROM tasks WHERE scroll_id = ?1 ORDER BY order_index ASC",
             params![scroll_id],
             row_to_task,
         )
     }
 
+    pub fn get_task(&self, task_id: &str) -> Result<Option<Task>> {
+        self.query_opt(
+            "SELECT id, scroll_id, name, prompt, state, agent_id, provider, model, cwd, file_patterns, order_index, created_at, updated_at, peer_name
+             FROM tasks WHERE id = ?1",
+            params![task_id],
+            row_to_task,
+        )
+    }
+
     pub fn get_task_by_agent_id(&self, agent_id: &str) -> Result<Option<Task>> {
         self.query_opt(
-            "SELECT id, scroll_id, name, prompt, state, agent_id, provider, model, cwd, file_patterns, order_index, created_at, updated_at
+            "SELECT id, scroll_id, name, prompt, state, agent_id, provider, model, cwd, file_patterns, order_index, created_at, updated_at, peer_name
              FROM tasks WHERE agent_id = ?1",
             params![agent_id],
             row_to_task,

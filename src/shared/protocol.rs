@@ -1370,6 +1370,38 @@ pub struct AgentLifecycleUnfederateResult {
     pub removed: bool,
 }
 
+// --- F5a: cross-peer scroll task dispatch ---
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PeerSetAcceptDispatchParams {
+    pub peer: String,
+    pub accept: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PeerSetAcceptDispatchResult {
+    pub peer: String,
+    pub accept: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ScrollDispatchTaskParams {
+    pub scroll_id: String,
+    pub task_id: String,
+    pub peer: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ScrollDispatchTaskResult {
+    pub scroll_id: String,
+    pub task_id: String,
+    pub peer: String,
+    /// The outbox sender_seq of the queued delivery. Useful for
+    /// operators verifying that the row landed; not strictly needed
+    /// for the receiver side.
+    pub sender_seq: u64,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -16,6 +16,7 @@ mod agents;
 mod mail;
 mod pacts;
 mod peers;
+pub mod scroll_dispatch;
 mod scrolls;
 mod supervision;
 mod wake;
@@ -646,6 +647,69 @@ impl Database {
                 ON workspace_event_inbox(workspace_id);",
         )?;
 
+        // F5a: peer dispatch column on tasks. Coordinator records which
+        // peer (if any) the task is dispatched to. NULL ⇒ local task.
+        add_column_if_missing(&conn, "tasks", "peer_name", "peer_name TEXT")?;
+
+        // F5a: peers.accept_scroll_dispatch — opt-in flag. The dispatch
+        // handler refuses inbound `ScrollTaskDispatch` from peers that
+        // haven't been enrolled, so operators can pin which peers may
+        // hand them work.
+        add_column_if_missing(
+            &conn,
+            "peers",
+            "accept_scroll_dispatch",
+            "accept_scroll_dispatch INTEGER NOT NULL DEFAULT 0",
+        )?;
+
+        // F5a: scroll task dispatches. One row per (scroll, task,
+        // peer) dispatch. `remote_agent_id` is filled in once the
+        // receiver acks. `state` is `pending` → `dispatched` →
+        // `complete`/`failed`/`cancelled`. Mirrors the outbox-row
+        // semantics but is the *durable record* of the dispatch
+        // outside the at-least-once wire layer (the wire side lives
+        // in `scroll_dispatch_outbox` / `scroll_dispatch_inbox`).
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS scroll_task_dispatches (
+                id              TEXT PRIMARY KEY,
+                scroll_id       TEXT NOT NULL,
+                task_id         TEXT NOT NULL,
+                peer_id         TEXT NOT NULL REFERENCES peers(id) ON DELETE CASCADE,
+                remote_agent_id TEXT,
+                state           TEXT NOT NULL,
+                created_at      INTEGER NOT NULL,
+                updated_at      INTEGER NOT NULL,
+                UNIQUE (scroll_id, task_id, peer_id)
+             );
+             CREATE INDEX IF NOT EXISTS scroll_task_dispatches_by_task
+                ON scroll_task_dispatches(task_id);
+             CREATE INDEX IF NOT EXISTS scroll_task_dispatches_by_remote
+                ON scroll_task_dispatches(peer_id, remote_agent_id);
+
+             CREATE TABLE IF NOT EXISTS scroll_dispatch_outbox (
+                id              TEXT PRIMARY KEY,
+                peer_id         TEXT NOT NULL REFERENCES peers(id) ON DELETE CASCADE,
+                sender_seq      INTEGER NOT NULL,
+                payload         BLOB NOT NULL,
+                created_at      INTEGER NOT NULL,
+                attempts        INTEGER NOT NULL DEFAULT 0,
+                next_attempt_at INTEGER NOT NULL,
+                state           TEXT NOT NULL
+             );
+             CREATE UNIQUE INDEX IF NOT EXISTS scroll_dispatch_outbox_seq
+                ON scroll_dispatch_outbox(peer_id, sender_seq);
+             CREATE INDEX IF NOT EXISTS scroll_dispatch_outbox_due
+                ON scroll_dispatch_outbox(peer_id, state, next_attempt_at);
+
+             CREATE TABLE IF NOT EXISTS scroll_dispatch_inbox (
+                sender_daemon_id TEXT NOT NULL,
+                sender_seq       INTEGER NOT NULL,
+                local_agent_id   TEXT NOT NULL,
+                received_at      INTEGER NOT NULL,
+                PRIMARY KEY (sender_daemon_id, sender_seq)
+             );",
+        )?;
+
         // F4b: agent lifecycle federation. Subscription rows are
         // per-peer (no per-agent filter on the wire — receivers filter
         // via the `RemoteAgentCompletion` wake source's config). Outbox
@@ -848,6 +912,7 @@ pub(super) fn row_to_task(row: &rusqlite::Row) -> Result<Task> {
     let created_str: String = row.get(11)?;
     let updated_str: String = row.get(12)?;
 
+    let peer_name: Option<String> = row.get(13).unwrap_or(None);
     Ok(Task {
         id: row.get(0)?,
         scroll_id: row.get(1)?,
@@ -862,6 +927,7 @@ pub(super) fn row_to_task(row: &rusqlite::Row) -> Result<Task> {
         order_index: row.get(10)?,
         created_at: parse_timestamp(&created_str)?,
         updated_at: parse_timestamp(&updated_str)?,
+        peer_name,
     })
 }
 
@@ -1004,6 +1070,7 @@ mod tests {
             order_index: 0,
             created_at: Utc::now(),
             updated_at: Utc::now(),
+            peer_name: None,
         }
     }
 
