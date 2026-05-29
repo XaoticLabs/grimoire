@@ -290,6 +290,11 @@ pub enum WakeSourceKind {
     /// matcher runs over the rel-paths the home daemon reported — there
     /// is no on-disk worktree on this side to canonicalize against.
     RemoteFileWatch,
+    /// F4b: lifecycle events from a federated agent, delivered via
+    /// `AgentLifecycleDeliver` and republished as
+    /// `RemoteAgentStateChanged`. Filters on (sender_daemon_id,
+    /// remote_agent_id, target states).
+    RemoteAgentCompletion,
 }
 
 impl_state_enum!(WakeSourceKind {
@@ -297,6 +302,7 @@ impl_state_enum!(WakeSourceKind {
     FileWatch => "file_watch",
     ParentCompletion => "parent_completion",
     RemoteFileWatch => "remote_file_watch",
+    RemoteAgentCompletion => "remote_agent_completion",
 });
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]

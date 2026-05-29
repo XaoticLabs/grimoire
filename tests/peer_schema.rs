@@ -245,6 +245,50 @@ fn find_shadow_workspace_resolves() {
     );
 }
 
+/// F4b: agent-lifecycle federation rows merge direction the same way
+/// workspace/namespace federations do; `outbound_peers` honors
+/// direction; inbox dedupe is `INSERT OR IGNORE` on
+/// `(sender_daemon_id, sender_seq)`.
+#[test]
+fn agent_lifecycle_federation_and_inbox() {
+    use grimoire::shared::types::FederationDirection;
+    let db = fresh_db();
+    let peer = fake_peer("epsilon", "0123456789abcdef0123456789abcdef");
+    db.insert_peer(&peer).unwrap();
+
+    let d1 = db
+        .upsert_agent_lifecycle_federation("alf1", &peer.id, FederationDirection::Outbound, 0)
+        .unwrap();
+    assert_eq!(d1, FederationDirection::Outbound);
+    let d2 = db
+        .upsert_agent_lifecycle_federation("alf2", &peer.id, FederationDirection::Inbound, 0)
+        .unwrap();
+    assert_eq!(d2, FederationDirection::Both);
+
+    let peers = db.agent_lifecycle_outbound_peers().unwrap();
+    assert_eq!(peers, vec![peer.id.clone()]);
+    assert!(
+        db.agent_lifecycle_inbound_authorized(&peer.id).unwrap(),
+        "Both direction includes inbound"
+    );
+
+    // Inbox dedupe.
+    assert!(db.agent_lifecycle_inbox_record("homeA", 1).unwrap());
+    assert!(
+        !db.agent_lifecycle_inbox_record("homeA", 1).unwrap(),
+        "replay suppressed"
+    );
+    assert!(db.agent_lifecycle_inbox_record("homeA", 2).unwrap());
+    assert!(
+        db.agent_lifecycle_inbox_record("homeB", 1).unwrap(),
+        "different sender is independent"
+    );
+
+    // Unfederate is idempotent.
+    assert_eq!(db.delete_agent_lifecycle_federation(&peer.id).unwrap(), 1);
+    assert_eq!(db.delete_agent_lifecycle_federation(&peer.id).unwrap(), 0);
+}
+
 /// F3c: the inbox dedupe table is INSERT-OR-IGNORE keyed on
 /// `(sender_daemon_id, sender_seq)` — a replayed event returns `false`
 /// so the receiver knows to drop without republishing. Different

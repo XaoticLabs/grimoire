@@ -28,6 +28,9 @@ use crate::daemon::wake_sources::file_watch::{FileWatchConfig, FileWatchSource};
 use crate::daemon::wake_sources::parent_completion::{
     ParentCompletionConfig, ParentCompletionSource,
 };
+use crate::daemon::wake_sources::remote_agent_completion::{
+    RemoteAgentCompletionConfig, RemoteAgentCompletionSource,
+};
 use crate::daemon::wake_sources::remote_file_watch::{
     RemoteFileWatchConfig, RemoteFileWatchSource,
 };
@@ -105,6 +108,9 @@ pub enum ArmedHandle {
         _task: tokio::task::JoinHandle<()>,
     },
     RemoteFileWatch {
+        _task: tokio::task::JoinHandle<()>,
+    },
+    RemoteAgentCompletion {
         _task: tokio::task::JoinHandle<()>,
     },
 }
@@ -587,6 +593,41 @@ impl WakeRegistry {
                 });
                 Ok(ArmedHandle::RemoteFileWatch { _task: task })
             }
+            WakeSourceKind::RemoteAgentCompletion => {
+                let cfg: RemoteAgentCompletionConfig = serde_json::from_str(&src.config_json)
+                    .map_err(|e| anyhow!("invalid_remote_agent_completion_config_json: {e}"))?;
+                let source = RemoteAgentCompletionSource::new(cfg)?;
+                let mut rx = self.bus.subscribe();
+                let fire_tx = self.fire_tx.clone();
+                let wake_id = src.id.clone();
+                let task = tokio::spawn(async move {
+                    while let Ok(ev) = rx.recv().await {
+                        if let StreamEvent::RemoteAgentStateChanged {
+                            sender_daemon_id,
+                            agent_id,
+                            new_state,
+                            ..
+                        } = ev
+                            && source.should_fire(&sender_daemon_id, &agent_id, &new_state)
+                        {
+                            let body = format!(
+                                "[remote-parent {}@{} -> {}]",
+                                agent_id,
+                                sender_daemon_id,
+                                new_state.as_str(),
+                            );
+                            let _ = fire_tx
+                                .send(FireMsg {
+                                    wake_id: wake_id.clone(),
+                                    body,
+                                    via: None,
+                                })
+                                .await;
+                        }
+                    }
+                });
+                Ok(ArmedHandle::RemoteAgentCompletion { _task: task })
+            }
         }
     }
 }
@@ -612,6 +653,11 @@ fn validate_config(kind: WakeSourceKind, config_json: &str) -> Result<()> {
             let cfg: RemoteFileWatchConfig = serde_json::from_str(config_json)
                 .map_err(|e| anyhow!("invalid_remote_file_watch_config_json: {e}"))?;
             RemoteFileWatchSource::new(cfg)?;
+        }
+        WakeSourceKind::RemoteAgentCompletion => {
+            let cfg: RemoteAgentCompletionConfig = serde_json::from_str(config_json)
+                .map_err(|e| anyhow!("invalid_remote_agent_completion_config_json: {e}"))?;
+            RemoteAgentCompletionSource::new(cfg)?;
         }
     }
     Ok(())
@@ -653,6 +699,16 @@ impl WakeRegistry {
     ) -> Result<String> {
         let json = serde_json::to_string(&cfg)?;
         self.register(agent_id, WakeSourceKind::RemoteFileWatch, &json)
+            .await
+    }
+
+    pub async fn register_remote_agent_completion(
+        self: &Arc<Self>,
+        agent_id: &str,
+        cfg: RemoteAgentCompletionConfig,
+    ) -> Result<String> {
+        let json = serde_json::to_string(&cfg)?;
+        self.register(agent_id, WakeSourceKind::RemoteAgentCompletion, &json)
             .await
     }
 }

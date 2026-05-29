@@ -12,11 +12,12 @@ use tracing::debug;
 
 use crate::shared::peer_proto::peer_client::PeerClient as TonicPeerClient;
 use crate::shared::peer_proto::{
-    Hello, MailAck, MemoryAck, MemoryDeliver, PeerInbound, PeerOutbound, WorkspaceEventAck,
-    WorkspaceEventDeliver, peer_inbound, peer_outbound,
+    AgentLifecycleAck, AgentLifecycleDeliver, Hello, MailAck, MemoryAck, MemoryDeliver,
+    PeerInbound, PeerOutbound, WorkspaceEventAck, WorkspaceEventDeliver, peer_inbound,
+    peer_outbound,
 };
 use crate::shared::protocol::StreamEvent;
-use crate::shared::types::{Peer, PeerState};
+use crate::shared::types::{AgentState, Peer, PeerState};
 
 use super::event_bus::EventBus;
 use super::peer_outbox::{InFlight, OutboxBackend, handle_ack_outcome, pump_one_row};
@@ -170,10 +171,12 @@ async fn run_once(
     let mut in_flight_mail: Option<InFlight> = None;
     let mut in_flight_memory: Option<InFlight> = None;
     let mut in_flight_workspace: Option<InFlight> = None;
+    let mut in_flight_lifecycle: Option<InFlight> = None;
 
     let mail_backend = MailOutbox { db: &registry.db };
     let memory_backend = MemoryOutbox { db: &registry.db };
     let workspace_backend = WorkspaceEventOutbox { db: &registry.db };
+    let lifecycle_backend = AgentLifecycleOutbox { db: &registry.db };
 
     // Initial pump in case rows were queued while disconnected.
     let removing = peer_removing(registry, &peer.id);
@@ -201,6 +204,14 @@ async fn run_once(
         &mut in_flight_workspace,
     )
     .await?;
+    pump_one_row(
+        &lifecycle_backend,
+        &peer.id,
+        removing,
+        &out_tx,
+        &mut in_flight_lifecycle,
+    )
+    .await?;
 
     loop {
         tokio::select! {
@@ -219,18 +230,20 @@ async fn run_once(
                     Ok(None) => return Err(anyhow::anyhow!("stream closed")),
                     Err(e) => return Err(e.into()),
                 };
-                handle_inbound(registry, peer, msg, &out_tx, &mail_backend, &memory_backend, &workspace_backend, &mut in_flight_mail, &mut in_flight_memory, &mut in_flight_workspace).await?;
+                handle_inbound(registry, peer, msg, &out_tx, &mail_backend, &memory_backend, &workspace_backend, &lifecycle_backend, &mut in_flight_mail, &mut in_flight_memory, &mut in_flight_workspace, &mut in_flight_lifecycle).await?;
                 let _ = registry.db.set_peer_last_seen(&peer.id, unix_now());
                 let removing = peer_removing(registry, &peer.id);
                 pump_one_row(&mail_backend, &peer.id, removing, &out_tx, &mut in_flight_mail).await?;
                 pump_one_row(&memory_backend, &peer.id, removing, &out_tx, &mut in_flight_memory).await?;
                 pump_one_row(&workspace_backend, &peer.id, removing, &out_tx, &mut in_flight_workspace).await?;
+                pump_one_row(&lifecycle_backend, &peer.id, removing, &out_tx, &mut in_flight_lifecycle).await?;
             }
             () = notify_outbox.notified() => {
                 let removing = peer_removing(registry, &peer.id);
                 pump_one_row(&mail_backend, &peer.id, removing, &out_tx, &mut in_flight_mail).await?;
                 pump_one_row(&memory_backend, &peer.id, removing, &out_tx, &mut in_flight_memory).await?;
                 pump_one_row(&workspace_backend, &peer.id, removing, &out_tx, &mut in_flight_workspace).await?;
+                pump_one_row(&lifecycle_backend, &peer.id, removing, &out_tx, &mut in_flight_lifecycle).await?;
             }
         }
     }
@@ -256,9 +269,11 @@ async fn handle_inbound(
     mail_backend: &MailOutbox<'_>,
     memory_backend: &MemoryOutbox<'_>,
     workspace_backend: &WorkspaceEventOutbox<'_>,
+    lifecycle_backend: &AgentLifecycleOutbox<'_>,
     in_flight_mail: &mut Option<InFlight>,
     in_flight_memory: &mut Option<InFlight>,
     in_flight_workspace: &mut Option<InFlight>,
+    in_flight_lifecycle: &mut Option<InFlight>,
 ) -> anyhow::Result<()> {
     // Each arm is enumerated explicitly so dispatch for a new variant is a
     // compile error rather than silently routed to a wildcard.
@@ -343,6 +358,27 @@ async fn handle_inbound(
             }
             Ok(())
         }
+        Some(peer_inbound::Msg::AgentLifecycleDeliver(d)) => {
+            let ack = apply_agent_lifecycle_deliver(&registry.db, &registry.bus, peer, &d);
+            let _ = out_tx
+                .send(PeerOutbound {
+                    msg: Some(peer_outbound::Msg::AgentLifecycleAck(ack)),
+                })
+                .await;
+            Ok(())
+        }
+        Some(peer_inbound::Msg::AgentLifecycleAck(ack)) => {
+            let key = ack.sender_seq.to_string();
+            if matches!(in_flight_lifecycle.as_ref(), Some(f) if f.ack_key == key) {
+                let slot = in_flight_lifecycle.take().expect("just matched");
+                handle_ack_outcome(lifecycle_backend, &slot, ack.ok);
+                if !ack.ok {
+                    tracing::warn!(peer = %peer.name, seq = ack.sender_seq, reason = %ack.reason,
+                        "agent lifecycle delivery rejected");
+                }
+            }
+            Ok(())
+        }
         Some(peer_inbound::Msg::Goodbye(_)) => Err(anyhow::anyhow!("peer goodbye")),
         None => Ok(()),
     }
@@ -414,6 +450,94 @@ pub fn apply_memory_deliver(
             ok: false,
             reason: format!("apply_error: {e}"),
         },
+    }
+}
+
+/// Wire shape of the `AgentLifecycleDeliver.payload_json` field.
+/// Matches the snapshot the producer's bus-subscriber emits.
+#[derive(serde::Serialize, serde::Deserialize)]
+pub struct AgentLifecyclePayload {
+    pub agent_id: String,
+    pub old_state: AgentState,
+    pub new_state: AgentState,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub task: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub exit_code: Option<i32>,
+}
+
+/// F4b: republish an inbound `AgentLifecycleDeliver` as a local
+/// `RemoteAgentStateChanged` stream event. Shared between the outbound
+/// client's reverse stream and the inbound server.
+pub fn apply_agent_lifecycle_deliver(
+    db: &Database,
+    bus: &EventBus,
+    peer: &Peer,
+    d: &AgentLifecycleDeliver,
+) -> AgentLifecycleAck {
+    match db.agent_lifecycle_inbound_authorized(&peer.id) {
+        Ok(true) => {}
+        Ok(false) => {
+            return AgentLifecycleAck {
+                sender_seq: d.sender_seq,
+                ok: false,
+                reason: "lifecycle_not_federated_inbound".into(),
+            };
+        }
+        Err(e) => {
+            return AgentLifecycleAck {
+                sender_seq: d.sender_seq,
+                ok: false,
+                reason: format!("authz_error: {e}"),
+            };
+        }
+    }
+
+    match db.agent_lifecycle_inbox_record(&peer.daemon_id, d.sender_seq) {
+        Ok(true) => {}
+        Ok(false) => {
+            return AgentLifecycleAck {
+                sender_seq: d.sender_seq,
+                ok: true,
+                reason: String::new(),
+            };
+        }
+        Err(e) => {
+            return AgentLifecycleAck {
+                sender_seq: d.sender_seq,
+                ok: false,
+                reason: format!("inbox_error: {e}"),
+            };
+        }
+    }
+
+    let parsed: AgentLifecyclePayload = match serde_json::from_str(&d.payload_json) {
+        Ok(p) => p,
+        Err(e) => {
+            return AgentLifecycleAck {
+                sender_seq: d.sender_seq,
+                ok: false,
+                reason: format!("bad_payload: {e}"),
+            };
+        }
+    };
+
+    bus.publish(StreamEvent::RemoteAgentStateChanged {
+        sender_daemon_id: peer.daemon_id.clone(),
+        agent_id: parsed.agent_id,
+        old_state: parsed.old_state,
+        new_state: parsed.new_state,
+        name: parsed.name,
+        task: parsed.task,
+        exit_code: parsed.exit_code,
+    });
+
+    AgentLifecycleAck {
+        sender_seq: d.sender_seq,
+        ok: true,
+        reason: String::new(),
     }
 }
 
@@ -615,6 +739,49 @@ impl OutboxBackend for WorkspaceEventOutbox<'_> {
             msg: Some(peer_outbound::Msg::WorkspaceEventDeliver(
                 crate::shared::peer_proto::WorkspaceEventDeliver {
                     workspace_id: row.workspace_id.clone(),
+                    sender_seq: row.sender_seq,
+                    payload_json: String::from_utf8_lossy(&row.payload).into_owned(),
+                },
+            )),
+        }
+    }
+}
+
+/// F4b: agent-lifecycle federation backend. Drives
+/// `agent_lifecycle_outbox` rows over the lifecycle channel.
+struct AgentLifecycleOutbox<'a> {
+    db: &'a Database,
+}
+
+impl OutboxBackend for AgentLifecycleOutbox<'_> {
+    type Row = crate::daemon::persistence::agent_lifecycle::AgentLifecycleOutboxRow;
+
+    fn next_row(&self, peer_id: &str, now: i64) -> anyhow::Result<Option<Self::Row>> {
+        self.db.agent_lifecycle_next_outbox(peer_id, now)
+    }
+    fn mark_in_flight(&self, row_id: &str) -> anyhow::Result<()> {
+        self.db.agent_lifecycle_mark_in_flight(row_id)
+    }
+    fn mark_delivered(&self, row_id: &str) -> anyhow::Result<()> {
+        self.db.agent_lifecycle_mark_delivered(row_id)
+    }
+    fn mark_failed_retry(&self, row_id: &str, next_attempt_at: i64) -> anyhow::Result<()> {
+        self.db
+            .agent_lifecycle_mark_failed_retry(row_id, next_attempt_at)
+    }
+    fn row_id(row: &Self::Row) -> &str {
+        &row.id
+    }
+    fn row_attempts(row: &Self::Row) -> u32 {
+        row.attempts
+    }
+    fn row_ack_key(row: &Self::Row) -> String {
+        row.sender_seq.to_string()
+    }
+    fn row_to_outbound(row: &Self::Row) -> PeerOutbound {
+        PeerOutbound {
+            msg: Some(peer_outbound::Msg::AgentLifecycleDeliver(
+                crate::shared::peer_proto::AgentLifecycleDeliver {
                     sender_seq: row.sender_seq,
                     payload_json: String::from_utf8_lossy(&row.payload).into_owned(),
                 },

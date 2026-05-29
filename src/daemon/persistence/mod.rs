@@ -11,6 +11,7 @@ use crate::shared::types::{
     Subscription, Task, TaskState, WakeSource, WakeSourceKind, WakeSourceState,
 };
 
+pub mod agent_lifecycle;
 mod agents;
 mod mail;
 mod pacts;
@@ -643,6 +644,41 @@ impl Database {
              );
              CREATE INDEX IF NOT EXISTS workspace_event_inbox_by_ws
                 ON workspace_event_inbox(workspace_id);",
+        )?;
+
+        // F4b: agent lifecycle federation. Subscription rows are
+        // per-peer (no per-agent filter on the wire — receivers filter
+        // via the `RemoteAgentCompletion` wake source's config). Outbox
+        // mirrors `workspace_event_outbox`. Inbox dedupes on
+        // `(sender_daemon_id, sender_seq)`.
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS agent_lifecycle_federations (
+                id           TEXT PRIMARY KEY,
+                peer_id      TEXT NOT NULL REFERENCES peers(id) ON DELETE CASCADE,
+                direction    TEXT NOT NULL,
+                created_at   INTEGER NOT NULL,
+                UNIQUE (peer_id)
+             );
+             CREATE TABLE IF NOT EXISTS agent_lifecycle_outbox (
+                id              TEXT PRIMARY KEY,
+                peer_id         TEXT NOT NULL REFERENCES peers(id) ON DELETE CASCADE,
+                sender_seq      INTEGER NOT NULL,
+                payload         BLOB NOT NULL,
+                created_at      INTEGER NOT NULL,
+                attempts        INTEGER NOT NULL DEFAULT 0,
+                next_attempt_at INTEGER NOT NULL,
+                state           TEXT NOT NULL
+             );
+             CREATE UNIQUE INDEX IF NOT EXISTS agent_lifecycle_outbox_seq
+                ON agent_lifecycle_outbox(peer_id, sender_seq);
+             CREATE INDEX IF NOT EXISTS agent_lifecycle_outbox_due
+                ON agent_lifecycle_outbox(peer_id, state, next_attempt_at);
+             CREATE TABLE IF NOT EXISTS agent_lifecycle_inbox (
+                sender_daemon_id TEXT NOT NULL,
+                sender_seq       INTEGER NOT NULL,
+                received_at      INTEGER NOT NULL,
+                PRIMARY KEY (sender_daemon_id, sender_seq)
+             );",
         )?;
 
         Ok(())

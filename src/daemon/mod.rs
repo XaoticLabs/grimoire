@@ -1,5 +1,6 @@
 #![allow(missing_docs)] // Daemon internals; documentation pass pending per-module.
 
+pub mod agent_lifecycle_publisher;
 pub mod agent_manager;
 pub mod clock;
 pub mod daemon_id;
@@ -194,6 +195,13 @@ pub async fn start() -> Result<()> {
     // after enqueueing a federated event, rather than waiting on the
     // peer's next heartbeat tick.
     workspace_watcher::set_peer_registry(peer_registry.clone());
+
+    // F4b: agent-lifecycle producer. One bus subscriber fans every
+    // local `StateChange` event into the lifecycle outbox for each
+    // federated peer. Boot recovery: revert any in-flight rows so
+    // the drainer reships.
+    let _ = db.agent_lifecycle_reset_in_flight();
+    agent_lifecycle_publisher::spawn(db.clone(), event_bus.clone(), peer_registry.clone());
 
     if let Some(addr) = config.daemon.peer_listen_addr.clone() {
         spawn_peer_listener(addr, peer_registry.clone(), tls_identity.clone());

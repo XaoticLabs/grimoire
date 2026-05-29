@@ -1032,6 +1032,26 @@ pub enum StreamEvent {
         level: String,
         source: String,
     },
+    /// F4b: republished agent state-change from a federated peer.
+    /// Produced by the inbound `AgentLifecycleDeliver` handler after
+    /// dedupe; consumed by `RemoteAgentCompletion` wake sources and
+    /// the dashboard's federated-agents view.
+    #[serde(rename = "remote_agent_state_changed")]
+    RemoteAgentStateChanged {
+        sender_daemon_id: DaemonId,
+        agent_id: AgentId,
+        old_state: AgentState,
+        new_state: AgentState,
+        /// Optional snapshot fields the producer ships alongside the
+        /// state — `None` when the producer didn't include them
+        /// (older daemons / minimal payloads).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        name: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        task: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        exit_code: Option<i32>,
+    },
 }
 
 impl StreamEvent {
@@ -1069,6 +1089,9 @@ impl StreamEvent {
                 agent_id.as_deref()
             }
             Self::Notification { agent_id, .. } => agent_id.as_deref(),
+            // Federated state changes report the remote agent's id so
+            // local wake sources can match against it.
+            Self::RemoteAgentStateChanged { agent_id, .. } => Some(agent_id),
             Self::ScrollProgress { .. }
             | Self::TaskStateChange { .. }
             | Self::WorkerRegistered { .. }
@@ -1144,6 +1167,7 @@ impl StreamEvent {
             Self::TopicFederationAdded { .. } => "topic_federation_added",
             Self::TopicFederationRemoved { .. } => "topic_federation_removed",
             Self::Notification { .. } => "notification",
+            Self::RemoteAgentStateChanged { .. } => "remote_agent_state_changed",
         }
     }
 }
@@ -1315,6 +1339,34 @@ pub struct WorkspaceUnfederateParams {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorkspaceUnfederateResult {
+    pub removed: bool,
+}
+
+// --- F4b: agent lifecycle federation ---
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentLifecycleFederateParams {
+    pub peer: String,
+    pub direction: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentLifecycleFederateResult {
+    pub peer: String,
+    pub direction: String,
+    /// How many existing agents were snapshotted into the outbox as a
+    /// replay so the receiver gets current state without waiting for
+    /// the next transition. `0` if direction is purely inbound.
+    pub replayed: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentLifecycleUnfederateParams {
+    pub peer: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentLifecycleUnfederateResult {
     pub removed: bool,
 }
 

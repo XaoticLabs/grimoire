@@ -181,6 +181,20 @@ impl PeerService for PeerSvc {
                             }))
                             .await;
                     }
+                    Some(peer_outbound::Msg::AgentLifecycleDeliver(d)) => {
+                        // F4b: republish as local RemoteAgentStateChanged.
+                        let ack = super::peer_client::apply_agent_lifecycle_deliver(
+                            &db,
+                            &bus,
+                            &peer_for_loop,
+                            &d,
+                        );
+                        let _ = out_tx
+                            .send(Ok(PeerInbound {
+                                msg: Some(peer_inbound::Msg::AgentLifecycleAck(ack)),
+                            }))
+                            .await;
+                    }
                     Some(peer_outbound::Msg::Goodbye(_)) => break,
                     _ => {} // ignore Hello/HelloAck/etc
                 }

@@ -27,7 +27,8 @@ pub enum WakeCommand {
         #[arg(long = "on-parent", conflicts_with_all = ["cron", "watch", "remote_watch"])]
         on_parent: Option<String>,
         /// Comma-separated parent target states (default: complete).
-        #[arg(long, requires = "on_parent")]
+        /// Used with `--on-parent` or `--on-remote-parent`.
+        #[arg(long)]
         states: Option<String>,
         /// Shadow workspace id to watch for federated file events.
         /// Pair with --watch globs (and optionally --ignore). When set,
@@ -35,6 +36,18 @@ pub enum WakeCommand {
         /// rather than local notify events.
         #[arg(long = "remote-watch", conflicts_with_all = ["cron", "on_parent"])]
         remote_watch: Option<String>,
+        /// Remote agent id (federated parent). Requires
+        /// `--sender-daemon` to identify which peer's lifecycle stream
+        /// to subscribe to. Optional `--states` filters target states.
+        #[arg(
+            long = "on-remote-parent",
+            conflicts_with_all = ["cron", "watch", "on_parent", "remote_watch"]
+        )]
+        on_remote_parent: Option<String>,
+        /// `grimd-...` daemon id of the home daemon for the remote
+        /// parent. Required with `--on-remote-parent`.
+        #[arg(long, requires = "on_remote_parent")]
+        sender_daemon: Option<String>,
     },
     /// List wake sources. Without an agent id, lists all.
     List {
@@ -57,6 +70,8 @@ pub async fn run(cmd: WakeCommand) -> Result<()> {
             on_parent,
             states,
             remote_watch,
+            on_remote_parent,
+            sender_daemon,
         } => {
             run_add(
                 &agent_id,
@@ -66,6 +81,8 @@ pub async fn run(cmd: WakeCommand) -> Result<()> {
                 on_parent,
                 states,
                 remote_watch,
+                on_remote_parent,
+                sender_daemon,
             )
             .await
         }
@@ -75,6 +92,7 @@ pub async fn run(cmd: WakeCommand) -> Result<()> {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn run_add(
     agent_prefix: &str,
     cron: Option<String>,
@@ -83,12 +101,38 @@ async fn run_add(
     on_parent: Option<String>,
     states: Option<String>,
     remote_watch: Option<String>,
+    on_remote_parent: Option<String>,
+    sender_daemon: Option<String>,
 ) -> Result<()> {
     let agent_id = resolve_agent_id(agent_prefix).await?;
     let mut client = DaemonClient::connect().await?;
 
     let (kind, config) = if let Some(expr) = cron {
         ("cron".to_string(), serde_json::json!({ "expr": expr }))
+    } else if let Some(remote_agent_id) = on_remote_parent {
+        let Some(daemon) = sender_daemon else {
+            eprintln!(
+                "{} --on-remote-parent requires --sender-daemon",
+                "Error:".red()
+            );
+            std::process::exit(2);
+        };
+        let states_vec: Vec<String> = states
+            .map(|s| {
+                s.split(',')
+                    .map(|t| t.trim().to_string())
+                    .filter(|t| !t.is_empty())
+                    .collect()
+            })
+            .unwrap_or_default();
+        (
+            "remote_agent_completion".to_string(),
+            serde_json::json!({
+                "sender_daemon_id": daemon,
+                "remote_agent_id": remote_agent_id,
+                "states": states_vec,
+            }),
+        )
     } else if let Some(workspace_id) = remote_watch {
         if watch.is_empty() {
             eprintln!(
@@ -134,7 +178,7 @@ async fn run_add(
         )
     } else {
         eprintln!(
-            "{} one of --cron / --watch / --on-parent / --remote-watch is required",
+            "{} one of --cron / --watch / --on-parent / --remote-watch / --on-remote-parent is required",
             "Error:".red()
         );
         std::process::exit(2);

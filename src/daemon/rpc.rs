@@ -302,6 +302,8 @@ pub async fn handle_rpc(
             handle_workspace_federate_subscribe(peer_registry, req).await
         }
         "workspace.unfederate" => handle_workspace_unfederate(peer_registry, req).await,
+        "agent.lifecycle-federate" => handle_agent_lifecycle_federate(peer_registry, req).await,
+        "agent.lifecycle-unfederate" => handle_agent_lifecycle_unfederate(peer_registry, req).await,
         "memory.put" => handle_memory_put(db, bus, req).await,
         "memory.get" => handle_memory_get(db, req).await,
         "memory.list" => handle_memory_list(db, req).await,
@@ -2610,5 +2612,114 @@ async fn handle_workspace_unfederate(
     {
         Ok(n) => RpcResponse::success_json(req.id, &WorkspaceUnfederateResult { removed: n > 0 }),
         Err(e) => RpcResponse::error(req.id, -32000, format!("unfederate: {e}")),
+    }
+}
+
+/// F4b: opt this daemon into agent-lifecycle federation with one peer.
+/// Direction follows the existing federation convention
+/// (`outbound`/`inbound`/`both`); identical directions on both sides
+/// merge to `both`.
+///
+/// When the resulting direction includes `outbound`, snapshot every
+/// active agent's current state into the outbox so the receiver gets
+/// a current view without waiting for the next transition. The agents
+/// `Dormant`/`Active`/`Failed`/`Complete`/`Restarting` are all
+/// snapshotted; `Queued` ones are not (they have no meaningful state
+/// for a remote observer yet).
+async fn handle_agent_lifecycle_federate(
+    peer_registry: &Arc<PeerRegistry>,
+    req: RpcRequest,
+) -> RpcResponse {
+    use crate::daemon::peer_client::AgentLifecyclePayload;
+    use crate::shared::protocol::{AgentLifecycleFederateParams, AgentLifecycleFederateResult};
+    use crate::shared::types::{AgentState, FederationDirection};
+    let params: AgentLifecycleFederateParams = try_params!(req);
+    let direction: FederationDirection = match params.direction.parse() {
+        Ok(d) => d,
+        Err(_) => return rpc_err(req.id, "invalid_direction"),
+    };
+    let peer = try_rpc!(resolve_peer(req.id, peer_registry, &params.peer).await);
+    let peer_id = peer.id.clone();
+    let fed_id = crate::shared::constants::generate_short_id();
+    let now = unix_now();
+
+    let outcome: Result<(FederationDirection, u32), String> = peer_registry
+        .db
+        .run(move |db| -> Result<(FederationDirection, u32), String> {
+            let final_dir = db
+                .upsert_agent_lifecycle_federation(&fed_id, &peer_id, direction, now)
+                .map_err(|e| format!("federate: {e}"))?;
+
+            let mut replayed = 0u32;
+            if matches!(
+                final_dir,
+                FederationDirection::Outbound | FederationDirection::Both
+            ) {
+                let agents = db.list_agents(None).map_err(|e| format!("snapshot: {e}"))?;
+                for a in agents {
+                    if matches!(a.state, AgentState::Queued) {
+                        continue;
+                    }
+                    let payload = AgentLifecyclePayload {
+                        agent_id: a.id.clone(),
+                        // No prior state for a synthetic snapshot — use
+                        // `new == old` so receivers can detect "this is
+                        // a snapshot, not a transition" if they ever care.
+                        old_state: a.state.clone(),
+                        new_state: a.state,
+                        name: a.name,
+                        task: a.task,
+                        exit_code: a.exit_code,
+                    };
+                    let bytes = match serde_json::to_vec(&payload) {
+                        Ok(b) => b,
+                        Err(e) => return Err(format!("encode: {e}")),
+                    };
+                    if let Err(e) = db.agent_lifecycle_enqueue(&peer_id, &bytes) {
+                        return Err(format!("enqueue: {e}"));
+                    }
+                    replayed += 1;
+                }
+            }
+            Ok((final_dir, replayed))
+        })
+        .await;
+
+    match outcome {
+        Ok((dir, replayed)) => {
+            // Poke the drainer so any replayed rows ship immediately.
+            if replayed > 0 {
+                peer_registry.notify_outbox(&peer.id).await;
+            }
+            RpcResponse::success_json(
+                req.id,
+                &AgentLifecycleFederateResult {
+                    peer: params.peer,
+                    direction: dir.as_str().to_string(),
+                    replayed,
+                },
+            )
+        }
+        Err(msg) => RpcResponse::error(req.id, -32000, msg),
+    }
+}
+
+async fn handle_agent_lifecycle_unfederate(
+    peer_registry: &Arc<PeerRegistry>,
+    req: RpcRequest,
+) -> RpcResponse {
+    use crate::shared::protocol::{AgentLifecycleUnfederateParams, AgentLifecycleUnfederateResult};
+    let params: AgentLifecycleUnfederateParams = try_params!(req);
+    let peer = try_rpc!(resolve_peer(req.id, peer_registry, &params.peer).await);
+    let peer_id = peer.id.clone();
+    match peer_registry
+        .db
+        .run(move |db| db.delete_agent_lifecycle_federation(&peer_id))
+        .await
+    {
+        Ok(n) => {
+            RpcResponse::success_json(req.id, &AgentLifecycleUnfederateResult { removed: n > 0 })
+        }
+        Err(e) => RpcResponse::error(req.id, -32000, format!("lifecycle_unfederate: {e}")),
     }
 }

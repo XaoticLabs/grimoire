@@ -83,6 +83,22 @@ message WorkspaceEventAck {
   string reason = 3;
 }
 
+// F4b: agent lifecycle federation. `payload_json` carries the
+// `RemoteAgentStateChanged`-shape body — agent_id + new_state +
+// optional metadata. Receiver dedupes by (sender_daemon_id,
+// sender_seq) and republishes locally as a `RemoteAgentStateChanged`
+// stream event so wake sources and dashboards can react.
+message AgentLifecycleDeliver {
+  uint64 sender_seq = 1;
+  string payload_json = 2;
+}
+
+message AgentLifecycleAck {
+  uint64 sender_seq = 1;
+  bool ok = 2;
+  string reason = 3;
+}
+
 message PeerOutbound {
   oneof msg {
     Hello hello = 1;
@@ -98,6 +114,8 @@ message PeerOutbound {
     MemoryAck memory_ack = 11;
     WorkspaceEventDeliver workspace_event_deliver = 12;
     WorkspaceEventAck workspace_event_ack = 13;
+    AgentLifecycleDeliver agent_lifecycle_deliver = 14;
+    AgentLifecycleAck agent_lifecycle_ack = 15;
   }
 }
 
@@ -115,5 +133,7 @@ message PeerInbound {
     MemoryAck memory_ack = 11;
     WorkspaceEventDeliver workspace_event_deliver = 12;
     WorkspaceEventAck workspace_event_ack = 13;
+    AgentLifecycleDeliver agent_lifecycle_deliver = 14;
+    AgentLifecycleAck agent_lifecycle_ack = 15;
   }
 }

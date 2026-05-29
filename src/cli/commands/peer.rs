@@ -6,7 +6,8 @@ use colored::Colorize;
 
 use crate::cli::client::DaemonClient;
 use crate::shared::protocol::{
-    PeerAddResult, PeerListResult, PeerLocalCertResult, PeerPingResult, PeerRemoveResult,
+    AgentLifecycleFederateResult, AgentLifecycleUnfederateResult, PeerAddResult, PeerListResult,
+    PeerLocalCertResult, PeerPingResult, PeerRemoveResult,
 };
 
 #[derive(Debug, Subcommand)]
@@ -34,6 +35,19 @@ pub enum PeerCommand {
     Remove { name: String },
     /// Ping a peer (returns RTT and stream state).
     Ping { name: String },
+    /// F4b: opt this daemon into agent-lifecycle federation with a peer.
+    /// Direction merges the same way as workspace/namespace federations
+    /// (outbound + inbound -> both). Outbound side replays current
+    /// agent states so the receiver starts with a populated view.
+    LifecycleFederate {
+        /// Peer name.
+        name: String,
+        /// `outbound` (default) / `inbound` / `both`.
+        #[arg(long, default_value = "outbound")]
+        direction: String,
+    },
+    /// Remove the lifecycle federation with a peer.
+    LifecycleUnfederate { name: String },
 }
 
 pub async fn run(cmd: PeerCommand) -> Result<()> {
@@ -48,7 +62,55 @@ pub async fn run(cmd: PeerCommand) -> Result<()> {
         PeerCommand::List => run_list().await,
         PeerCommand::Remove { name } => run_remove(&name).await,
         PeerCommand::Ping { name } => run_ping(&name).await,
+        PeerCommand::LifecycleFederate { name, direction } => {
+            run_lifecycle_federate(&name, &direction).await
+        }
+        PeerCommand::LifecycleUnfederate { name } => run_lifecycle_unfederate(&name).await,
     }
+}
+
+async fn run_lifecycle_federate(peer: &str, direction: &str) -> Result<()> {
+    let mut client = DaemonClient::connect().await?;
+    let resp = client
+        .call(
+            "agent.lifecycle-federate",
+            serde_json::json!({ "peer": peer, "direction": direction }),
+        )
+        .await?;
+    if let Some(err) = resp.error {
+        return Err(anyhow!("lifecycle federate failed: {}", err.message));
+    }
+    let result: AgentLifecycleFederateResult =
+        serde_json::from_value(resp.result.unwrap_or_default())?;
+    println!(
+        "{} {} (direction={}, replayed={} agent state snapshots)",
+        "Federated agent lifecycle with".green(),
+        result.peer,
+        result.direction,
+        result.replayed,
+    );
+    Ok(())
+}
+
+async fn run_lifecycle_unfederate(peer: &str) -> Result<()> {
+    let mut client = DaemonClient::connect().await?;
+    let resp = client
+        .call(
+            "agent.lifecycle-unfederate",
+            serde_json::json!({ "peer": peer }),
+        )
+        .await?;
+    if let Some(err) = resp.error {
+        return Err(anyhow!("lifecycle unfederate failed: {}", err.message));
+    }
+    let result: AgentLifecycleUnfederateResult =
+        serde_json::from_value(resp.result.unwrap_or_default())?;
+    if result.removed {
+        println!("Removed lifecycle federation with {peer}.");
+    } else {
+        println!("No lifecycle federation with {peer} was configured.");
+    }
+    Ok(())
 }
 
 async fn run_add(name: &str, url: &str, token: &str, cert: &std::path::Path) -> Result<()> {
