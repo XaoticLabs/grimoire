@@ -167,6 +167,20 @@ impl PeerService for PeerSvc {
                             }))
                             .await;
                     }
+                    Some(peer_outbound::Msg::WorkspaceEventDeliver(d)) => {
+                        // F3c: republish onto local shadow workspace.
+                        let ack = super::peer_client::apply_workspace_event_deliver(
+                            &db,
+                            &bus,
+                            &peer_for_loop,
+                            &d,
+                        );
+                        let _ = out_tx
+                            .send(Ok(PeerInbound {
+                                msg: Some(peer_inbound::Msg::WorkspaceEventAck(ack)),
+                            }))
+                            .await;
+                    }
                     Some(peer_outbound::Msg::Goodbye(_)) => break,
                     _ => {} // ignore Hello/HelloAck/etc
                 }

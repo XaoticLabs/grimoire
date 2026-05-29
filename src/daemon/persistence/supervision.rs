@@ -189,17 +189,14 @@ impl super::Database {
              WHERE agent_id = ?1 \
              ORDER BY attempted_at DESC, id DESC LIMIT ?2",
         )?;
-        let rows = stmt.query_map(
-            params![agent_id, i64::from(limit.clamp(1, 500))],
-            |r| {
-                Ok(crate::shared::protocol::SupervisorHistoryRow {
-                    id: r.get(0)?,
-                    attempted_at: r.get(1)?,
-                    outcome: r.get(2)?,
-                    error_summary: r.get(3)?,
-                })
-            },
-        )?;
+        let rows = stmt.query_map(params![agent_id, i64::from(limit.clamp(1, 500))], |r| {
+            Ok(crate::shared::protocol::SupervisorHistoryRow {
+                id: r.get(0)?,
+                attempted_at: r.get(1)?,
+                outcome: r.get(2)?,
+                error_summary: r.get(3)?,
+            })
+        })?;
         Ok(rows.filter_map(std::result::Result::ok).collect())
     }
 

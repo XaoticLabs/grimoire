@@ -479,10 +479,7 @@ impl Supervisor {
     /// the error_summary so the audit trail distinguishes it from a
     /// policy-driven restart, then dispatches via the shared
     /// `enqueue_restart_core` path.
-    pub async fn manual_restart(
-        self: &Arc<Self>,
-        agent_id: &str,
-    ) -> Result<ManualRestartOutcome> {
+    pub async fn manual_restart(self: &Arc<Self>, agent_id: &str) -> Result<ManualRestartOutcome> {
         // Refuse if there's already a pending restart for this agent.
         {
             let pending = self.pending.lock().await;

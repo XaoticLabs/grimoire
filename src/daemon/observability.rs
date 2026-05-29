@@ -58,8 +58,8 @@ fn init_fmt_only() {
 
 #[cfg(feature = "otel")]
 fn init_with_otel() -> anyhow::Result<()> {
-    use opentelemetry::trace::TracerProvider as _;
     use opentelemetry::KeyValue;
+    use opentelemetry::trace::TracerProvider as _;
     use opentelemetry_otlp::WithExportConfig;
     use opentelemetry_sdk::Resource;
     use opentelemetry_sdk::trace::{Sampler, TracerProvider};

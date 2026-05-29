@@ -216,3 +216,60 @@ fn shadow_workspace_roundtrips() {
         "shadow path uses sentinel scheme to preserve UNIQUE(path)"
     );
 }
+
+/// F3c: `find_shadow_workspace` resolves a `(home_daemon_id,
+/// home_workspace_id)` pair back to the local shadow row, and returns
+/// `None` when there is no matching shadow.
+#[test]
+fn find_shadow_workspace_resolves() {
+    use chrono::Utc;
+    let db = fresh_db();
+    db.insert_shadow_workspace("frontend-shadow", "homeD", "frontend", "main", Utc::now())
+        .unwrap();
+
+    let hit = db
+        .find_shadow_workspace("homeD", "frontend")
+        .unwrap()
+        .unwrap();
+    assert_eq!(hit, "frontend-shadow");
+
+    assert!(
+        db.find_shadow_workspace("homeD", "backend")
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        db.find_shadow_workspace("otherD", "frontend")
+            .unwrap()
+            .is_none()
+    );
+}
+
+/// F3c: the inbox dedupe table is INSERT-OR-IGNORE keyed on
+/// `(sender_daemon_id, sender_seq)` — a replayed event returns `false`
+/// so the receiver knows to drop without republishing. Different
+/// senders sharing the same seq are independent rows.
+#[test]
+fn workspace_event_inbox_dedupes() {
+    let db = fresh_db();
+
+    assert!(
+        db.workspace_event_inbox_record("homeA", 1, "shadow1")
+            .unwrap()
+    );
+    assert!(
+        !db.workspace_event_inbox_record("homeA", 1, "shadow1")
+            .unwrap(),
+        "replay of same (sender, seq) is suppressed"
+    );
+    assert!(
+        db.workspace_event_inbox_record("homeA", 2, "shadow1")
+            .unwrap(),
+        "new seq from same sender is accepted"
+    );
+    assert!(
+        db.workspace_event_inbox_record("homeB", 1, "shadow1")
+            .unwrap(),
+        "same seq from a different sender is independent"
+    );
+}

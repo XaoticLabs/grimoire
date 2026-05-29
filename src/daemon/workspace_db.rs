@@ -131,9 +131,14 @@ impl Database {
         Ok(())
     }
 
+    /// Workspaces with an on-disk worktree. Shadow workspaces are
+    /// excluded — their `path` is the `shadow://…` sentinel, not a
+    /// real directory, so the boot reconciler would otherwise treat
+    /// them as orphan rows and delete them.
     pub fn list_workspace_paths(&self) -> Result<Vec<(String, PathBuf, WorkspaceState)>> {
         let conn = self.workspace_conn_lock();
-        let mut stmt = conn.prepare("SELECT id, path, state FROM workspaces")?;
+        let mut stmt =
+            conn.prepare("SELECT id, path, state FROM workspaces WHERE kind = 'Local'")?;
         let mut rows = stmt.query([])?;
         let mut out = Vec::new();
         while let Some(row) = rows.next()? {
@@ -662,6 +667,58 @@ impl Database {
             "UPDATE workspace_event_outbox SET state = 'pending' WHERE state = 'in_flight'",
             [],
         )?)
+    }
+
+    /// F3c: try to record an inbound workspace event from
+    /// `sender_daemon_id` at `sender_seq` targeting local shadow
+    /// `workspace_id`. Returns `true` if this is a first sighting
+    /// (caller should republish), `false` if it was already recorded
+    /// (caller should still ack `ok: true` so the sender drops the row).
+    pub fn workspace_event_inbox_record(
+        &self,
+        sender_daemon_id: &str,
+        sender_seq: u64,
+        workspace_id: &str,
+    ) -> Result<bool> {
+        let conn = self.workspace_conn_lock();
+        let seq_i = i64::try_from(sender_seq).unwrap_or(i64::MAX);
+        let n = conn.execute(
+            "INSERT OR IGNORE INTO workspace_event_inbox
+                (sender_daemon_id, sender_seq, workspace_id, received_at)
+             VALUES (?1, ?2, ?3, ?4)",
+            params![
+                sender_daemon_id,
+                seq_i,
+                workspace_id,
+                Utc::now().timestamp(),
+            ],
+        )?;
+        Ok(n > 0)
+    }
+
+    /// F3c: resolve the local shadow workspace id that mirrors a
+    /// `(home_daemon_id, home_workspace_id)` pair. The sender ships its
+    /// own (home) workspace id on the wire; the receiver looks up which
+    /// of its local shadows is pointing at that pair to find the
+    /// republish target. Returns `None` if no shadow is configured —
+    /// the caller treats that as "drop with positive ack" so the sender
+    /// stops retrying.
+    pub fn find_shadow_workspace(
+        &self,
+        home_daemon_id: &str,
+        home_workspace_id: &str,
+    ) -> Result<Option<String>> {
+        let conn = self.workspace_conn_lock();
+        let id: Option<String> = conn
+            .query_row(
+                "SELECT id FROM workspaces
+                 WHERE kind = 'Shadow' AND home_daemon_id = ?1 AND home_workspace_id = ?2
+                 LIMIT 1",
+                params![home_daemon_id, home_workspace_id],
+                |r| r.get(0),
+            )
+            .ok();
+        Ok(id)
     }
 
     /// Insert a shadow workspace row pointing at a remote home. The

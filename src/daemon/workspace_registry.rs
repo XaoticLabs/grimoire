@@ -15,7 +15,9 @@ use tokio::sync::Mutex;
 
 use crate::shared::constants;
 use crate::shared::protocol::StreamEvent;
-use crate::shared::types::{Workspace, WorkspaceListEntry, WorkspaceState, validate_workspace_id};
+use crate::shared::types::{
+    Workspace, WorkspaceKind, WorkspaceListEntry, WorkspaceState, validate_workspace_id,
+};
 
 use super::event_bus::EventBus;
 use super::persistence::Database;
@@ -329,6 +331,13 @@ impl WorkspaceRegistry {
     }
 
     async fn ensure_watcher_started(&self, ws: &Workspace) {
+        // F3c: shadow workspaces have no on-disk worktree — they get
+        // their `WorkspaceFileChanged` events republished by the peer
+        // client from inbound federation messages, so there's nothing
+        // for `notify` to watch here.
+        if matches!(ws.kind, WorkspaceKind::Shadow) {
+            return;
+        }
         let mut handles = self.watchers.lock().await;
         if handles.contains_key(&ws.id) {
             return;

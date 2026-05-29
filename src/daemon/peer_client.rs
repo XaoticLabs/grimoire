@@ -12,12 +12,13 @@ use tracing::debug;
 
 use crate::shared::peer_proto::peer_client::PeerClient as TonicPeerClient;
 use crate::shared::peer_proto::{
-    Hello, MailAck, MemoryAck, MemoryDeliver, PeerInbound, PeerOutbound, peer_inbound,
-    peer_outbound,
+    Hello, MailAck, MemoryAck, MemoryDeliver, PeerInbound, PeerOutbound, WorkspaceEventAck,
+    WorkspaceEventDeliver, peer_inbound, peer_outbound,
 };
 use crate::shared::protocol::StreamEvent;
 use crate::shared::types::{Peer, PeerState};
 
+use super::event_bus::EventBus;
 use super::peer_outbox::{InFlight, OutboxBackend, handle_ack_outcome, pump_one_row};
 use super::peer_registry::PeerRegistry;
 use super::persistence::{Database, unix_now};
@@ -322,24 +323,7 @@ async fn handle_inbound(
             Ok(())
         }
         Some(peer_inbound::Msg::WorkspaceEventDeliver(d)) => {
-            // F3b producer-only slice: republish is F3c. We ack
-            // *positively* (`ok: true`) so the sender drops the row
-            // and doesn't burn its retry budget on a known gap. The
-            // event is intentionally dropped locally; a debug log
-            // records the discard so the gap is still observable
-            // without spamming warn-level once federation is wired
-            // on both ends.
-            tracing::debug!(
-                peer = %peer.name,
-                workspace = %d.workspace_id,
-                seq = d.sender_seq,
-                "dropping inbound workspace event (consumer not implemented; F3c)",
-            );
-            let ack = crate::shared::peer_proto::WorkspaceEventAck {
-                sender_seq: d.sender_seq,
-                ok: true,
-                reason: String::new(),
-            };
+            let ack = apply_workspace_event_deliver(&registry.db, &registry.bus, peer, &d);
             let _ = out_tx
                 .send(PeerOutbound {
                     msg: Some(peer_outbound::Msg::WorkspaceEventAck(ack)),
@@ -430,6 +414,128 @@ pub fn apply_memory_deliver(
             ok: false,
             reason: format!("apply_error: {e}"),
         },
+    }
+}
+
+/// Wire shape of the `WorkspaceEventDeliver.payload_json` field.
+/// Matches what the watcher serializes in `fanout_to_federated_peers`.
+#[derive(serde::Deserialize)]
+struct WorkspaceEventPayload {
+    #[serde(default)]
+    paths: Vec<String>,
+    #[serde(default)]
+    kinds: Vec<String>,
+    #[serde(default)]
+    truncated: u32,
+}
+
+/// F3c: republish an inbound `WorkspaceEventDeliver` onto the local
+/// shadow workspace. Shared between the outbound client's reverse
+/// stream (peer_client) and the inbound server (peer_rpc_server).
+///
+/// Ack semantics:
+/// - `ok: true` — applied OR a known terminal state (no shadow
+///   configured, already-seen). The sender drops the row.
+/// - `ok: false` — authz failure or payload error. The sender stops
+///   retrying (the row exits via the same `mark_delivered` ack path,
+///   intentionally — workspace events are time-sensitive, retrying
+///   stale fs events forever is worse than dropping them).
+pub fn apply_workspace_event_deliver(
+    db: &Database,
+    bus: &EventBus,
+    peer: &Peer,
+    d: &WorkspaceEventDeliver,
+) -> WorkspaceEventAck {
+    // Resolve the local shadow workspace. The sender ships its own
+    // (home) workspace id; we look up which of our shadows points at
+    // (peer.daemon_id, home_workspace_id).
+    let shadow_id = match db.find_shadow_workspace(&peer.daemon_id, &d.workspace_id) {
+        Ok(Some(id)) => id,
+        Ok(None) => {
+            // No shadow configured locally — drop with positive ack so
+            // the sender doesn't retry forever.
+            tracing::debug!(
+                peer = %peer.name,
+                home_workspace = %d.workspace_id,
+                "no local shadow for inbound workspace event; dropping",
+            );
+            return WorkspaceEventAck {
+                sender_seq: d.sender_seq,
+                ok: true,
+                reason: String::new(),
+            };
+        }
+        Err(e) => {
+            return WorkspaceEventAck {
+                sender_seq: d.sender_seq,
+                ok: false,
+                reason: format!("shadow_lookup_error: {e}"),
+            };
+        }
+    };
+
+    match db.workspace_federation_inbound_authorized(&peer.id, &shadow_id) {
+        Ok(true) => {}
+        Ok(false) => {
+            return WorkspaceEventAck {
+                sender_seq: d.sender_seq,
+                ok: false,
+                reason: "workspace_not_federated_inbound".into(),
+            };
+        }
+        Err(e) => {
+            return WorkspaceEventAck {
+                sender_seq: d.sender_seq,
+                ok: false,
+                reason: format!("authz_error: {e}"),
+            };
+        }
+    }
+
+    // Dedupe by (sender_daemon_id, sender_seq). Already-seen → drop
+    // with positive ack; replay is the sender's normal retry path.
+    match db.workspace_event_inbox_record(&peer.daemon_id, d.sender_seq, &shadow_id) {
+        Ok(true) => {}
+        Ok(false) => {
+            return WorkspaceEventAck {
+                sender_seq: d.sender_seq,
+                ok: true,
+                reason: String::new(),
+            };
+        }
+        Err(e) => {
+            return WorkspaceEventAck {
+                sender_seq: d.sender_seq,
+                ok: false,
+                reason: format!("inbox_error: {e}"),
+            };
+        }
+    }
+
+    let parsed: WorkspaceEventPayload = match serde_json::from_str(&d.payload_json) {
+        Ok(p) => p,
+        Err(e) => {
+            return WorkspaceEventAck {
+                sender_seq: d.sender_seq,
+                ok: false,
+                reason: format!("bad_payload: {e}"),
+            };
+        }
+    };
+
+    super::workspace_watcher::publish_workspace_file_change(
+        &shadow_id,
+        db,
+        bus,
+        &parsed.paths,
+        &parsed.kinds,
+        parsed.truncated,
+    );
+
+    WorkspaceEventAck {
+        sender_seq: d.sender_seq,
+        ok: true,
+        reason: String::new(),
     }
 }
 

@@ -629,6 +629,22 @@ impl Database {
                 ON workspace_event_outbox(peer_id, state, next_attempt_at);",
         )?;
 
+        // F3c: receiver-side dedupe. `(sender_daemon_id, sender_seq)` is
+        // the at-least-once correlation key — the sender retries until
+        // it gets a positive ack, so the receiver must ignore replays.
+        // `received_at` is purely informational / for future pruning.
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS workspace_event_inbox (
+                sender_daemon_id TEXT NOT NULL,
+                sender_seq       INTEGER NOT NULL,
+                workspace_id     TEXT NOT NULL,
+                received_at      INTEGER NOT NULL,
+                PRIMARY KEY (sender_daemon_id, sender_seq)
+             );
+             CREATE INDEX IF NOT EXISTS workspace_event_inbox_by_ws
+                ON workspace_event_inbox(workspace_id);",
+        )?;
+
         Ok(())
     }
 

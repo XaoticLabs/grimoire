@@ -174,14 +174,7 @@ fn emit_batch(workspace_id: &str, db: &Database, bus: &EventBus, buffer: &mut Ve
         .collect();
     let kinds: Vec<String> = buffer.iter().take(take).map(|r| r.kind.clone()).collect();
 
-    bus.publish(StreamEvent::WorkspaceFileChanged {
-        workspace_id: workspace_id.to_string(),
-        paths: paths.clone(),
-        kinds: kinds.clone(),
-        truncated_count,
-    });
-
-    publish_files_topic(db, bus, workspace_id, &paths, &kinds, truncated_count);
+    publish_workspace_file_change(workspace_id, db, bus, &paths, &kinds, truncated_count);
 
     // F3b: fan out to federated peers. One outbox row per peer with
     // direction `outbound` or `both`. Failures are logged but never
@@ -190,6 +183,27 @@ fn emit_batch(workspace_id: &str, db: &Database, bus: &EventBus, buffer: &mut Ve
     fanout_to_federated_peers(db, workspace_id, &paths, &kinds, truncated_count);
 
     buffer.clear();
+}
+
+/// Publish a `WorkspaceFileChanged` stream event and topic mail. The
+/// shared path between the watcher (local FS changes) and the F3c
+/// federation receiver (events arriving from a home daemon onto a
+/// shadow workspace), so shadows and locals emit byte-identical events.
+pub fn publish_workspace_file_change(
+    workspace_id: &str,
+    db: &Database,
+    bus: &EventBus,
+    paths: &[String],
+    kinds: &[String],
+    truncated_count: u32,
+) {
+    bus.publish(StreamEvent::WorkspaceFileChanged {
+        workspace_id: workspace_id.to_string(),
+        paths: paths.to_vec(),
+        kinds: kinds.to_vec(),
+        truncated_count,
+    });
+    publish_files_topic(db, bus, workspace_id, paths, kinds, truncated_count);
 }
 
 fn fanout_to_federated_peers(
