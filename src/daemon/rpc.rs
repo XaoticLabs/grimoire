@@ -281,6 +281,7 @@ pub async fn handle_rpc(
         "budget.list" => handle_budget_list(manager, db, req).await,
         "eval.record" => handle_eval_record(db, req).await,
         "eval.list" => handle_eval_list(db, req).await,
+        "eval.scores" => handle_eval_scores(db, req).await,
         "mail.send" => handle_mail_send(db, bus, peer_registry, daemon_id, req).await,
         "mail.ask" => handle_mail_ask(db, bus, peer_registry, daemon_id, req).await,
         "mail.tender" => handle_mail_tender(db, bus, peer_registry, daemon_id, req).await,
@@ -902,6 +903,23 @@ async fn handle_eval_list(db: &Arc<Database>, req: RpcRequest) -> RpcResponse {
     RpcResponse::success_json(req.id, &crate::shared::protocol::EvalListResult { results })
 }
 
+/// Latest score per evaluated target across the whole circle. Lets the CLI
+/// (`grim circle --eval-score-lt`) filter and decorate without an N+1 fanout.
+async fn handle_eval_scores(db: &Arc<Database>, req: RpcRequest) -> RpcResponse {
+    let rows = match db.run(Database::latest_eval_scores_all).await {
+        Ok(r) => r,
+        Err(e) => return RpcResponse::error(req.id, -32000, format!("latest_eval_scores: {e}")),
+    };
+    let scores = rows
+        .into_iter()
+        .map(|(target_id, score)| crate::shared::protocol::EvalScoreEntry { target_id, score })
+        .collect();
+    RpcResponse::success_json(
+        req.id,
+        &crate::shared::protocol::EvalScoresResult { scores },
+    )
+}
+
 /// Return the provider-extracted final result text for an agent. Mirrors
 /// `manager.agent_result()` (the in-process accessor used by pact
 /// `{output}` injection) over the RPC, so the CLI can read an evaluator's
@@ -1503,11 +1521,14 @@ async fn handle_mail_ack(db: &Arc<Database>, bus: &EventBus, req: RpcRequest) ->
 
     let mail_id = params.mail_id.clone();
     // Lookup + state mutation in one trip; tail handles event emission.
+    // Accepts short prefixes; ambiguous prefix surfaces as `ambiguous_mail_prefix`.
     let outcome: Result<Result<Option<Mail>, anyhow::Error>, anyhow::Error> = db
         .run(
             move |db| -> Result<Result<Option<Mail>, anyhow::Error>, anyhow::Error> {
-                let Some(mail) = db.get_mail(&mail_id)? else {
-                    return Ok(Ok(None));
+                let mail = match db.get_mail_by_prefix(&mail_id) {
+                    Ok(Some(m)) => m,
+                    Ok(None) => return Ok(Ok(None)),
+                    Err(e) => return Ok(Err(e)),
                 };
                 match mail.state {
                     MailState::Pending => {
@@ -1526,7 +1547,13 @@ async fn handle_mail_ack(db: &Arc<Database>, bus: &EventBus, req: RpcRequest) ->
     let mail = match outcome {
         Ok(Ok(Some(m))) => m,
         Ok(Ok(None)) => return rpc_err(req.id, "mail_not_found"),
-        Ok(Err(e)) => return RpcResponse::error(req.id, -32000, format!("set_state: {e}")),
+        Ok(Err(e)) => {
+            let msg = e.to_string();
+            if msg.starts_with("Ambiguous mail prefix") {
+                return rpc_err(req.id, "ambiguous_mail_prefix");
+            }
+            return RpcResponse::error(req.id, -32000, format!("set_state: {e}"));
+        }
         Err(e) => return RpcResponse::error(req.id, -32000, format!("db: {e}")),
     };
 
@@ -1654,7 +1681,7 @@ async fn handle_workspace_create(reg: &Arc<WorkspaceRegistry>, req: RpcRequest) 
         let _ = e;
         return rpc_err(req.id, "invalid_workspace_name");
     }
-    match reg
+    let ws = match reg
         .create(
             &params.name,
             std::path::Path::new(&params.repo_path),
@@ -1662,15 +1689,27 @@ async fn handle_workspace_create(reg: &Arc<WorkspaceRegistry>, req: RpcRequest) 
         )
         .await
     {
-        Ok(ws) => RpcResponse::success_json(
-            req.id,
-            &WorkspaceCreateResult {
-                id: ws.id,
-                path: ws.path,
-            },
-        ),
-        Err(e) => rpc_err(req.id, e.code()),
+        Ok(ws) => ws,
+        Err(e) => return rpc_err(req.id, e.code()),
+    };
+    if let Some(src) = params.copy_memory_from {
+        // Best-effort: log on failure but don't unwind workspace creation.
+        if let Err(e) = reg.db().memory_copy_workspace(&src, &ws.id) {
+            tracing::warn!(
+                target = %ws.id,
+                source = %src,
+                error = %e,
+                "workspace.create: copy_memory_from failed; new workspace is empty"
+            );
+        }
     }
+    RpcResponse::success_json(
+        req.id,
+        &WorkspaceCreateResult {
+            id: ws.id,
+            path: ws.path,
+        },
+    )
 }
 
 fn handle_workspace_list(reg: &Arc<WorkspaceRegistry>, req: RpcRequest) -> RpcResponse {

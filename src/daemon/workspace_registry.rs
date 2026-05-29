@@ -130,6 +130,13 @@ pub struct WorkspaceRegistry {
 }
 
 impl WorkspaceRegistry {
+    /// Hand the underlying database back so callers (notably `rpc.rs`) can
+    /// run workspace-adjacent queries without piping a second `Arc<Database>`
+    /// through the call site.
+    pub const fn db(&self) -> &Arc<Database> {
+        &self.db
+    }
+
     pub fn new(db: Arc<Database>, bus: EventBus, git: Arc<dyn GitRunner>) -> Arc<Self> {
         Arc::new(Self {
             db,

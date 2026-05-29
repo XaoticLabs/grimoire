@@ -55,6 +55,63 @@ pub fn format_circle(agents: &[AgentSummary]) {
     println!("{}", format_circle_text(agents));
 }
 
+/// Render the circle with an extra `SCORE` column (latest eval verdict).
+/// Used by `grim circle --eval-score-lt`. Missing scores show as `-`.
+pub fn format_circle_with_scores<S: std::hash::BuildHasher>(
+    agents: &[AgentSummary],
+    scores: &std::collections::HashMap<String, f64, S>,
+) {
+    if agents.is_empty() {
+        println!("No agents match the filter.");
+        return;
+    }
+    let mut out = String::new();
+    let _ = writeln!(
+        out,
+        "{:<10} {:<12} {:<10} {:<8} {:<6} {:<6} TASK",
+        "ID", "NAME", "STATE", "RESTART", "AGE", "SCORE",
+    );
+    out.push_str(&"-".repeat(76));
+    out.push('\n');
+    for agent in agents {
+        let name = agent
+            .name
+            .as_deref()
+            .unwrap_or("-")
+            .chars()
+            .take(10)
+            .collect::<String>();
+        let task = agent
+            .task
+            .as_deref()
+            .unwrap_or("-")
+            .chars()
+            .take(35)
+            .collect::<String>();
+        let restart_col = match agent.restart_policy {
+            RestartPolicy::Never => "-".to_string(),
+            RestartPolicy::OnFailure => {
+                format_restart_with_cap(agent.restart_count, agent.max_restarts)
+            }
+        };
+        let score_col = scores
+            .get(&agent.id)
+            .map_or_else(|| "-".to_string(), |s| format!("{s:.2}"));
+        let _ = writeln!(
+            out,
+            "{:<10} {:<12} {:<10} {:<8} {:<6} {:<6} {}",
+            agent.id,
+            name,
+            agent.state.as_str(),
+            restart_col,
+            format_age(agent.age_secs),
+            score_col,
+            task,
+        );
+    }
+    print!("{out}");
+}
+
 /// Pure text rendering for tests / non-tty consumers.
 pub fn format_circle_text(agents: &[AgentSummary]) -> String {
     let mut out = String::new();

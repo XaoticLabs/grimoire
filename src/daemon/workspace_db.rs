@@ -357,6 +357,22 @@ impl Database {
         })
     }
 
+    /// Bulk-copy every `workspace_memory` row from `from_workspace` into
+    /// `to_workspace`. Skips keys that already exist in the destination
+    /// (idempotent re-copy). Returns the number of rows inserted.
+    pub fn memory_copy_workspace(&self, from_workspace: &str, to_workspace: &str) -> Result<usize> {
+        let conn = self.workspace_conn_lock();
+        let now = Utc::now().timestamp();
+        let mut stmt = conn.prepare(
+            "INSERT INTO workspace_memory (workspace_id, key, value, version, updated_at, updated_by)
+             SELECT ?1, key, value, 1, ?2, updated_by FROM workspace_memory
+             WHERE workspace_id = ?3
+             ON CONFLICT(workspace_id, key) DO NOTHING",
+        )?;
+        let inserted = stmt.execute(params![to_workspace, now, from_workspace])?;
+        Ok(inserted)
+    }
+
     pub fn memory_list_prefix(
         &self,
         workspace_id: &str,

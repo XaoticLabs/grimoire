@@ -134,9 +134,6 @@ async fn run_list(agent_prefix: &str, pending_only: bool, after: Option<i64>) ->
 
 async fn run_ack(prefix: &str) -> Result<()> {
     let mut client = DaemonClient::connect().await?;
-    // Resolve via mail.list-style prefix? For simplicity here, pass through;
-    // RPC accepts full mail_id only. Caller must paste the full id printed by
-    // `grim mail list`.
     let response = client
         .call("mail.ack", serde_json::json!({ "mail_id": prefix }))
         .await?;

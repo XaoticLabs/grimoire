@@ -355,6 +355,17 @@ pub struct EvalListResult {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EvalScoreEntry {
+    pub target_id: AgentId,
+    pub score: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EvalScoresResult {
+    pub scores: Vec<EvalScoreEntry>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentResultParams {
     pub id: AgentId,
 }
@@ -505,6 +516,13 @@ pub struct WorkspaceCreateParams {
     pub name: String,
     pub repo_path: String,
     pub branch: String,
+    /// If set, copy every `workspace_memory` row from this source workspace
+    /// into the newly created workspace post-creation. Used for swarm
+    /// decompose: parent agent seeds child workspaces with accumulated
+    /// findings. Source workspace must already exist; failure to copy
+    /// leaves the new workspace empty but does not abort creation.
+    #[serde(default)]
+    pub copy_memory_from: Option<WorkspaceId>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

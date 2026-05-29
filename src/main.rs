@@ -81,6 +81,13 @@ enum Commands {
         /// Filter by state (summoning, active, complete, failed, banished)
         #[arg(short, long)]
         state: Option<String>,
+        /// Show only agents whose latest eval score is < this value (0.0–1.0).
+        /// Unevaluated agents are excluded.
+        #[arg(long, value_name = "SCORE")]
+        eval_score_lt: Option<f64>,
+        /// Show only agents whose latest eval score is >= this value.
+        #[arg(long, value_name = "SCORE")]
+        eval_score_gte: Option<f64>,
     },
 
     /// Bind to an agent's output stream
@@ -190,6 +197,16 @@ enum Commands {
         /// Emit the raw durable event rows as JSON.
         #[arg(long)]
         json: bool,
+
+        /// After the history, keep streaming live events until the agent
+        /// reaches a terminal state. Mutually exclusive with `--scroll`.
+        #[arg(long, conflicts_with = "scroll")]
+        follow: bool,
+
+        /// Replay the merged timelines of every agent in the named scroll.
+        /// When set, `id` is interpreted as a scroll id.
+        #[arg(long)]
+        scroll: bool,
     },
 
     /// Send a follow-up message to a completed agent
@@ -457,7 +474,11 @@ async fn main() {
                     )
                     .await
                 }
-                Commands::Circle { state } => cli::commands::circle::run(state).await,
+                Commands::Circle {
+                    state,
+                    eval_score_lt,
+                    eval_score_gte,
+                } => cli::commands::circle::run(state, eval_score_lt, eval_score_gte).await,
                 Commands::Bind { id, tail } => {
                     let id = resolve_id(&id).await;
                     cli::commands::bind::run(&id, tail).await
@@ -473,9 +494,15 @@ async fn main() {
                     kinds,
                     no_output,
                     json,
+                    follow,
+                    scroll,
                 } => {
-                    let id = resolve_id(&id).await;
-                    cli::commands::chronicle::run(&id, until, from, kinds, no_output, json).await
+                    // Don't resolve agent-id prefixes when targeting a scroll.
+                    let resolved = if scroll { id } else { resolve_id(&id).await };
+                    cli::commands::chronicle::run(
+                        &resolved, until, from, kinds, no_output, json, follow, scroll,
+                    )
+                    .await
                 }
                 Commands::Eval {
                     id,

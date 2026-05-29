@@ -18,6 +18,11 @@ pub enum WorkspaceCommand {
         from: String,
         #[arg(long)]
         branch: String,
+        /// Copy every memory key from another existing workspace into the
+        /// new one at creation time. Useful for swarm decompose: parent
+        /// workspace's findings seed each child fork.
+        #[arg(long, value_name = "WORKSPACE_ID")]
+        copy_memory_from: Option<String>,
     },
     /// List workspaces and their assigned agent counts.
     List {
@@ -67,7 +72,12 @@ pub enum WorkspaceCommand {
 
 pub async fn run(cmd: WorkspaceCommand) -> Result<()> {
     match cmd {
-        WorkspaceCommand::Create { name, from, branch } => run_create(&name, &from, &branch).await,
+        WorkspaceCommand::Create {
+            name,
+            from,
+            branch,
+            copy_memory_from,
+        } => run_create(&name, &from, &branch, copy_memory_from.as_deref()).await,
         WorkspaceCommand::List { orphans } => run_list(orphans).await,
         WorkspaceCommand::Destroy { id } => run_destroy(&id).await,
         WorkspaceCommand::Show { id } => run_show(&id).await,
@@ -202,18 +212,22 @@ async fn run_unfederate(workspace: &str, peer: &str) -> Result<()> {
     Ok(())
 }
 
-async fn run_create(name: &str, from: &str, branch: &str) -> Result<()> {
+async fn run_create(
+    name: &str,
+    from: &str,
+    branch: &str,
+    copy_memory_from: Option<&str>,
+) -> Result<()> {
     let mut client = DaemonClient::connect().await?;
-    let resp = client
-        .call(
-            "workspace.create",
-            serde_json::json!({
-                "name": name,
-                "repo_path": from,
-                "branch": branch,
-            }),
-        )
-        .await?;
+    let mut params = serde_json::json!({
+        "name": name,
+        "repo_path": from,
+        "branch": branch,
+    });
+    if let Some(src) = copy_memory_from {
+        params["copy_memory_from"] = serde_json::Value::String(src.to_string());
+    }
+    let resp = client.call("workspace.create", params).await?;
     if let Some(err) = resp.error {
         eprintln!("{} {}", "Error:".red(), err.message);
         std::process::exit(1);

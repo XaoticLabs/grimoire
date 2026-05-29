@@ -379,6 +379,20 @@ impl super::Database {
         Ok(rows)
     }
 
+    /// Latest score per target across all evaluated agents. Lets `grim circle
+    /// --eval-score-lt` filter in one trip without an N+1 fanout.
+    pub fn latest_eval_scores_all(&self) -> Result<Vec<(String, f64)>> {
+        let conn = self.conn_lock();
+        let mut stmt = conn.prepare(
+            "SELECT target_id, score FROM eval_results er WHERE created_at = (\
+                SELECT MAX(created_at) FROM eval_results WHERE target_id = er.target_id)",
+        )?;
+        let rows = stmt
+            .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, f64>(1)?)))?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+
     /// Highest score recorded for `target_id`, used by `grim circle --eval`
     /// to surface a single representative number per agent.
     pub fn latest_eval_score(&self, target_id: &str) -> Result<Option<f64>> {
