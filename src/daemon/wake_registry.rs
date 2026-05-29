@@ -28,6 +28,9 @@ use crate::daemon::wake_sources::file_watch::{FileWatchConfig, FileWatchSource};
 use crate::daemon::wake_sources::parent_completion::{
     ParentCompletionConfig, ParentCompletionSource,
 };
+use crate::daemon::wake_sources::remote_file_watch::{
+    RemoteFileWatchConfig, RemoteFileWatchSource,
+};
 use crate::shared::constants;
 
 /// Wake-source tick: how often the registry sweeps cron sources whose
@@ -99,6 +102,9 @@ pub enum ArmedHandle {
         _drain_task: tokio::task::JoinHandle<()>,
     },
     ParentCompletion {
+        _task: tokio::task::JoinHandle<()>,
+    },
+    RemoteFileWatch {
         _task: tokio::task::JoinHandle<()>,
     },
 }
@@ -533,6 +539,54 @@ impl WakeRegistry {
                 });
                 Ok(ArmedHandle::ParentCompletion { _task: task })
             }
+            WakeSourceKind::RemoteFileWatch => {
+                let cfg: RemoteFileWatchConfig = serde_json::from_str(&src.config_json)
+                    .map_err(|e| anyhow!("invalid_remote_file_watch_config_json: {e}"))?;
+                let source = Arc::new(RemoteFileWatchSource::new(cfg)?);
+                let target_ws = source.config.workspace_id.clone();
+                let mut rx = self.bus.subscribe();
+                let fire_tx = self.fire_tx.clone();
+                let wake_id = src.id.clone();
+                // No notify watcher to debounce — the upstream
+                // `WorkspaceWatcher::emit_batch` already debounced before
+                // the home daemon shipped the event, and we re-emit one
+                // bus event per delivered batch. So each matching batch
+                // becomes one fire.
+                let task = tokio::spawn(async move {
+                    while let Ok(ev) = rx.recv().await {
+                        if let StreamEvent::WorkspaceFileChanged {
+                            workspace_id,
+                            paths,
+                            truncated_count,
+                            ..
+                        } = ev
+                            && workspace_id == target_ws
+                        {
+                            let matched: Vec<&String> =
+                                paths.iter().filter(|p| source.matches(p)).collect();
+                            if matched.is_empty() {
+                                continue;
+                            }
+                            let first = matched[0].clone();
+                            let body = format!(
+                                "[remote-file-watch] {} matches in {} (truncated {}); first: {}",
+                                matched.len(),
+                                workspace_id,
+                                truncated_count,
+                                first,
+                            );
+                            let _ = fire_tx
+                                .send(FireMsg {
+                                    wake_id: wake_id.clone(),
+                                    body,
+                                    via: None,
+                                })
+                                .await;
+                        }
+                    }
+                });
+                Ok(ArmedHandle::RemoteFileWatch { _task: task })
+            }
         }
     }
 }
@@ -553,6 +607,11 @@ fn validate_config(kind: WakeSourceKind, config_json: &str) -> Result<()> {
         WakeSourceKind::ParentCompletion => {
             let _cfg: ParentCompletionConfig = serde_json::from_str(config_json)
                 .map_err(|e| anyhow!("invalid_parent_completion_config_json: {e}"))?;
+        }
+        WakeSourceKind::RemoteFileWatch => {
+            let cfg: RemoteFileWatchConfig = serde_json::from_str(config_json)
+                .map_err(|e| anyhow!("invalid_remote_file_watch_config_json: {e}"))?;
+            RemoteFileWatchSource::new(cfg)?;
         }
     }
     Ok(())
@@ -584,6 +643,16 @@ impl WakeRegistry {
     ) -> Result<String> {
         let json = serde_json::to_string(&cfg)?;
         self.register(agent_id, WakeSourceKind::ParentCompletion, &json)
+            .await
+    }
+
+    pub async fn register_remote_file_watch(
+        self: &Arc<Self>,
+        agent_id: &str,
+        cfg: RemoteFileWatchConfig,
+    ) -> Result<String> {
+        let json = serde_json::to_string(&cfg)?;
+        self.register(agent_id, WakeSourceKind::RemoteFileWatch, &json)
             .await
     }
 }

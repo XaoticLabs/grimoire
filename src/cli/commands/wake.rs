@@ -24,11 +24,17 @@ pub enum WakeCommand {
         #[arg(long)]
         ignore: Vec<String>,
         /// Parent agent id whose state changes wake this agent.
-        #[arg(long = "on-parent", conflicts_with_all = ["cron", "watch"])]
+        #[arg(long = "on-parent", conflicts_with_all = ["cron", "watch", "remote_watch"])]
         on_parent: Option<String>,
         /// Comma-separated parent target states (default: complete).
         #[arg(long, requires = "on_parent")]
         states: Option<String>,
+        /// Shadow workspace id to watch for federated file events.
+        /// Pair with --watch globs (and optionally --ignore). When set,
+        /// the wake fires on inbound `WorkspaceEventDeliver` payloads
+        /// rather than local notify events.
+        #[arg(long = "remote-watch", conflicts_with_all = ["cron", "on_parent"])]
+        remote_watch: Option<String>,
     },
     /// List wake sources. Without an agent id, lists all.
     List {
@@ -50,7 +56,19 @@ pub async fn run(cmd: WakeCommand) -> Result<()> {
             ignore,
             on_parent,
             states,
-        } => run_add(&agent_id, cron, watch, ignore, on_parent, states).await,
+            remote_watch,
+        } => {
+            run_add(
+                &agent_id,
+                cron,
+                watch,
+                ignore,
+                on_parent,
+                states,
+                remote_watch,
+            )
+            .await
+        }
         WakeCommand::List { agent_id } => run_list(agent_id).await,
         WakeCommand::Remove { wake_id } => run_remove(&wake_id).await,
         WakeCommand::Test { wake_id } => run_test(&wake_id).await,
@@ -64,12 +82,29 @@ async fn run_add(
     ignore: Vec<String>,
     on_parent: Option<String>,
     states: Option<String>,
+    remote_watch: Option<String>,
 ) -> Result<()> {
     let agent_id = resolve_agent_id(agent_prefix).await?;
     let mut client = DaemonClient::connect().await?;
 
     let (kind, config) = if let Some(expr) = cron {
         ("cron".to_string(), serde_json::json!({ "expr": expr }))
+    } else if let Some(workspace_id) = remote_watch {
+        if watch.is_empty() {
+            eprintln!(
+                "{} --remote-watch requires at least one --watch glob",
+                "Error:".red()
+            );
+            std::process::exit(2);
+        }
+        (
+            "remote_file_watch".to_string(),
+            serde_json::json!({
+                "workspace_id": workspace_id,
+                "globs": watch,
+                "ignore": ignore,
+            }),
+        )
     } else if !watch.is_empty() {
         let cwd = std::env::current_dir()?;
         (
@@ -99,7 +134,7 @@ async fn run_add(
         )
     } else {
         eprintln!(
-            "{} one of --cron / --watch / --on-parent is required",
+            "{} one of --cron / --watch / --on-parent / --remote-watch is required",
             "Error:".red()
         );
         std::process::exit(2);

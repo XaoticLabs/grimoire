@@ -9,3 +9,4 @@
 pub mod cron;
 pub mod file_watch;
 pub mod parent_completion;
+pub mod remote_file_watch;
