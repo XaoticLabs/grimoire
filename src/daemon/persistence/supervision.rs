@@ -175,6 +175,34 @@ impl super::Database {
         Ok(rows.filter_map(std::result::Result::ok).collect())
     }
 
+    /// Most recent `restart_history` rows for `agent_id`, newest first.
+    /// Backs the dashboard's expandable history drawer.
+    pub fn list_restart_history(
+        &self,
+        agent_id: &str,
+        limit: u32,
+    ) -> Result<Vec<crate::shared::protocol::SupervisorHistoryRow>> {
+        let conn = self.conn_lock();
+        let mut stmt = conn.prepare(
+            "SELECT id, attempted_at, outcome, error_summary \
+             FROM restart_history \
+             WHERE agent_id = ?1 \
+             ORDER BY attempted_at DESC, id DESC LIMIT ?2",
+        )?;
+        let rows = stmt.query_map(
+            params![agent_id, i64::from(limit.clamp(1, 500))],
+            |r| {
+                Ok(crate::shared::protocol::SupervisorHistoryRow {
+                    id: r.get(0)?,
+                    attempted_at: r.get(1)?,
+                    outcome: r.get(2)?,
+                    error_summary: r.get(3)?,
+                })
+            },
+        )?;
+        Ok(rows.filter_map(std::result::Result::ok).collect())
+    }
+
     pub fn list_failed_with_active_policy(&self) -> Result<Vec<AgentId>> {
         self.query_vec(
             "SELECT id FROM agents \

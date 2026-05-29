@@ -62,6 +62,19 @@ hyper-util = { version = "0.1", features = ["client", "client-legacy", "http1", 
 http-body-util = "0.1"
 hyper-rustls = { version = "0.27", default-features = false, features = ["native-tokio", "http1", "ring", "tls12"] }
 
+# OTel tracing export. Optional — enable with `--features otel` to ship spans
+# via OTLP/HTTP. Default build is unchanged. The dep set deliberately avoids
+# `grpc-tonic` to side-step the tonic 0.12-vs-0.14 incompatibility; the HTTP
+# transport works with any Collector reachable over plain http/https.
+opentelemetry = { version = "0.27", optional = true }
+opentelemetry_sdk = { version = "0.27", features = ["rt-tokio"], optional = true }
+opentelemetry-otlp = { version = "0.27", default-features = false, features = ["http-proto", "reqwest-client"], optional = true }
+tracing-opentelemetry = { version = "0.28", optional = true }
+
+[features]
+default = []
+otel = ["dep:opentelemetry", "dep:opentelemetry_sdk", "dep:opentelemetry-otlp", "dep:tracing-opentelemetry"]
+
 [build-dependencies]
 tonic-prost-build = "0.14"
 

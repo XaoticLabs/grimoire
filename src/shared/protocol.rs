@@ -724,6 +724,59 @@ pub struct SupervisorTreeResult {
     pub nodes: Vec<SupervisorNode>,
 }
 
+// --- Supervisor v2: manual actions + history drawer ---
+// `supervisor.restart-now` / `supervisor.clear-escalation` are the manual
+// overrides the dashboard exposes per row. `supervisor.history` backs the
+// expandable restart-history drawer.
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SupervisorRestartNowParams {
+    pub agent_id: AgentId,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SupervisorRestartNowResult {
+    pub agent_id: AgentId,
+    /// `scheduled` when a restart entry was placed on the heap; `rejected`
+    /// with a `reason` (`not_supervised`, `already_pending`, `bad_state`)
+    /// when the manual override declined.
+    pub outcome: String,
+    pub reason: Option<String>,
+    pub attempt: Option<u32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SupervisorClearEscalationParams {
+    pub agent_id: AgentId,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SupervisorClearEscalationResult {
+    pub agent_id: AgentId,
+    pub previous_depth: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SupervisorHistoryParams {
+    pub agent_id: AgentId,
+    #[serde(default)]
+    pub limit: Option<u32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SupervisorHistoryRow {
+    pub id: i64,
+    pub attempted_at: i64,
+    pub outcome: String,
+    pub error_summary: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SupervisorHistoryResult {
+    pub agent_id: AgentId,
+    pub rows: Vec<SupervisorHistoryRow>,
+}
+
 // --- Federation listing ---
 // One row per (peer, scope) federation. `created_at` is unix seconds for the
 // topic/ns shape and ISO-8601 for workspaces (matches the underlying types).

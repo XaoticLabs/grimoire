@@ -104,6 +104,7 @@ pub trait OutboxBackend: Sync {
 /// On send failure the row is bumped back to `pending` with backoff
 /// applied before the error propagates, so a stuck channel won't pin a
 /// row at `in_flight` forever.
+#[tracing::instrument(name = "outbox.pump_one_row", skip(backend, out_tx, in_flight), fields(peer_id = %peer_id, peer_removing))]
 pub async fn pump_one_row<B: OutboxBackend>(
     backend: &B,
     peer_id: &str,

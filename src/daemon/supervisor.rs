@@ -61,6 +61,17 @@ pub enum RestartDecision {
     NotSupervised,
 }
 
+/// Result of an operator-initiated `manual_restart`. Mutually exclusive
+/// — either the restart was queued (with the attempt number) or it was
+/// declined with a stable reason code that the RPC layer surfaces
+/// verbatim. Reason codes: `not_supervised`, `tree_depth_exceeded`,
+/// `already_pending`, `bad_state`.
+#[derive(Debug, Clone)]
+pub enum ManualRestartOutcome {
+    Scheduled { attempt: u32 },
+    Rejected { reason: &'static str },
+}
+
 /// Token-bucket rate counter (in-memory only).
 pub struct RateCounter {
     tokens: f64,
@@ -337,6 +348,7 @@ impl Supervisor {
     }
 
     /// Evaluate restart policy for `agent_id` and return the decision.
+    #[tracing::instrument(name = "supervisor.evaluate", skip(self), fields(agent_id = %agent_id))]
     pub async fn evaluate(self: &Arc<Self>, agent_id: &str) -> Result<RestartDecision> {
         let Some(cfg) = self.db.get_supervision(agent_id)? else {
             return Ok(RestartDecision::NotSupervised);
@@ -408,15 +420,41 @@ impl Supervisor {
             error_summary.as_deref(),
         )?;
 
-        // Flip state to Restarting (prior state is Failed by precondition).
+        // Precondition: prior state is Failed. The shared core handles
+        // state flip + heap push + RestartScheduled publish.
+        self.enqueue_restart_core(
+            agent_id,
+            attempt,
+            max,
+            fire_at,
+            AgentState::Failed,
+            rate_limited,
+        )
+        .await
+    }
+
+    /// Shared core for `schedule_restart` and `manual_restart`. Flips
+    /// `old_state` → `Restarting`, pushes onto the pending heap,
+    /// publishes `StateChange` + `RestartScheduled`. Callers own the
+    /// `restart_history` row write — this path is purely the dispatch
+    /// half, so the two history shapes (policy vs manual) stay distinct
+    /// in the audit trail.
+    async fn enqueue_restart_core(
+        self: &Arc<Self>,
+        agent_id: &str,
+        attempt: u32,
+        max: u32,
+        fire_at: DateTime<Utc>,
+        old_state: AgentState,
+        rate_limited: bool,
+    ) -> Result<()> {
         self.db
             .update_agent_state(agent_id, &AgentState::Restarting, None)?;
         self.bus.publish(StreamEvent::StateChange {
             agent_id: agent_id.to_string(),
-            old_state: AgentState::Failed,
+            old_state,
             new_state: AgentState::Restarting,
         });
-
         {
             let mut pending = self.pending.lock().await;
             pending.push(Reverse(PendingRestart {
@@ -425,7 +463,6 @@ impl Supervisor {
                 fire_at,
             }));
         }
-
         self.bus.publish(StreamEvent::RestartScheduled {
             agent_id: agent_id.to_string(),
             attempt,
@@ -434,6 +471,100 @@ impl Supervisor {
             rate_limited,
         });
         Ok(())
+    }
+
+    /// Operator-initiated restart. Bypasses the windowed budget (the
+    /// whole point of a manual override) but still respects the tree-
+    /// depth cap. Writes a `Scheduled` history row tagged `manual:` in
+    /// the error_summary so the audit trail distinguishes it from a
+    /// policy-driven restart, then dispatches via the shared
+    /// `enqueue_restart_core` path.
+    pub async fn manual_restart(
+        self: &Arc<Self>,
+        agent_id: &str,
+    ) -> Result<ManualRestartOutcome> {
+        // Refuse if there's already a pending restart for this agent.
+        {
+            let pending = self.pending.lock().await;
+            if pending.iter().any(|p| p.0.agent_id == agent_id) {
+                return Ok(ManualRestartOutcome::Rejected {
+                    reason: "already_pending",
+                });
+            }
+        }
+
+        let Some(cfg) = self.db.get_supervision(agent_id)? else {
+            return Ok(ManualRestartOutcome::Rejected {
+                reason: "not_supervised",
+            });
+        };
+        if cfg.policy == RestartPolicy::Never {
+            return Ok(ManualRestartOutcome::Rejected {
+                reason: "not_supervised",
+            });
+        }
+
+        // Tree-depth check stays — manual restart still can't violate the
+        // structural invariant.
+        let depth = self.db.get_escalation_depth(agent_id).unwrap_or(0);
+        if depth + 1 > self.tree_depth_cap {
+            return Ok(ManualRestartOutcome::Rejected {
+                reason: "tree_depth_exceeded",
+            });
+        }
+
+        // Manual restart only makes sense from a non-terminal-ish state.
+        // Specifically: Failed, Dormant, Complete.
+        let state = match self.db.get_agent(agent_id) {
+            Ok(Some(a)) => a.state,
+            _ => {
+                return Ok(ManualRestartOutcome::Rejected {
+                    reason: "bad_state",
+                });
+            }
+        };
+        if !matches!(
+            state,
+            AgentState::Failed | AgentState::Dormant | AgentState::Complete
+        ) {
+            return Ok(ManualRestartOutcome::Rejected {
+                reason: "bad_state",
+            });
+        }
+
+        // Reuse the budget counter to compute the attempt number so
+        // history stays a contiguous monotonic sequence.
+        let max_restarts = cfg.max_restarts.unwrap_or(0);
+        let window_secs = i64::from(cfg.window_secs.unwrap_or(0));
+        let now = self.clock.now();
+        let window_start = now.timestamp() - window_secs;
+        let count = self
+            .db
+            .count_restarts_in_window(agent_id, window_start)
+            .unwrap_or(0);
+        let attempt = count + 1;
+
+        // Annotate the history row so the audit trail is honest.
+        let summary = format!("manual: operator override (budget was {count}/{max_restarts})");
+        self.db.insert_restart_history_row(
+            agent_id,
+            now.timestamp(),
+            RestartHistoryOutcome::Scheduled,
+            Some(&summary),
+        )?;
+
+        self.enqueue_restart_core(agent_id, attempt, max_restarts, now, state, false)
+            .await?;
+        Ok(ManualRestartOutcome::Scheduled { attempt })
+    }
+
+    /// Operator-initiated escalation reset. Sets `escalation_depth` to 0
+    /// and returns the previous value so the caller can confirm the
+    /// override actually did something.
+    pub fn clear_escalation(&self, agent_id: &str) -> Result<u32> {
+        let prev = self.db.get_escalation_depth(agent_id).unwrap_or(0);
+        self.db.set_escalation_depth(agent_id, 0)?;
+        Ok(prev)
     }
 
     /// Cancel all pending entries for `agent_id`. Returns the count cancelled.

@@ -607,6 +607,28 @@ impl Database {
                 ON workspace_federations(workspace_id);",
         )?;
 
+        // F3b: per-peer outbox for workspace file events. Mirrors the
+        // namespace_outbox shape — `sender_seq` is the monotonic
+        // correlation key the receiver acks back; `payload` is the
+        // JSON-serialized WorkspaceFileChanged batch.
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS workspace_event_outbox (
+                id              TEXT PRIMARY KEY,
+                peer_id         TEXT NOT NULL REFERENCES peers(id) ON DELETE CASCADE,
+                workspace_id    TEXT NOT NULL,
+                sender_seq      INTEGER NOT NULL,
+                payload         BLOB NOT NULL,
+                created_at      INTEGER NOT NULL,
+                attempts        INTEGER NOT NULL DEFAULT 0,
+                next_attempt_at INTEGER NOT NULL,
+                state           TEXT NOT NULL
+             );
+             CREATE UNIQUE INDEX IF NOT EXISTS workspace_event_outbox_seq
+                ON workspace_event_outbox(peer_id, sender_seq);
+             CREATE INDEX IF NOT EXISTS workspace_event_outbox_due
+                ON workspace_event_outbox(peer_id, state, next_attempt_at);",
+        )?;
+
         Ok(())
     }
 

@@ -158,6 +158,7 @@ impl Scheduler {
     /// Run one full tick: dispatch as many queued rows as capacity and
     /// eligibility allow, then return. Re-entrant calls serialize via an
     /// internal mutex so two wake-up signals can't interleave their claims.
+    #[tracing::instrument(name = "scheduler.tick", skip(self))]
     pub async fn tick_now(&self) -> Result<()> {
         let _guard = self.tick_lock.lock().await;
 

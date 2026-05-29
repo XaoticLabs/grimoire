@@ -155,6 +155,13 @@ impl AgentManager {
         *self.supervisor.lock().await = Some(supervisor);
     }
 
+    /// Borrow the registered supervisor. Returns `None` if the daemon
+    /// hasn't finished its boot wiring yet (impossible from the RPC
+    /// surface, but the wiring step is async, so we expose the option).
+    pub async fn supervisor(&self) -> Option<Arc<Supervisor>> {
+        self.supervisor.lock().await.clone()
+    }
+
     /// Resolve an optional caller-provided cwd to a concrete path, falling back
     /// to config defaults and then process cwd.
     /// Read-only accessor on the loaded `[policy]` block, used by

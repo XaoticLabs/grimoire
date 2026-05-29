@@ -8,6 +8,7 @@ pub mod executor;
 pub mod metrics;
 pub mod namespace_db;
 pub mod notifier;
+pub mod observability;
 pub mod orchestrator;
 pub mod peer_client;
 pub mod peer_inbox;
@@ -188,6 +189,11 @@ pub async fn start() -> Result<()> {
         tracing::warn!(error = %e, "peer registry reconcile_on_boot failed");
     }
     peer_registry.spawn_all_active().await;
+
+    // F3b: let the workspace watcher wake outbox drainers immediately
+    // after enqueueing a federated event, rather than waiting on the
+    // peer's next heartbeat tick.
+    workspace_watcher::set_peer_registry(peer_registry.clone());
 
     if let Some(addr) = config.daemon.peer_listen_addr.clone() {
         spawn_peer_listener(addr, peer_registry.clone(), tls_identity.clone());

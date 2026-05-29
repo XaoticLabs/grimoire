@@ -168,9 +168,11 @@ async fn run_once(
     // each row ships and acks.
     let mut in_flight_mail: Option<InFlight> = None;
     let mut in_flight_memory: Option<InFlight> = None;
+    let mut in_flight_workspace: Option<InFlight> = None;
 
     let mail_backend = MailOutbox { db: &registry.db };
     let memory_backend = MemoryOutbox { db: &registry.db };
+    let workspace_backend = WorkspaceEventOutbox { db: &registry.db };
 
     // Initial pump in case rows were queued while disconnected.
     let removing = peer_removing(registry, &peer.id);
@@ -188,6 +190,14 @@ async fn run_once(
         removing,
         &out_tx,
         &mut in_flight_memory,
+    )
+    .await?;
+    pump_one_row(
+        &workspace_backend,
+        &peer.id,
+        removing,
+        &out_tx,
+        &mut in_flight_workspace,
     )
     .await?;
 
@@ -208,16 +218,18 @@ async fn run_once(
                     Ok(None) => return Err(anyhow::anyhow!("stream closed")),
                     Err(e) => return Err(e.into()),
                 };
-                handle_inbound(registry, peer, msg, &out_tx, &mail_backend, &memory_backend, &mut in_flight_mail, &mut in_flight_memory).await?;
+                handle_inbound(registry, peer, msg, &out_tx, &mail_backend, &memory_backend, &workspace_backend, &mut in_flight_mail, &mut in_flight_memory, &mut in_flight_workspace).await?;
                 let _ = registry.db.set_peer_last_seen(&peer.id, unix_now());
                 let removing = peer_removing(registry, &peer.id);
                 pump_one_row(&mail_backend, &peer.id, removing, &out_tx, &mut in_flight_mail).await?;
                 pump_one_row(&memory_backend, &peer.id, removing, &out_tx, &mut in_flight_memory).await?;
+                pump_one_row(&workspace_backend, &peer.id, removing, &out_tx, &mut in_flight_workspace).await?;
             }
             () = notify_outbox.notified() => {
                 let removing = peer_removing(registry, &peer.id);
                 pump_one_row(&mail_backend, &peer.id, removing, &out_tx, &mut in_flight_mail).await?;
                 pump_one_row(&memory_backend, &peer.id, removing, &out_tx, &mut in_flight_memory).await?;
+                pump_one_row(&workspace_backend, &peer.id, removing, &out_tx, &mut in_flight_workspace).await?;
             }
         }
     }
@@ -242,8 +254,10 @@ async fn handle_inbound(
     out_tx: &mpsc::Sender<PeerOutbound>,
     mail_backend: &MailOutbox<'_>,
     memory_backend: &MemoryOutbox<'_>,
+    workspace_backend: &WorkspaceEventOutbox<'_>,
     in_flight_mail: &mut Option<InFlight>,
     in_flight_memory: &mut Option<InFlight>,
+    in_flight_workspace: &mut Option<InFlight>,
 ) -> anyhow::Result<()> {
     // Each arm is enumerated explicitly so dispatch for a new variant is a
     // compile error rather than silently routed to a wildcard.
@@ -305,6 +319,44 @@ async fn handle_inbound(
             }
             // Ack for an unknown op; drop it. The sender will retry the
             // tracked row when the real ack arrives.
+            Ok(())
+        }
+        Some(peer_inbound::Msg::WorkspaceEventDeliver(d)) => {
+            // F3b producer-only slice: republish is F3c. We ack
+            // *positively* (`ok: true`) so the sender drops the row
+            // and doesn't burn its retry budget on a known gap. The
+            // event is intentionally dropped locally; a debug log
+            // records the discard so the gap is still observable
+            // without spamming warn-level once federation is wired
+            // on both ends.
+            tracing::debug!(
+                peer = %peer.name,
+                workspace = %d.workspace_id,
+                seq = d.sender_seq,
+                "dropping inbound workspace event (consumer not implemented; F3c)",
+            );
+            let ack = crate::shared::peer_proto::WorkspaceEventAck {
+                sender_seq: d.sender_seq,
+                ok: true,
+                reason: String::new(),
+            };
+            let _ = out_tx
+                .send(PeerOutbound {
+                    msg: Some(peer_outbound::Msg::WorkspaceEventAck(ack)),
+                })
+                .await;
+            Ok(())
+        }
+        Some(peer_inbound::Msg::WorkspaceEventAck(ack)) => {
+            let key = ack.sender_seq.to_string();
+            if matches!(in_flight_workspace.as_ref(), Some(f) if f.ack_key == key) {
+                let slot = in_flight_workspace.take().expect("just matched");
+                handle_ack_outcome(workspace_backend, &slot, ack.ok);
+                if !ack.ok {
+                    tracing::warn!(peer = %peer.name, seq = ack.sender_seq, reason = %ack.reason,
+                        "workspace event delivery rejected");
+                }
+            }
             Ok(())
         }
         Some(peer_inbound::Msg::Goodbye(_)) => Err(anyhow::anyhow!("peer goodbye")),
@@ -414,6 +466,52 @@ impl OutboxBackend for MailOutbox<'_> {
         PeerOutbound {
             msg: Some(peer_outbound::Msg::MailDeliver(
                 super::peer_outbox::row_to_mail_deliver(row),
+            )),
+        }
+    }
+}
+
+/// F3b: workspace-file-event federation backend. Drives
+/// `workspace_event_outbox` rows over the workspace channel. The
+/// payload is already JSON-serialized at enqueue time, so the backend
+/// is just a passthrough.
+struct WorkspaceEventOutbox<'a> {
+    db: &'a Database,
+}
+
+impl OutboxBackend for WorkspaceEventOutbox<'_> {
+    type Row = crate::daemon::workspace_db::WsEventOutboxRow;
+
+    fn next_row(&self, peer_id: &str, now: i64) -> anyhow::Result<Option<Self::Row>> {
+        self.db.workspace_event_next_outbox(peer_id, now)
+    }
+    fn mark_in_flight(&self, row_id: &str) -> anyhow::Result<()> {
+        self.db.workspace_event_mark_in_flight(row_id)
+    }
+    fn mark_delivered(&self, row_id: &str) -> anyhow::Result<()> {
+        self.db.workspace_event_mark_delivered(row_id)
+    }
+    fn mark_failed_retry(&self, row_id: &str, next_attempt_at: i64) -> anyhow::Result<()> {
+        self.db
+            .workspace_event_mark_failed_retry(row_id, next_attempt_at)
+    }
+    fn row_id(row: &Self::Row) -> &str {
+        &row.id
+    }
+    fn row_attempts(row: &Self::Row) -> u32 {
+        row.attempts
+    }
+    fn row_ack_key(row: &Self::Row) -> String {
+        row.sender_seq.to_string()
+    }
+    fn row_to_outbound(row: &Self::Row) -> PeerOutbound {
+        PeerOutbound {
+            msg: Some(peer_outbound::Msg::WorkspaceEventDeliver(
+                crate::shared::peer_proto::WorkspaceEventDeliver {
+                    workspace_id: row.workspace_id.clone(),
+                    sender_seq: row.sender_seq,
+                    payload_json: String::from_utf8_lossy(&row.payload).into_owned(),
+                },
             )),
         }
     }

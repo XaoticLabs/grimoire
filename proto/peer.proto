@@ -67,6 +67,22 @@ message MemoryAck {
   string reason = 3;
 }
 
+// F3b: workspace file-event federation. `payload_json` is the wire-
+// shape of a `WorkspaceFileChanged` batch — paths + kinds + truncated
+// count. The receiver dedupes by (sender_daemon_id, sender_seq) and
+// republishes locally on the shadow workspace.
+message WorkspaceEventDeliver {
+  string workspace_id = 1;
+  uint64 sender_seq = 2;
+  string payload_json = 3;
+}
+
+message WorkspaceEventAck {
+  uint64 sender_seq = 1;
+  bool ok = 2;
+  string reason = 3;
+}
+
 message PeerOutbound {
   oneof msg {
     Hello hello = 1;
@@ -80,6 +96,8 @@ message PeerOutbound {
     HelloAck hello_ack = 9;
     MemoryDeliver memory_deliver = 10;
     MemoryAck memory_ack = 11;
+    WorkspaceEventDeliver workspace_event_deliver = 12;
+    WorkspaceEventAck workspace_event_ack = 13;
   }
 }
 
@@ -95,5 +113,7 @@ message PeerInbound {
     Goodbye goodbye = 8;
     MemoryDeliver memory_deliver = 10;
     MemoryAck memory_ack = 11;
+    WorkspaceEventDeliver workspace_event_deliver = 12;
+    WorkspaceEventAck workspace_event_ack = 13;
   }
 }

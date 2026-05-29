@@ -2325,6 +2325,7 @@
                                 <th>Restarts</th>
                                 <th>Escalation</th>
                                 <th>Last restart</th>
+                                <th>Actions</th>
                             </tr></thead>
                             <tbody id="supervisor-tbody"></tbody>
                         </table>
@@ -2375,13 +2376,39 @@
             const tbody = document.getElementById('supervisor-tbody');
             const summary = document.getElementById('supervisor-summary');
             if (!tbody) return;
+            bindSupervisorActions(tbody);
             try {
                 const result = await grim('agent.supervisor-tree', {});
                 const nodes = result.nodes || [];
                 renderSupervisorTable(tbody, summary, nodes);
             } catch (e) {
-                tbody.innerHTML = `<tr><td colspan="6" class="muted">agent.supervisor-tree failed: ${esc(e.message)}</td></tr>`;
+                tbody.innerHTML = `<tr><td colspan="7" class="muted">agent.supervisor-tree failed: ${esc(e.message)}</td></tr>`;
             }
+        }
+
+        // Single delegated listener for all supervisor row action
+        // buttons. Idempotent — guarded by a dataset flag so repeated
+        // `refreshSupervisor` calls don't stack listeners.
+        function bindSupervisorActions(tbody) {
+            if (tbody.dataset.actionsBound === '1') return;
+            tbody.dataset.actionsBound = '1';
+            tbody.addEventListener('click', (ev) => {
+                const btn = ev.target.closest('button[data-action]');
+                if (!btn || !tbody.contains(btn)) return;
+                const agentId = btn.getAttribute('data-agent-id') || '';
+                if (!agentId) return;
+                switch (btn.getAttribute('data-action')) {
+                    case 'supervisor-history':
+                        supervisorToggleHistory(agentId, btn);
+                        break;
+                    case 'supervisor-restart':
+                        supervisorRestartNow(agentId, btn);
+                        break;
+                    case 'supervisor-clear-escalation':
+                        supervisorClearEscalation(agentId, btn);
+                        break;
+                }
+            });
         }
 
         // Build a parent → children index, then walk roots in created-DESC
@@ -2418,7 +2445,7 @@
             }
 
             tbody.innerHTML = rows.length ? rows.join('') :
-                `<tr><td colspan="6" class="muted">no agents yet — <a href="#/agents">summon one</a></td></tr>`;
+                `<tr><td colspan="7" class="muted">no agents yet — <a href="#/agents">summon one</a></td></tr>`;
 
             // Summary tiles
             const total = nodes.length;
@@ -2457,10 +2484,36 @@
             const lastCell = n.last_restart_at
                 ? `${supervisorOutcomeBadge(n.last_restart_outcome)} <span class="muted" style="font-size:0.75rem">${relTime(n.last_restart_at)}</span>`
                 : '<span class="muted">—</span>';
+
+            // Supervision v2 row actions. Restart-now is shown for any
+            // supervised agent in a state where a manual override is
+            // meaningful — the daemon does the real state check; the UI
+            // just hides the button when it would always 'rejected'.
+            //
+            // Actions are dispatched by a single delegated listener on
+            // the tbody (`bindSupervisorActions`) — `data-action` and
+            // `data-agent-id` carry intent through escaped attributes
+            // instead of inline `onclick=` strings, so an agent id with
+            // a quote can't escape the handler.
+            const supervised = policy && policy !== 'never';
+            const stateLc = String(n.state || '').toLowerCase();
+            const restartable = supervised && (stateLc === 'failed' || stateLc === 'dormant' || stateLc === 'complete');
+            const clearable = (n.escalation_depth || 0) > 0;
+            const aidEsc = esc(n.agent_id);
+            const actions = [];
+            actions.push(`<button class="btn btn-xs" data-action="supervisor-history" data-agent-id="${aidEsc}">History</button>`);
+            if (restartable) {
+                actions.push(`<button class="btn btn-xs" data-action="supervisor-restart" data-agent-id="${aidEsc}">Restart now</button>`);
+            }
+            if (clearable) {
+                actions.push(`<button class="btn btn-xs" data-action="supervisor-clear-escalation" data-agent-id="${aidEsc}">Clear escalation</button>`);
+            }
+            const actionsCell = actions.join(' ');
+
             return `
-                <tr>
+                <tr data-agent-id="${aidEsc}">
                     <td style="padding-left:${indent}px">
-                        ${treeMark}<a href="#/agents/${esc(n.agent_id)}"><code>${esc(n.agent_id.slice(0, 12))}</code></a>${orphanHint}
+                        ${treeMark}<a href="#/agents/${aidEsc}"><code>${esc(n.agent_id.slice(0, 12))}</code></a>${orphanHint}
                         ${n.name ? ` <span>${esc(n.name)}</span>` : ''}
                         ${taskSnippet}
                     </td>
@@ -2469,8 +2522,83 @@
                     <td>${restartsCell}</td>
                     <td>${escCell}</td>
                     <td>${lastCell}</td>
+                    <td style="white-space:nowrap">${actionsCell}</td>
+                </tr>
+                <tr class="supervisor-history-drawer" data-agent-id="${aidEsc}" style="display:none">
+                    <td colspan="7" style="background:var(--bg-subtle,#1a1a1a);padding:0.5rem 1rem">
+                        <div class="muted" style="font-size:0.75rem">Loading history…</div>
+                    </td>
                 </tr>
             `;
+        }
+
+        // Match `tr.supervisor-history-drawer` by exact data-agent-id
+        // value rather than building a CSS selector that interpolates
+        // the id — keeps untrusted ids out of selector syntax.
+        function findSupervisorDrawer(agentId) {
+            const drawers = document.querySelectorAll('tr.supervisor-history-drawer');
+            for (const d of drawers) {
+                if (d.getAttribute('data-agent-id') === agentId) return d;
+            }
+            return null;
+        }
+
+        async function supervisorToggleHistory(agentId, btn) {
+            const drawer = findSupervisorDrawer(agentId);
+            if (!drawer) return;
+            if (drawer.style.display !== 'none') {
+                drawer.style.display = 'none';
+                btn.textContent = 'History';
+                return;
+            }
+            drawer.style.display = '';
+            btn.textContent = 'Hide history';
+            try {
+                const res = await grim('supervisor.history', { agent_id: agentId, limit: 50 });
+                const rows = res.rows || [];
+                if (rows.length === 0) {
+                    drawer.firstElementChild.innerHTML = '<div class="muted" style="font-size:0.8rem">No restart history yet.</div>';
+                    return;
+                }
+                const lines = rows.map(r => {
+                    const ts = new Date(r.attempted_at * 1000).toISOString().replace('T', ' ').slice(0, 19);
+                    const summary = r.error_summary ? ` — <span class="muted">${esc(r.error_summary)}</span>` : '';
+                    return `<div style="font-size:0.78rem;padding:0.15rem 0;border-bottom:1px dotted var(--border)"><code>${esc(ts)}</code> ${supervisorOutcomeBadge(r.outcome)}${summary}</div>`;
+                });
+                drawer.firstElementChild.innerHTML = `<div style="max-height:240px;overflow-y:auto">${lines.join('')}</div>`;
+            } catch (e) {
+                drawer.firstElementChild.innerHTML = `<div class="muted" style="color:var(--red);font-size:0.8rem">supervisor.history failed: ${esc(e.message)}</div>`;
+            }
+        }
+
+        async function supervisorRestartNow(agentId, btn) {
+            const orig = btn.textContent;
+            btn.disabled = true;
+            btn.textContent = '…';
+            try {
+                const res = await grim('supervisor.restart-now', { agent_id: agentId });
+                if (res.outcome === 'scheduled') {
+                    btn.textContent = `queued #${res.attempt}`;
+                } else {
+                    btn.textContent = `declined: ${res.reason || 'unknown'}`;
+                }
+            } catch (e) {
+                btn.textContent = `error: ${e.message.slice(0, 30)}`;
+            }
+            setTimeout(() => { btn.textContent = orig; btn.disabled = false; refreshSupervisor(); }, 2000);
+        }
+
+        async function supervisorClearEscalation(agentId, btn) {
+            const orig = btn.textContent;
+            btn.disabled = true;
+            btn.textContent = '…';
+            try {
+                const res = await grim('supervisor.clear-escalation', { agent_id: agentId });
+                btn.textContent = `cleared (was ${res.previous_depth})`;
+            } catch (e) {
+                btn.textContent = `error: ${e.message.slice(0, 30)}`;
+            }
+            setTimeout(() => { btn.textContent = orig; btn.disabled = false; refreshSupervisor(); }, 2000);
         }
 
         const agentsEl = document.getElementById('agents');

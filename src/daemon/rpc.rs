@@ -274,6 +274,9 @@ pub async fn handle_rpc(
         "agent.queue.list" => handle_queue_list(db, req).await,
         "agent.processes" => handle_agent_processes(db, req).await,
         "agent.supervisor-tree" => handle_supervisor_tree(db, req).await,
+        "supervisor.restart-now" => handle_supervisor_restart_now(manager, req).await,
+        "supervisor.clear-escalation" => handle_supervisor_clear_escalation(manager, req).await,
+        "supervisor.history" => handle_supervisor_history(db, req).await,
         "agent.result" => handle_agent_result(manager, db, req).await,
         "budget.list" => handle_budget_list(manager, db, req).await,
         "eval.record" => handle_eval_record(db, req).await,
@@ -2332,6 +2335,82 @@ async fn handle_supervisor_tree(db: &Arc<Database>, req: RpcRequest) -> RpcRespo
     match outcome {
         Ok(nodes) => RpcResponse::success_json(req.id, &SupervisorTreeResult { nodes }),
         Err(e) => RpcResponse::error(req.id, -32000, format!("agent.supervisor-tree: {e}")),
+    }
+}
+
+async fn handle_supervisor_restart_now(
+    manager: &Arc<AgentManager>,
+    req: RpcRequest,
+) -> RpcResponse {
+    use crate::daemon::supervisor::ManualRestartOutcome;
+    use crate::shared::protocol::{SupervisorRestartNowParams, SupervisorRestartNowResult};
+    let params: SupervisorRestartNowParams = try_params!(req);
+    let Some(sup) = manager.supervisor().await else {
+        return RpcResponse::error(req.id, -32000, "supervisor_not_ready".into());
+    };
+    match sup.manual_restart(&params.agent_id).await {
+        Ok(ManualRestartOutcome::Scheduled { attempt }) => RpcResponse::success_json(
+            req.id,
+            &SupervisorRestartNowResult {
+                agent_id: params.agent_id,
+                outcome: "scheduled".into(),
+                reason: None,
+                attempt: Some(attempt),
+            },
+        ),
+        Ok(ManualRestartOutcome::Rejected { reason }) => RpcResponse::success_json(
+            req.id,
+            &SupervisorRestartNowResult {
+                agent_id: params.agent_id,
+                outcome: "rejected".into(),
+                reason: Some(reason.to_string()),
+                attempt: None,
+            },
+        ),
+        Err(e) => RpcResponse::error(req.id, -32000, format!("supervisor.restart-now: {e}")),
+    }
+}
+
+async fn handle_supervisor_clear_escalation(
+    manager: &Arc<AgentManager>,
+    req: RpcRequest,
+) -> RpcResponse {
+    use crate::shared::protocol::{
+        SupervisorClearEscalationParams, SupervisorClearEscalationResult,
+    };
+    let params: SupervisorClearEscalationParams = try_params!(req);
+    let Some(sup) = manager.supervisor().await else {
+        return RpcResponse::error(req.id, -32000, "supervisor_not_ready".into());
+    };
+    match sup.clear_escalation(&params.agent_id) {
+        Ok(prev) => RpcResponse::success_json(
+            req.id,
+            &SupervisorClearEscalationResult {
+                agent_id: params.agent_id,
+                previous_depth: prev,
+            },
+        ),
+        Err(e) => RpcResponse::error(req.id, -32000, format!("supervisor.clear-escalation: {e}")),
+    }
+}
+
+async fn handle_supervisor_history(db: &Arc<Database>, req: RpcRequest) -> RpcResponse {
+    use crate::shared::protocol::{SupervisorHistoryParams, SupervisorHistoryResult};
+    let params: SupervisorHistoryParams = try_params!(req);
+    let agent_id = params.agent_id.clone();
+    let limit = params.limit.unwrap_or(50);
+    let outcome = db
+        .run(move |db| db.list_restart_history(&agent_id, limit))
+        .await;
+    match outcome {
+        Ok(rows) => RpcResponse::success_json(
+            req.id,
+            &SupervisorHistoryResult {
+                agent_id: params.agent_id,
+                rows,
+            },
+        ),
+        Err(e) => RpcResponse::error(req.id, -32000, format!("supervisor.history: {e}")),
     }
 }
 

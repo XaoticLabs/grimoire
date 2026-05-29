@@ -27,6 +27,16 @@ pub enum MemoryWriteOutcome {
     Conflict { current_version: u64 },
 }
 
+/// F3b: one pending workspace-event-outbox row, ready to ship.
+#[derive(Debug, Clone)]
+pub struct WsEventOutboxRow {
+    pub id: String,
+    pub workspace_id: String,
+    pub sender_seq: u64,
+    pub payload: Vec<u8>,
+    pub attempts: u32,
+}
+
 impl Database {
     // --- Workspace CRUD ---
 
@@ -540,6 +550,118 @@ impl Database {
             parsed,
             FederationDirection::Inbound | FederationDirection::Both
         ))
+    }
+
+    /// F3b: enqueue a serialized `WorkspaceFileChanged` payload for one
+    /// outbound peer. `sender_seq` is allocated atomically as
+    /// `MAX(sender_seq) + 1` per (peer, workspace) — strictly monotonic
+    /// so the receiver can detect gaps even though we don't currently
+    /// surface them.
+    ///
+    /// The seq allocation and INSERT run inside a single `IMMEDIATE`
+    /// transaction so two concurrent emits can't pick the same seq and
+    /// trip the `UNIQUE(peer_id, sender_seq)` index.
+    pub fn workspace_event_enqueue(
+        &self,
+        peer_id: &str,
+        workspace_id: &str,
+        payload: &[u8],
+    ) -> Result<u64> {
+        let mut conn = self.workspace_conn_lock();
+        let now = Utc::now().timestamp();
+        let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        let next_seq: i64 = tx.query_row(
+            "SELECT COALESCE(MAX(sender_seq), 0) + 1 FROM workspace_event_outbox
+             WHERE peer_id = ?1 AND workspace_id = ?2",
+            params![peer_id, workspace_id],
+            |r| r.get(0),
+        )?;
+        tx.execute(
+            "INSERT INTO workspace_event_outbox
+                (id, peer_id, workspace_id, sender_seq, payload,
+                 created_at, attempts, next_attempt_at, state)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, 0, ?6, 'pending')",
+            params![
+                crate::shared::constants::generate_short_id(),
+                peer_id,
+                workspace_id,
+                next_seq,
+                payload,
+                now,
+            ],
+        )?;
+        tx.commit()?;
+        Ok(u64::try_from(next_seq).unwrap_or(0))
+    }
+
+    pub fn workspace_event_next_outbox(
+        &self,
+        peer_id: &str,
+        now: i64,
+    ) -> Result<Option<WsEventOutboxRow>> {
+        let conn = self.workspace_conn_lock();
+        let row = conn
+            .query_row(
+                "SELECT id, workspace_id, sender_seq, payload, attempts
+                 FROM workspace_event_outbox
+                 WHERE peer_id = ?1 AND state = 'pending' AND next_attempt_at <= ?2
+                 ORDER BY created_at ASC LIMIT 1",
+                params![peer_id, now],
+                |r| {
+                    Ok(WsEventOutboxRow {
+                        id: r.get(0)?,
+                        workspace_id: r.get(1)?,
+                        sender_seq: u64::try_from(r.get::<_, i64>(2)?).unwrap_or(0),
+                        payload: r.get(3)?,
+                        attempts: u32::try_from(r.get::<_, i64>(4)?).unwrap_or(0),
+                    })
+                },
+            )
+            .ok();
+        Ok(row)
+    }
+
+    pub fn workspace_event_mark_in_flight(&self, id: &str) -> Result<()> {
+        let conn = self.workspace_conn_lock();
+        conn.execute(
+            "UPDATE workspace_event_outbox SET state = 'in_flight' WHERE id = ?1",
+            params![id],
+        )?;
+        Ok(())
+    }
+
+    /// Successful ack → drop the row. Workspace events are
+    /// fire-and-acknowledge; replay-on-resubscribe is a separate (F3c)
+    /// concern handled by snapshotting, not by keeping outbox history.
+    pub fn workspace_event_mark_delivered(&self, id: &str) -> Result<()> {
+        let conn = self.workspace_conn_lock();
+        conn.execute(
+            "DELETE FROM workspace_event_outbox WHERE id = ?1",
+            params![id],
+        )?;
+        Ok(())
+    }
+
+    pub fn workspace_event_mark_failed_retry(&self, id: &str, next_attempt_at: i64) -> Result<()> {
+        let conn = self.workspace_conn_lock();
+        conn.execute(
+            "UPDATE workspace_event_outbox
+             SET state = 'pending', attempts = attempts + 1, next_attempt_at = ?2
+             WHERE id = ?1",
+            params![id, next_attempt_at],
+        )?;
+        Ok(())
+    }
+
+    /// Boot recovery: revert `in_flight` to `pending` so the drainer
+    /// reships. Receiver-side dedupe by `(sender_daemon_id, sender_seq)`
+    /// (F3c) is what makes the resend idempotent.
+    pub fn workspace_event_reset_in_flight(&self) -> Result<usize> {
+        let conn = self.workspace_conn_lock();
+        Ok(conn.execute(
+            "UPDATE workspace_event_outbox SET state = 'pending' WHERE state = 'in_flight'",
+            [],
+        )?)
     }
 
     /// Insert a shadow workspace row pointing at a remote home. The
