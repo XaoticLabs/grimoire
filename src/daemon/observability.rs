@@ -56,13 +56,21 @@ fn init_fmt_only() {
         .init();
 }
 
+/// Holds the active provider so [`shutdown`] can flush it. As of
+/// opentelemetry 0.30 the global `shutdown_tracer_provider()` free
+/// function is gone; the owner must keep the provider and call
+/// `.shutdown()` on it explicitly.
+#[cfg(feature = "otel")]
+static TRACER_PROVIDER: std::sync::OnceLock<opentelemetry_sdk::trace::SdkTracerProvider> =
+    std::sync::OnceLock::new();
+
 #[cfg(feature = "otel")]
 fn init_with_otel() -> anyhow::Result<()> {
     use opentelemetry::KeyValue;
     use opentelemetry::trace::TracerProvider as _;
     use opentelemetry_otlp::WithExportConfig;
     use opentelemetry_sdk::Resource;
-    use opentelemetry_sdk::trace::{Sampler, TracerProvider};
+    use opentelemetry_sdk::trace::{Sampler, SdkTracerProvider};
     use tracing_subscriber::layer::SubscriberExt;
     use tracing_subscriber::util::SubscriberInitExt;
 
@@ -79,22 +87,24 @@ fn init_with_otel() -> anyhow::Result<()> {
         .with_endpoint(format!("{}/v1/traces", endpoint.trim_end_matches('/')))
         .build()?;
 
-    // `Resource::new` is the documented constructor on
-    // opentelemetry_sdk 0.27 (the `Resource::builder` API only landed
-    // in 0.28+). Switch to the builder when we bump the OTel crates.
-    let resource = Resource::new(vec![
-        KeyValue::new("service.name", service_name),
-        KeyValue::new("service.version", env!("CARGO_PKG_VERSION")),
-    ]);
+    let resource = Resource::builder()
+        .with_service_name(service_name)
+        .with_attribute(KeyValue::new("service.version", env!("CARGO_PKG_VERSION")))
+        .build();
 
-    let provider = TracerProvider::builder()
-        .with_batch_exporter(exporter, opentelemetry_sdk::runtime::Tokio)
+    // 0.30+ batch processor runs on a dedicated background thread, so
+    // `with_batch_exporter` no longer takes a runtime argument.
+    let provider = SdkTracerProvider::builder()
+        .with_batch_exporter(exporter)
         .with_sampler(Sampler::TraceIdRatioBased(sampler_arg.clamp(0.0, 1.0)))
         .with_resource(resource)
         .build();
 
     let tracer = provider.tracer("grimoire");
-    opentelemetry::global::set_tracer_provider(provider);
+    opentelemetry::global::set_tracer_provider(provider.clone());
+    // Best-effort: a second init within one process keeps the first
+    // provider for shutdown; init() only runs once at boot regardless.
+    let _ = TRACER_PROVIDER.set(provider);
 
     let otel_layer = tracing_opentelemetry::layer().with_tracer(tracer);
     let fmt_layer = tracing_subscriber::fmt::layer();
@@ -115,6 +125,13 @@ fn init_with_otel() -> anyhow::Result<()> {
 pub fn shutdown() {
     #[cfg(feature = "otel")]
     {
-        opentelemetry::global::shutdown_tracer_provider();
+        if let Some(provider) = TRACER_PROVIDER.get()
+            && let Err(e) = provider.shutdown()
+        {
+            #[allow(clippy::print_stderr)]
+            {
+                eprintln!("otel tracer provider shutdown failed: {e}");
+            }
+        }
     }
 }

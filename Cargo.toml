@@ -66,10 +66,10 @@ hyper-rustls = { version = "0.27", default-features = false, features = ["native
 # via OTLP/HTTP. Default build is unchanged. The dep set deliberately avoids
 # `grpc-tonic` to side-step the tonic 0.12-vs-0.14 incompatibility; the HTTP
 # transport works with any Collector reachable over plain http/https.
-opentelemetry = { version = "0.27", optional = true }
-opentelemetry_sdk = { version = "0.27", features = ["rt-tokio"], optional = true }
-opentelemetry-otlp = { version = "0.27", default-features = false, features = ["http-proto", "reqwest-client"], optional = true }
-tracing-opentelemetry = { version = "0.28", optional = true }
+opentelemetry = { version = "0.32", optional = true }
+opentelemetry_sdk = { version = "0.32", features = ["rt-tokio"], optional = true }
+opentelemetry-otlp = { version = "0.32", default-features = false, features = ["http-proto", "reqwest-client"], optional = true }
+tracing-opentelemetry = { version = "0.33", optional = true }
 
 [features]
 default = []
