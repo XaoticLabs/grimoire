@@ -6,6 +6,9 @@ ROADMAP.md
 # Docs: keep only what README references (recipe + embedded gif).
 docs/*
 !docs/providers.md
+!docs/blog/
+docs/blog/*
+!docs/blog/agents-are-processes.md
 !docs/recipes/
 docs/recipes/*
 !docs/recipes/standing-review-agent.md

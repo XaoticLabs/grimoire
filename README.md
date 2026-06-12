@@ -8,7 +8,7 @@
 
 Grimoire runs AI coding agents as **long-lived, supervised daemons**. An agent you summon today still has an address next week. It sleeps when idle, wakes on a schedule or a file change or a message, restarts itself when it falls over, and pings you when something actually needs a human.
 
-The experiment: **agents are processes, not function calls.** Treat them like services. Identity, mailbox, supervisor.
+The experiment: **agents are processes, not function calls.** Treat them like services. Identity, mailbox, supervisor. (The long-form argument: [Agents are processes](docs/blog/agents-are-processes.md).)
 
 You bring the CLI. Claude Code is the default; `pi`, opencode, aider, codex, or anything that takes a prompt works. `claude` and `pi` get native session resume; everything else resumes by transcript replay from the event log ([provider guide](docs/providers.md)).
 
