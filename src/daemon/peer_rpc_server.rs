@@ -71,7 +71,7 @@ impl PeerService for PeerSvc {
         let token_hash = blake3::hash(hello.bearer_token.as_bytes())
             .as_bytes()
             .to_vec();
-        let Ok(Some(peer)) = self.db.lookup_peer_by_token_hash(&token_hash) else {
+        let Ok(Some(mut peer)) = self.db.lookup_peer_by_token_hash(&token_hash) else {
             return single_helloack_stream(self.daemon_id.clone(), false, "invalid_token");
         };
         if hello.protocol_version != crate::shared::constants::PEER_PROTOCOL_VERSION {
@@ -100,6 +100,14 @@ impl PeerService for PeerSvc {
         }
         if peer.daemon_id.is_empty() {
             let _ = self.db.update_peer_daemon_id(&peer.id, &hello.daemon_id);
+            // Keep the in-session snapshot consistent with the row we just
+            // updated: every inbound handler below keys dedupe, shadow
+            // lookups, and republished events off `peer.daemon_id`. Without
+            // this, the entire first session after `peer add` (before the
+            // local outbound handshake fills the row) runs with an empty
+            // sender daemon-id, silently dropping federated workspace
+            // events and misattributing lifecycle deliveries.
+            peer.daemon_id = hello.daemon_id.clone();
         }
         let _ = self.db.set_peer_state(&peer.id, PeerState::Active);
         let _ = self.db.set_peer_last_seen(&peer.id, unix_now());
