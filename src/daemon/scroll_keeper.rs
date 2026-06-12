@@ -422,6 +422,52 @@ impl ScrollKeeper {
         }
     }
 
+    /// A task run failed (worker died, or verification scored below the
+    /// bar). If the task has retry budget left, re-spawn a fresh agent for
+    /// it instead of failing; otherwise fall through to the terminal
+    /// failure path. Retrying clears any verifier link so a re-run's
+    /// completion re-triggers verification from scratch, and flips the task
+    /// back to `Ready` so the scheduler re-enqueues it (an approved gate
+    /// stays approved — no second approval is asked for).
+    ///
+    /// Note this is the DAG-level retry (a new agent per attempt), distinct
+    /// from agent-level `--restart` (which resumes the same agent's
+    /// session). A supervised agent's failure is handled by the supervisor
+    /// before reaching here, so the two never double-fire.
+    async fn retry_or_fail(&self, task: &Task) {
+        let (max, count) = self.db.get_task_retry(&task.id).unwrap_or((0, 0));
+        if count >= max {
+            self.fail_task_and_advance(task).await;
+            return;
+        }
+        let attempt = self.db.bump_task_retry(&task.id).unwrap_or(count + 1);
+        let _ = self.db.clear_task_verifier(&task.id);
+        if let Err(e) = self.db.update_task_state(&task.id, &TaskState::Ready) {
+            error!(task = %task.name, error = %e, "retry: failed to reset task; failing instead");
+            self.fail_task_and_advance(task).await;
+            return;
+        }
+        self.manager.event_bus().publish(StreamEvent::Notification {
+            agent_id: None,
+            message: format!(
+                "retrying scroll {} task '{}' (attempt {attempt}/{max})",
+                task.scroll_id, task.name
+            ),
+            level: "warn".to_string(),
+            source: "system".to_string(),
+        });
+        info!(
+            scroll_id = %task.scroll_id,
+            task = %task.name,
+            attempt,
+            max,
+            "Task failed; retrying with a fresh agent"
+        );
+        if let Err(e) = self.schedule_tasks(&task.scroll_id).await {
+            error!(scroll_id = %task.scroll_id, error = %e, "retry: schedule_tasks failed");
+        }
+    }
+
     /// Mark `task` failed, skip everything downstream of it, and either
     /// finish the scroll (all terminal) or keep scheduling independent
     /// tasks. Shared by worker failure and a failed verification.
@@ -687,7 +733,7 @@ impl ScrollKeeper {
                 threshold,
                 "Verification failed: score below threshold"
             );
-            self.fail_task_and_advance(task).await;
+            self.retry_or_fail(task).await;
         }
     }
 
@@ -714,7 +760,7 @@ impl ScrollKeeper {
                 verifier = %agent_id,
                 "Verifier agent failed; treating verification as failed"
             );
-            self.fail_task_and_advance(&task).await;
+            self.retry_or_fail(&task).await;
             return;
         }
 
@@ -734,7 +780,7 @@ impl ScrollKeeper {
             "Task failed"
         );
 
-        self.fail_task_and_advance(&task).await;
+        self.retry_or_fail(&task).await;
     }
 
     fn skip_downstream(&self, task_id: &str) {

@@ -35,6 +35,7 @@ pub async fn run(
     workspace: Option<String>,
     parent: Option<String>,
     tree_budget_usd: Option<f64>,
+    idempotency_key: Option<String>,
 ) -> Result<()> {
     let mut client = DaemonClient::connect().await?;
 
@@ -74,6 +75,7 @@ pub async fn run(
         "workspace": workspace,
         "parent_agent_id": parent_id,
         "tree_budget_usd": tree_budget_usd,
+        "idempotency_key": idempotency_key,
     });
 
     let response = client.call("agent.summon", params).await?;

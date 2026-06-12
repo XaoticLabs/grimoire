@@ -72,6 +72,38 @@ async fn summon_on_failure_persists_full_config() {
 }
 
 #[tokio::test]
+async fn summon_idempotency_key_collapses_duplicates() {
+    let (m, db, sk, wr, wsr, bus) = build().await;
+    let mk = |id: u64| RpcRequest {
+        method: "agent.summon".into(),
+        params: json!({"task": "build the thing", "idempotency_key": "deploy-2026-06-12"}),
+        id,
+        protocol_version: None,
+        auth_token: None,
+    };
+    let r1 = grimoire::daemon::rpc::handle_rpc_test(&m, &db, &sk, &wr, &wsr, &bus, mk(1)).await;
+    let a1: SummonResult = serde_json::from_value(r1.result.unwrap()).unwrap();
+    // A second summon with the same key returns the same agent, not a new one.
+    let r2 = grimoire::daemon::rpc::handle_rpc_test(&m, &db, &sk, &wr, &wsr, &bus, mk(2)).await;
+    let a2: SummonResult = serde_json::from_value(r2.result.unwrap()).unwrap();
+    assert_eq!(a1.id, a2.id, "same idempotency key must return the same agent");
+    // Exactly one agent exists.
+    assert_eq!(db.list_agents(None).unwrap().len(), 1);
+
+    // A different key mints a distinct agent.
+    let other = RpcRequest {
+        method: "agent.summon".into(),
+        params: json!({"task": "other", "idempotency_key": "different"}),
+        id: 3,
+        protocol_version: None,
+        auth_token: None,
+    };
+    let r3 = grimoire::daemon::rpc::handle_rpc_test(&m, &db, &sk, &wr, &wsr, &bus, other).await;
+    let a3: SummonResult = serde_json::from_value(r3.result.unwrap()).unwrap();
+    assert_ne!(a1.id, a3.id);
+}
+
+#[tokio::test]
 async fn summon_never_persists_defaults() {
     let (m, db, sk, wr, wsr, bus) = build().await;
     let req = RpcRequest {

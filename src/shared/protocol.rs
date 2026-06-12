@@ -121,6 +121,11 @@ pub struct SummonParams {
     /// the operator is notified once.
     #[serde(default)]
     pub tree_budget_usd: Option<f64>,
+    /// Idempotency key: if a summon with this key already minted an agent,
+    /// return that agent instead of spawning a duplicate. Makes `summon`
+    /// safe to retry on a flaky connection without double-spawning.
+    #[serde(default)]
+    pub idempotency_key: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -20,6 +20,35 @@ pub(super) async fn handle_summon(
 ) -> RpcResponse {
     let params: SummonParams = try_params!(req);
 
+    // Idempotency: a repeat summon with a key that already minted an agent
+    // returns that agent untouched, so callers can safely retry on a flaky
+    // connection. A stale key whose agent was deleted falls through to a
+    // fresh summon.
+    if let Some(key) = params.idempotency_key.clone() {
+        let key2 = key.clone();
+        let existing = db
+            .run(
+                move |db| -> anyhow::Result<Option<crate::shared::types::Agent>> {
+                    match db.lookup_idempotency_key(&key2) {
+                        Ok(Some(id)) => Ok(db.get_agent(&id).ok().flatten()),
+                        _ => Ok(None),
+                    }
+                },
+            )
+            .await
+            .unwrap_or(None);
+        if let Some(agent) = existing {
+            return RpcResponse::success_json(
+                req.id,
+                &SummonResult {
+                    id: agent.id,
+                    name: agent.name,
+                    state: agent.state.to_string(),
+                },
+            );
+        }
+    }
+
     // Supervision validation.
     let policy_str = params.restart_policy.as_deref().unwrap_or("never");
     let policy: crate::shared::types::RestartPolicy = match policy_str.parse() {
@@ -136,6 +165,15 @@ pub(super) async fn handle_summon(
         Ok(a) => a,
         Err(e) => return rpc_fail(req.id, "summon", e),
     };
+
+    // Bind the idempotency key to the freshly minted agent (first writer
+    // wins, so a concurrent racing summon collapses onto one agent).
+    if let Some(key) = params.idempotency_key.clone() {
+        let agent_id = result.id.clone();
+        let _ = db
+            .run(move |db| db.insert_idempotency_key(&key, &agent_id))
+            .await;
+    }
 
     // Post-insert assignment.
     if let Some(name) = &params.workspace

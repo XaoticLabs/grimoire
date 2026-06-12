@@ -86,6 +86,11 @@ enum Commands {
         /// wakes anywhere in the tree are blocked and you're notified once.
         #[arg(long, value_name = "USD")]
         tree_budget_usd: Option<f64>,
+
+        /// Idempotency key. A repeat summon with the same key returns the
+        /// agent the first call minted instead of spawning a duplicate.
+        #[arg(long)]
+        idempotency_key: Option<String>,
     },
 
     /// List all agents in the circle
@@ -536,6 +541,7 @@ async fn main() {
                     workspace,
                     parent,
                     tree_budget_usd,
+                    idempotency_key,
                 } => {
                     cli::commands::summon::run(
                         &task,
@@ -550,6 +556,7 @@ async fn main() {
                         workspace,
                         parent,
                         tree_budget_usd,
+                        idempotency_key,
                     )
                     .await
                 }

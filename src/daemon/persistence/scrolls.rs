@@ -138,6 +138,16 @@ impl super::Database {
         Ok(())
     }
 
+    /// Clear a task's verifier link so a re-run's completion re-triggers
+    /// verification from scratch. Used by the retry path.
+    pub fn clear_task_verifier(&self, task_id: &str) -> Result<()> {
+        self.exec(
+            "UPDATE tasks SET verifier_agent_id = NULL WHERE id = ?1",
+            params![task_id],
+        )?;
+        Ok(())
+    }
+
     pub fn update_task_state(&self, id: &str, state: &TaskState) -> Result<()> {
         let now = Utc::now().to_rfc3339();
         self.exec(
