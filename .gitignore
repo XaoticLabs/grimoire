@@ -9,6 +9,9 @@ docs/*
 !docs/recipes/
 docs/recipes/*
 !docs/recipes/standing-review-agent.md
+!docs/recipes/nightly-audit.md
+!docs/recipes/webhook-triage.md
+!docs/recipes/fork-and-eval.md
 !docs/assets/
 docs/assets/*
 !docs/assets/demo.gif

@@ -112,6 +112,9 @@ The daemon owns agent lifecycles and persists everything in SQLite over three tr
 ## Recipes
 
 - [Standing review agent](docs/recipes/standing-review-agent.md). The canonical "wake on file change, ping me if interesting, sleep" loop. Verified live against Claude and pi.
+- [Nightly audit agent](docs/recipes/nightly-audit.md). Cron wake at 3am, run the checks, ping only if red.
+- [Webhook-triggered triage](docs/recipes/webhook-triage.md). Sentry/CI/GitHub POSTs in, a sleeping agent wakes with the payload as its prompt.
+- [Fork and eval](docs/recipes/fork-and-eval.md). Read a life with `chronicle`, score it with `eval`, branch from the last good moment with `fork`.
 
 ## MSRV
 
