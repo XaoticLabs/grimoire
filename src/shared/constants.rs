@@ -31,7 +31,15 @@ pub const WORKSPACE_WATCH_DEFAULT_IGNORES: &[&str] = &[
     "*.swp",
 ];
 
+/// Root state directory (config, socket, db, pid, auth token, TLS certs,
+/// workspaces). `~/.grimoire` by default; `GRIMOIRE_DIR` overrides it so
+/// demos and multi-daemon-on-one-host setups can run fully isolated.
 pub fn grimoire_dir() -> PathBuf {
+    if let Ok(dir) = std::env::var("GRIMOIRE_DIR")
+        && !dir.is_empty()
+    {
+        return PathBuf::from(dir);
+    }
     let home = dirs_home();
     home.join(".grimoire")
 }

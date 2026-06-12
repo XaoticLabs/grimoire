@@ -64,5 +64,5 @@ daemon deliberately doesn't reimplement per-provider signature schemes.
   with different topics, and give each its own specialist agent.
 - **Direct delivery:** set `recipient = "<agent-id>"` instead of `topic`
   to hard-wire a webhook to one agent, skipping pub/sub.
-- **Triage → fix chain:** `grim wake add <fixer-id> --on-complete <triage-id>`
+- **Triage → fix chain:** `grim wake add <fixer-id> --on-parent <triage-id>`
   hands confirmed diagnoses to a second agent allowed to write code.

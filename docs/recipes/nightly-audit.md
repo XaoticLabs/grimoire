@@ -63,6 +63,6 @@ sentence it can actually say.
   to a JSONL file you grep when you care.
 - **Weekly deep audit:** second agent, `--cron "0 6 * * 1"`, brief it to
   read the week of nightly findings first (`grim chronicle nightly-audit`).
-- **Chain a fixer:** `grim wake add <fixer-id> --on-complete <audit-id>`
+- **Chain a fixer:** `grim wake add <fixer-id> --on-parent <audit-id>`
   wakes a second agent every time the audit finishes; brief the fixer to
   read the audit's findings and open a branch with fixes.

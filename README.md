@@ -46,6 +46,12 @@ grim demo standing-review --repo . --provider claude
 # diffs, decides, pings you, sleeps. Survives `grim daemon` restarts.
 ```
 
+Don't take "survives" on faith — this script summons agents, `kill -9`s the daemon mid-flight, restarts it, and replays the whole life from the event log. Self-contained, no API keys, zero tokens:
+
+```bash
+bash scripts/demo-resilience.sh
+```
+
 Any command that takes an agent ID also takes a short prefix, so `grim bind 4a` works.
 
 ## The two primitives

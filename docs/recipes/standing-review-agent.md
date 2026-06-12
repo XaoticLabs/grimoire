@@ -64,8 +64,8 @@ grim summon --keep-alive --cwd ~/repos/myapp \
 # → reviewer summoned: 4a8c1b2f
 
 # 2. Wake it on any file change under the repo. Debounced; ignores noise.
-grim wake add 4a --file-watch ~/repos/myapp
-# → file-watch wake source registered
+grim wake add 4a --watch "**"
+# → file-watch wake source registered (globs resolve under the agent's cwd)
 
 # 3. (optional) point notifications at a webhook, see config above.
 ```

@@ -48,6 +48,12 @@ enum Commands {
         #[arg(short, long)]
         provider: Option<String>,
 
+        /// Working directory for the agent (defaults to the daemon's
+        /// `agent.default_cwd`, then the daemon's own cwd). Mutually
+        /// exclusive with --workspace.
+        #[arg(long, conflicts_with = "workspace")]
+        cwd: Option<std::path::PathBuf>,
+
         /// Park the agent in Dormant after it finishes its first run, so
         /// future wake sources or `grim invoke` can resume it.
         #[arg(short = 'k', long)]
@@ -488,6 +494,7 @@ async fn main() {
                     name,
                     model,
                     provider,
+                    cwd,
                     keep_alive,
                     restart,
                     max_restarts,
@@ -500,6 +507,7 @@ async fn main() {
                         name,
                         model,
                         provider,
+                        cwd,
                         keep_alive,
                         &restart,
                         max_restarts,

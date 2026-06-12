@@ -1,6 +1,7 @@
 /target
 .claude/
 scripts/*
+!scripts/demo-resilience.sh
 ROADMAP.md
 
 # Docs: keep only what README references (recipe + embedded gif).

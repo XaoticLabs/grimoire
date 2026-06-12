@@ -16,18 +16,29 @@ pub(super) async fn handle_wake_add(
     req: RpcRequest,
 ) -> RpcResponse {
     let params: WakeAddParams = try_params!(req);
-    // Validate agent exists.
+    // Validate agent exists (and capture it: file-watch roots resolve
+    // against the *agent's* cwd below).
     let agent_id = params.agent_id.clone();
-    match db.run(move |db| db.get_agent(&agent_id)).await {
-        Ok(Some(_)) => {}
+    let agent = match db.run(move |db| db.get_agent(&agent_id)).await {
+        Ok(Some(a)) => a,
         Ok(None) => return rpc_err(req.id, "agent_not_found"),
         Err(e) => return RpcResponse::error(req.id, -32000, format!("db: {e}")),
-    }
+    };
     let kind: WakeSourceKind = match params.kind.parse() {
         Ok(k) => k,
         Err(_) => return rpc_err(req.id, "invalid_kind"),
     };
-    let config_json = match serde_json::to_string(&params.config) {
+    // The documented contract is "globs watch under the agent's cwd". The
+    // daemon owns that resolution: whatever root the client sent (older
+    // CLIs sent their own current_dir, which is wrong whenever the
+    // operator's shell isn't sitting in the agent's cwd) is overwritten.
+    let mut config = params.config.clone();
+    if kind == WakeSourceKind::FileWatch
+        && let Some(obj) = config.as_object_mut()
+    {
+        obj.insert("root".into(), serde_json::json!(agent.cwd));
+    }
+    let config_json = match serde_json::to_string(&config) {
         Ok(s) => s,
         Err(e) => return RpcResponse::error(req.id, -32000, format!("config: {e}")),
     };
