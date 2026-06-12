@@ -64,7 +64,9 @@ Everything else composes those two. Wake triggers deliver to a mailbox. Supervis
 - **Notifications.** Outbound webhook (Slack/Discord/relay), local JSON-lines log, or `notify-send` desktop toast. Any combination, fan-out independent.
 - **Inbound webhooks.** Configure `[webhooks.<name>]` and `POST /webhooks/<name>` becomes mail on a topic, so a standing agent subscribed to it wakes on real-world events.
 - **Time-travel.** `grim chronicle <id>` (alias `grim replay`) reconstructs an agent's full life (stdout interleaved with state changes, wake fires, restarts, mail, and notifications) with state-at-point reconstruction at any seq. `grim fork <id> --at <seq>` branches a new agent seeded with the parent's transcript. `grim eval <id> --rubric <file>` scores a transcript.
-- **Metrics.** `GET /metrics` exposes Prometheus text exposition behind the same bearer auth as `/api/*`.
+- **Sandboxing.** Per-provider confinement: a `bwrap` filesystem jail (network off, explicit ro/rw paths), `systemd-run` cgroup limits (memory, CPU quota), and per-agent token budgets. Degrades gracefully — if the host tooling is absent it warns once and runs unconfined.
+- **Policy & budgets.** Provider and cwd allow/deny rules enforced at summon; `[budgets.<name>]` daily USD ceilings per provider group, gated at dispatch with spend attributed from token counts.
+- **Metrics & tracing.** `GET /metrics` exposes Prometheus text exposition behind the same bearer auth as `/api/*`. OTel span export ships behind `--features otel` (`OTEL_EXPORTER_OTLP_ENDPOINT` gates it at runtime).
 
 ## The mystic vocabulary, translated
 
@@ -93,13 +95,13 @@ The daemon owns agent lifecycles and persists everything in SQLite over three tr
 
 ## Status
 
-**Works today:** everything in [What's in the box](#whats-in-the-box). Trust layer ships on by default across all three transports with negotiated protocol versioning.
+**Works today:** everything in [What's in the box](#whats-in-the-box). Trust layer ships on by default across all three transports with negotiated protocol versioning. Federation now spans the full surface: mail, topics, namespaces, workspace file events (a file change on daemon A wakes a subscribed agent on daemon B), cross-peer wake sources, and scroll tasks dispatched to peers (`grim peer set --accept-scroll-dispatch`).
 
-**Partial:** Federated namespaces replicate writes made after `ns federate`, but there's no initial-state snapshot for a peer joining a populated namespace yet, and concurrent writes to one key resolve LWW rather than surfacing the conflict. Federated *workspaces* are mid-build: the schema and operator surface (`grim workspace federate`) shipped, but the event flow that actually wakes a remote agent on a file change in another daemon's workspace is the next pickup. Metrics ships Prometheus only; OTel tracing export is not wired.
+**Partial:** Federated namespaces replicate writes made after `ns federate`, but there's no initial-state snapshot for a peer joining a populated namespace yet, and concurrent writes to one key resolve LWW rather than surfacing the conflict.
 
 **Not built yet:**
-- Sandboxing: a cwd jail, cgroups, per-agent resource limits.
-- Policy and budget primitives: per-provider and per-cwd allow rules, token and cost ceilings.
+- An MCP surface — exposing the daemon's queue to MCP clients (the Tasks primitive).
+- Tree-level budget supervision: budgets gate dispatch per agent today; pausing or escalating a whole supervision tree at a spend ceiling is next.
 
 ## Recipes
 
