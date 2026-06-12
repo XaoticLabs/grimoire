@@ -10,7 +10,7 @@ Grimoire runs AI coding agents as **long-lived, supervised daemons**. An agent y
 
 The experiment: **agents are processes, not function calls.** Treat them like services. Identity, mailbox, supervisor.
 
-You bring the CLI. Claude Code is the default; `pi`, opencode, aider, codex, or anything that takes a prompt works.
+You bring the CLI. Claude Code is the default; `pi`, opencode, aider, codex, or anything that takes a prompt works. `claude` and `pi` get native session resume; everything else resumes by transcript replay from the event log ([provider guide](docs/providers.md)).
 
 ## Why this exists
 
