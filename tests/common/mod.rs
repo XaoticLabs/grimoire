@@ -50,6 +50,10 @@ pub fn seed(db: &Database, id: &str, state: AgentState) {
     db.insert_agent(&agent).unwrap();
 }
 
+// Shared via `mod common` in every supervisor test binary, but only some of
+// them call it; the others see it as dead. `allow`, not `expect`, because the
+// lint must not fire in the binaries that do use it.
+#[allow(dead_code)]
 pub fn build(db: Arc<Database>, bus: EventBus, clock: Arc<TestClock>) -> Arc<Supervisor> {
     let mail: Arc<dyn EscalationMailSender> = Arc::new(NoopMail);
     Supervisor::new(db, bus, clock, 30, 3, mail)

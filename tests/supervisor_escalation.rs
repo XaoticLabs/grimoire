@@ -3,45 +3,16 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use anyhow::Result;
-use async_trait::async_trait;
 use chrono::{TimeZone, Utc};
-use tokio::sync::Mutex;
 
 use grimoire::daemon::clock::TestClock;
 use grimoire::daemon::event_bus::EventBus;
 use grimoire::daemon::persistence::{Database, unix_now};
-use grimoire::daemon::supervisor::{
-    DbEscalationMailSender, EscalationMailSender, EscalationOutcome, Supervisor,
-};
+use grimoire::daemon::supervisor::{DbEscalationMailSender, EscalationMailSender, Supervisor};
 use grimoire::shared::protocol::StreamEvent;
 use grimoire::shared::types::{
     Agent, AgentState, RestartHistoryOutcome, RestartPolicy, Subscription, SupervisionConfig,
 };
-
-#[derive(Default)]
-struct RecordingMail {
-    calls: Mutex<Vec<(String, String, String)>>, // sender, target, body
-}
-
-#[async_trait]
-impl EscalationMailSender for RecordingMail {
-    async fn send_escalation(
-        &self,
-        sender_id: &str,
-        target: &str,
-        body: &str,
-    ) -> Result<EscalationOutcome> {
-        self.calls
-            .lock()
-            .await
-            .push((sender_id.to_string(), target.to_string(), body.to_string()));
-        Ok(EscalationOutcome {
-            fanout_count: 1,
-            recipient_ids: vec!["recipnt1".to_string()],
-        })
-    }
-}
 
 fn seed(db: &Database, id: &str, state: AgentState) {
     let agent = Agent {

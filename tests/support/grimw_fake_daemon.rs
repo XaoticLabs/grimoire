@@ -20,7 +20,6 @@ use tonic::{Request, Response, Status, Streaming, transport::Server};
 pub struct FakeDaemon {
     pub received: Arc<Mutex<Vec<WorkerMessage>>>,
     pub to_worker: mpsc::Sender<DaemonMessage>,
-    pub addr: String,
     pub config_path: PathBuf,
     _shutdown_tx: tokio::sync::oneshot::Sender<()>,
     _tempdir: tempfile::TempDir,
@@ -144,7 +143,6 @@ version = "{version}"
         Self {
             received,
             to_worker,
-            addr: addr_str,
             config_path,
             _shutdown_tx: shutdown_tx,
             _tempdir: tempdir,

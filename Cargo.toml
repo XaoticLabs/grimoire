@@ -95,7 +95,7 @@ tower = { version = "0.5", features = ["util"] }
 
 [lints.rust]
 warnings = { level = "deny", priority = -1 }
-dead_code = "allow"
+dead_code = "warn"
 unreachable_pub = "warn"
 
 [lints.clippy]
