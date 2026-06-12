@@ -204,160 +204,198 @@ impl AgentManager {
         let db = self.db.clone();
         let bus = self.event_bus.clone();
         let manager = self.clone();
-        tokio::spawn(async move {
-            let mut result = match completion.await {
-                Ok(r) => r,
-                Err(e) => {
-                    error!(agent_id = %agent_id, error = %e, "executor completion task panicked");
-                    process_manager::MonitorResult {
-                        error_reason: Some(format!("completion_panicked: {e}")),
-                        ..Default::default()
-                    }
-                }
-            };
-
-            if let Some(ref sid) = result.session_id
-                && let Err(e) = db.update_agent_session_id(&agent_id, sid)
-            {
-                error!(agent_id = %agent_id, error = %e, "Failed to store session_id");
+        // One span per agent run, following the OTel GenAI semantic
+        // conventions (`gen_ai.*`) so OTLP consumers (Langfuse, Phoenix,
+        // Jaeger dashboards keyed on the semconv) can read runs without a
+        // translation layer. Usage fields are recorded at completion.
+        let span = tracing::info_span!(
+            "invoke_agent",
+            gen_ai.operation.name = "invoke_agent",
+            gen_ai.agent.id = %agent_id,
+            gen_ai.agent.name = tracing::field::Empty,
+            gen_ai.provider.name = tracing::field::Empty,
+            gen_ai.request.model = tracing::field::Empty,
+            gen_ai.conversation.id = tracing::field::Empty,
+            gen_ai.usage.input_tokens = tracing::field::Empty,
+            gen_ai.usage.output_tokens = tracing::field::Empty,
+        );
+        if let Ok(Some(row)) = self.db.get_agent(&agent_id) {
+            if let Some(name) = &row.name {
+                span.record("gen_ai.agent.name", tracing::field::display(name));
             }
-
-            // keep-alive agents that complete normally with a session land
-            // in Dormant instead of Complete.
-            if matches!(result.state, AgentState::Complete) {
-                let keep_alive = db.get_keep_alive(&agent_id).unwrap_or(false);
-                if keep_alive {
-                    if result.session_id.is_some() {
-                        result.state = AgentState::Dormant;
-                    } else if manager.provider_resume_strategy(&agent_id)
-                        == Some(ResumeStrategy::ContextReplay)
-                    {
-                        // No native session, but the provider supports
-                        // daemon-managed continuity: mint a synthetic session id
-                        // so the agent goes Dormant and the scheduler will wake it.
-                        // Continuity is reconstructed from the event log on resume.
-                        let sid = format!("daemon:{}", uuid::Uuid::new_v4());
-                        if let Err(e) = db.update_agent_session_id(&agent_id, &sid) {
-                            error!(agent_id = %agent_id, error = %e, "Failed to store synthetic session_id");
-                        } else {
-                            result.session_id = Some(sid);
-                            result.state = AgentState::Dormant;
-                        }
-                    } else {
-                        tracing::warn!(
-                            agent_id = %agent_id,
-                            "keep_alive set but no session_id; completing as Complete"
-                        );
-                    }
-                }
+            if let Some(provider) = &row.provider {
+                span.record("gen_ai.provider.name", tracing::field::display(provider));
             }
-
-            if let Some(tokens) = result.tokens_used
-                && tokens > 0
-            {
-                match db.add_agent_tokens(&agent_id, tokens) {
-                    Ok(total) => {
-                        tracing::info!(
-                            agent_id = %agent_id,
-                            tokens_this_run = tokens,
-                            tokens_total = total,
-                            "Recorded token usage"
-                        );
-                    }
+            if let Some(model) = &row.model {
+                span.record("gen_ai.request.model", tracing::field::display(model));
+            }
+        }
+        let run_span = span.clone();
+        tokio::spawn(tracing::Instrument::instrument(
+            async move {
+                let mut result = match completion.await {
+                    Ok(r) => r,
                     Err(e) => {
-                        error!(agent_id = %agent_id, error = %e, "Failed to record token usage");
+                        error!(agent_id = %agent_id, error = %e, "executor completion task panicked");
+                        process_manager::MonitorResult {
+                            error_reason: Some(format!("completion_panicked: {e}")),
+                            ..Default::default()
+                        }
+                    }
+                };
+
+                if let Some(b) = result.token_breakdown {
+                    run_span.record("gen_ai.usage.input_tokens", b.input);
+                    run_span.record("gen_ai.usage.output_tokens", b.output);
+                }
+                if let Some(ref sid) = result.session_id {
+                    run_span.record("gen_ai.conversation.id", tracing::field::display(sid));
+                }
+
+                if let Some(ref sid) = result.session_id
+                    && let Err(e) = db.update_agent_session_id(&agent_id, sid)
+                {
+                    error!(agent_id = %agent_id, error = %e, "Failed to store session_id");
+                }
+
+                // keep-alive agents that complete normally with a session land
+                // in Dormant instead of Complete.
+                if matches!(result.state, AgentState::Complete) {
+                    let keep_alive = db.get_keep_alive(&agent_id).unwrap_or(false);
+                    if keep_alive {
+                        if result.session_id.is_some() {
+                            result.state = AgentState::Dormant;
+                        } else if manager.provider_resume_strategy(&agent_id)
+                            == Some(ResumeStrategy::ContextReplay)
+                        {
+                            // No native session, but the provider supports
+                            // daemon-managed continuity: mint a synthetic session id
+                            // so the agent goes Dormant and the scheduler will wake it.
+                            // Continuity is reconstructed from the event log on resume.
+                            let sid = format!("daemon:{}", uuid::Uuid::new_v4());
+                            if let Err(e) = db.update_agent_session_id(&agent_id, &sid) {
+                                error!(agent_id = %agent_id, error = %e, "Failed to store synthetic session_id");
+                            } else {
+                                result.session_id = Some(sid);
+                                result.state = AgentState::Dormant;
+                            }
+                        } else {
+                            tracing::warn!(
+                                agent_id = %agent_id,
+                                "keep_alive set but no session_id; completing as Complete"
+                            );
+                        }
                     }
                 }
-            }
 
-            // USD attribution. Compute spend from the breakdown × provider
-            // pricing, then charge the agent's lifetime spend AND every
-            // budget whose `providers` list matches this run's provider.
-            // No pricing or no breakdown → no charge, by design (free models
-            // and providers without usage telemetry are silently
-            // un-budget-able).
-            if let Some(provider_name) = db
-                .get_agent(&agent_id)
-                .ok()
-                .flatten()
-                .and_then(|a| a.provider)
-                && let Some(pricing) = manager.registry.pricing_for(&provider_name)
-            {
-                let breakdown = result.token_breakdown.unwrap_or_else(|| {
-                    // No breakdown but we may still have a total. Charge it
-                    // as input tokens (conservative; vendors price input
-                    // cheaper than output, so this *under*-bills slightly).
-                    crate::daemon::provider::TokenBreakdown {
-                        input: result.tokens_used.unwrap_or(0),
-                        ..Default::default()
-                    }
-                });
-                let usd = breakdown.cost_usd(&pricing);
-                if usd > 0.0 {
-                    if let Err(e) = db.add_agent_usd(&agent_id, usd) {
-                        error!(agent_id = %agent_id, error = %e, "Failed to record USD spend");
-                    }
-                    let today = chrono::Utc::now().format("%Y-%m-%d").to_string();
-                    for (name, b) in &manager.config.budgets {
-                        let matches =
-                            b.providers.is_empty() || b.providers.contains(&provider_name);
-                        if !matches {
-                            continue;
+                if let Some(tokens) = result.tokens_used
+                    && tokens > 0
+                {
+                    match db.add_agent_tokens(&agent_id, tokens) {
+                        Ok(total) => {
+                            tracing::info!(
+                                agent_id = %agent_id,
+                                tokens_this_run = tokens,
+                                tokens_total = total,
+                                "Recorded token usage"
+                            );
                         }
-                        match db.add_budget_spend(name, &today, usd) {
-                            Ok(total) => tracing::info!(
-                                budget = %name,
-                                provider = %provider_name,
-                                charged_usd = usd,
-                                day_total_usd = total,
-                                daily_cap_usd = b.daily_usd,
-                                "Charged budget"
-                            ),
-                            Err(e) => {
-                                error!(budget = %name, error = %e, "Failed to charge budget");
+                        Err(e) => {
+                            error!(agent_id = %agent_id, error = %e, "Failed to record token usage");
+                        }
+                    }
+                }
+
+                // USD attribution. Compute spend from the breakdown × provider
+                // pricing, then charge the agent's lifetime spend AND every
+                // budget whose `providers` list matches this run's provider.
+                // No pricing or no breakdown → no charge, by design (free models
+                // and providers without usage telemetry are silently
+                // un-budget-able).
+                if let Some(provider_name) = db
+                    .get_agent(&agent_id)
+                    .ok()
+                    .flatten()
+                    .and_then(|a| a.provider)
+                    && let Some(pricing) = manager.registry.pricing_for(&provider_name)
+                {
+                    let breakdown = result.token_breakdown.unwrap_or_else(|| {
+                        // No breakdown but we may still have a total. Charge it
+                        // as input tokens (conservative; vendors price input
+                        // cheaper than output, so this *under*-bills slightly).
+                        crate::daemon::provider::TokenBreakdown {
+                            input: result.tokens_used.unwrap_or(0),
+                            ..Default::default()
+                        }
+                    });
+                    let usd = breakdown.cost_usd(&pricing);
+                    if usd > 0.0 {
+                        if let Err(e) = db.add_agent_usd(&agent_id, usd) {
+                            error!(agent_id = %agent_id, error = %e, "Failed to record USD spend");
+                        }
+                        let today = chrono::Utc::now().format("%Y-%m-%d").to_string();
+                        for (name, b) in &manager.config.budgets {
+                            let matches =
+                                b.providers.is_empty() || b.providers.contains(&provider_name);
+                            if !matches {
+                                continue;
+                            }
+                            match db.add_budget_spend(name, &today, usd) {
+                                Ok(total) => tracing::info!(
+                                    budget = %name,
+                                    provider = %provider_name,
+                                    charged_usd = usd,
+                                    day_total_usd = total,
+                                    daily_cap_usd = b.daily_usd,
+                                    "Charged budget"
+                                ),
+                                Err(e) => {
+                                    error!(budget = %name, error = %e, "Failed to charge budget");
+                                }
                             }
                         }
                     }
                 }
-            }
 
-            if let Err(e) = db.update_agent_state(&agent_id, &result.state, result.exit_code) {
-                error!(agent_id = %agent_id, error = %e, "Failed to update agent state");
-            }
-
-            // Supervision history reconciliation: if there's a scheduled
-            // history row for this agent, flip it based on the final state.
-            // Only Complete bumps restart_count; Failed just records outcome.
-            let outcome = match result.state {
-                AgentState::Complete => Some(RestartHistoryOutcome::Succeeded),
-                AgentState::Failed => Some(RestartHistoryOutcome::FailedAgain),
-                _ => None,
-            };
-            if let Some(outcome) = outcome {
-                let updated = db
-                    .update_latest_scheduled_outcome(&agent_id, outcome)
-                    .unwrap_or(0);
-                if updated > 0 && result.state == AgentState::Complete {
-                    let _ = db.bump_restart_count(&agent_id);
+                if let Err(e) = db.update_agent_state(&agent_id, &result.state, result.exit_code) {
+                    error!(agent_id = %agent_id, error = %e, "Failed to update agent state");
                 }
-            }
 
-            let mut agents = manager.agents.lock().await;
-            if let Some(managed) = agents.get_mut(&agent_id) {
-                managed.agent.state = result.state.clone();
-                managed.agent.exit_code = result.exit_code;
-                if let Some(ref sid) = result.session_id {
-                    managed.agent.session_id = Some(sid.clone());
+                // Supervision history reconciliation: if there's a scheduled
+                // history row for this agent, flip it based on the final state.
+                // Only Complete bumps restart_count; Failed just records outcome.
+                let outcome = match result.state {
+                    AgentState::Complete => Some(RestartHistoryOutcome::Succeeded),
+                    AgentState::Failed => Some(RestartHistoryOutcome::FailedAgain),
+                    _ => None,
+                };
+                if let Some(outcome) = outcome {
+                    let updated = db
+                        .update_latest_scheduled_outcome(&agent_id, outcome)
+                        .unwrap_or(0);
+                    if updated > 0 && result.state == AgentState::Complete {
+                        let _ = db.bump_restart_count(&agent_id);
+                    }
                 }
-                managed.cancel = None;
-            }
 
-            bus.publish(StreamEvent::StateChange {
-                agent_id,
-                old_state: AgentState::Active,
-                new_state: result.state.clone(),
-            });
-        })
+                let mut agents = manager.agents.lock().await;
+                if let Some(managed) = agents.get_mut(&agent_id) {
+                    managed.agent.state = result.state.clone();
+                    managed.agent.exit_code = result.exit_code;
+                    if let Some(ref sid) = result.session_id {
+                        managed.agent.session_id = Some(sid.clone());
+                    }
+                    managed.cancel = None;
+                }
+
+                bus.publish(StreamEvent::StateChange {
+                    agent_id,
+                    old_state: AgentState::Active,
+                    new_state: result.state.clone(),
+                });
+            },
+            span,
+        ))
     }
 
     /// Enqueue an agent for the scheduler to pick up. Inserts the agent in
