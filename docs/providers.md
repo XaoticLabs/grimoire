@@ -56,6 +56,13 @@ prompts with quotes/metacharacters are safe. Every spawned agent also gets
 `GRIMOIRE_AGENT_ID` in its environment, so it can call back into `grim
 mail` / `grim memory` / `grim notify` knowing who it is.
 
+**AGENTS.md.** If the agent's cwd contains an `AGENTS.md`, generic
+providers get it prepended to the prompt (capped at 8 KiB) under a
+"Project instructions" heading — the same courtesy agent-native CLIs
+(claude, codex, opencode) extend themselves by reading instruction files
+directly. Workspaces are git worktrees, so a tracked `AGENTS.md` is
+present in every workspace automatically.
+
 ## Presets
 
 These use each CLI's documented non-interactive flags. Unlike the claude

@@ -7,6 +7,11 @@ use crate::daemon::process_manager::SpawnedAgent;
 use crate::daemon::provider::{AgentContext, OutputFormat, Provider, ProviderCapabilities};
 use crate::shared::config::ProviderConfig;
 
+/// Byte cap on AGENTS.md content prepended to a generic provider's prompt.
+/// Native-session CLIs (claude, codex, opencode) read instruction files
+/// themselves; this is the equivalent courtesy for CLIs that don't.
+const AGENTS_MD_BUDGET_BYTES: usize = 8 * 1024;
+
 pub struct PlainTextProvider {
     pub provider_name: String,
     pub config: ProviderConfig,
@@ -26,6 +31,30 @@ impl PlainTextProvider {
             .iter()
             .map(|arg| arg.replace("{task}", task))
             .collect()
+    }
+
+    /// If the agent's cwd has an `AGENTS.md`, prepend it (tail-truncated to
+    /// [`AGENTS_MD_BUDGET_BYTES`]) so generic CLIs see the same project
+    /// instructions that agent-native CLIs read on their own.
+    fn compose_task(cwd: &Path, task: &str) -> String {
+        let path = cwd.join("AGENTS.md");
+        let Ok(content) = std::fs::read_to_string(&path) else {
+            return task.to_string();
+        };
+        let content = content.trim();
+        if content.is_empty() {
+            return task.to_string();
+        }
+        let (shown, note) = if content.len() > AGENTS_MD_BUDGET_BYTES {
+            let mut cut = AGENTS_MD_BUDGET_BYTES;
+            while !content.is_char_boundary(cut) {
+                cut -= 1;
+            }
+            (&content[..cut], "\n[truncated]")
+        } else {
+            (content, "")
+        };
+        format!("## Project instructions (AGENTS.md)\n{shown}{note}\n\n## Task\n{task}")
     }
 }
 
@@ -51,7 +80,8 @@ impl Provider for PlainTextProvider {
     ) -> Result<SpawnedAgent> {
         let mut cmd = Command::new(&self.config.binary);
 
-        for arg in self.build_args(task) {
+        let task = Self::compose_task(cwd, task);
+        for arg in self.build_args(&task) {
             cmd.arg(arg);
         }
 
@@ -150,6 +180,37 @@ mod tests {
     fn extract_session_id_always_none() {
         let p = test_provider();
         assert!(p.extract_session_id("anything").is_none());
+    }
+
+    #[test]
+    fn compose_task_without_agents_md_is_identity() {
+        let dir = tempfile::tempdir().unwrap();
+        assert_eq!(PlainTextProvider::compose_task(dir.path(), "do x"), "do x");
+    }
+
+    #[test]
+    fn compose_task_prepends_agents_md() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("AGENTS.md"), "Use tabs.\n").unwrap();
+        let composed = PlainTextProvider::compose_task(dir.path(), "do x");
+        assert!(composed.starts_with("## Project instructions (AGENTS.md)\nUse tabs."));
+        assert!(composed.ends_with("## Task\ndo x"));
+    }
+
+    #[test]
+    fn compose_task_truncates_oversized_agents_md() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("AGENTS.md"), "x".repeat(20_000)).unwrap();
+        let composed = PlainTextProvider::compose_task(dir.path(), "do x");
+        assert!(composed.contains("[truncated]"));
+        assert!(composed.len() < 10_000);
+    }
+
+    #[test]
+    fn compose_task_ignores_empty_agents_md() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("AGENTS.md"), "  \n").unwrap();
+        assert_eq!(PlainTextProvider::compose_task(dir.path(), "do x"), "do x");
     }
 
     #[test]
