@@ -413,6 +413,22 @@ enum Commands {
         #[arg(short, long)]
         provider: Option<String>,
     },
+
+    /// Print shell completions to stdout (bash, zsh, fish, elvish, powershell)
+    Completions {
+        /// Shell to generate completions for
+        #[arg(value_enum)]
+        shell: clap_complete::Shell,
+    },
+
+    /// Render man pages for grim and every subcommand into a directory.
+    /// Used by packaging; hidden from --help.
+    #[command(hide = true)]
+    Mangen {
+        /// Output directory for the roff pages
+        #[arg(long, default_value = "man")]
+        dir: std::path::PathBuf,
+    },
 }
 
 #[tokio::main]
@@ -428,6 +444,25 @@ async fn main() {
             if let Err(e) = result {
                 eprintln!("Daemon error: {e}");
                 std::process::exit(1);
+            }
+        }
+
+        // Pure-local commands: no daemon needed, must not auto-start one.
+        Commands::Completions { shell } => {
+            use clap::CommandFactory;
+            clap_complete::generate(shell, &mut Cli::command(), "grim", &mut std::io::stdout());
+        }
+        Commands::Mangen { dir } => {
+            use clap::CommandFactory;
+            let render = std::fs::create_dir_all(&dir)
+                .map_err(anyhow::Error::from)
+                .and_then(|()| clap_mangen::generate_to(Cli::command(), &dir).map_err(Into::into));
+            match render {
+                Ok(()) => println!("man pages written to {}", dir.display()),
+                Err(e) => {
+                    eprintln!("Error: {e}");
+                    std::process::exit(1);
+                }
             }
         }
 
@@ -601,9 +636,11 @@ async fn main() {
                     repo,
                     provider,
                 } => cli::commands::demo::run(&name, repo, provider).await,
-                // `Daemon` is dispatched by the outer match arm above and never
-                // reaches this client-command dispatch.
-                Commands::Daemon => unreachable!("Daemon handled by outer match arm"),
+                // `Daemon`, `Completions`, and `Mangen` are dispatched by the
+                // outer match arms above and never reach this client dispatch.
+                Commands::Daemon | Commands::Completions { .. } | Commands::Mangen { .. } => {
+                    unreachable!("handled by outer match arm")
+                }
             };
 
             if let Err(e) = result {

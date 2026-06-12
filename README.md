@@ -26,6 +26,12 @@ You bring the CLI. Claude Code is the default; `pi`, opencode, aider, codex, or 
 cargo install --path .
 ```
 
+Shell completions for bash, zsh, fish, elvish, and powershell:
+
+```bash
+grim completions fish > ~/.config/fish/completions/grim.fish
+```
+
 ## 30-second tour
 
 ```bash
