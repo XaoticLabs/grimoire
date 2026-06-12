@@ -107,7 +107,10 @@ async fn gated_task_is_held_for_approval() {
             saw_notification = true;
         }
     }
-    assert!(saw_notification, "expected an approval-required notification");
+    assert!(
+        saw_notification,
+        "expected an approval-required notification"
+    );
 }
 
 #[tokio::test]

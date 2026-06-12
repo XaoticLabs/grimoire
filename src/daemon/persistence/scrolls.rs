@@ -215,7 +215,11 @@ impl super::Database {
     ) -> Result<()> {
         self.exec(
             "UPDATE tasks SET requires_approval = ?1, max_retries = ?2 WHERE id = ?3",
-            params![i64::from(requires_approval), max_retries as i64, task_id],
+            params![
+                i64::from(requires_approval),
+                i64::from(max_retries),
+                task_id
+            ],
         )?;
         Ok(())
     }

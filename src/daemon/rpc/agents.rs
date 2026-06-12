@@ -396,9 +396,7 @@ pub(super) async fn handle_agent_artifact(db: &Arc<Database>, req: RpcRequest) -
         })
         .await;
     match outcome {
-        Ok(Some(artifact)) => {
-            RpcResponse::success_json(req.id, &AgentArtifactResult { artifact })
-        }
+        Ok(Some(artifact)) => RpcResponse::success_json(req.id, &AgentArtifactResult { artifact }),
         Ok(None) => rpc_err(req.id, "agent_not_found"),
         Err(e) => rpc_fail(req.id, "read artifact", e),
     }

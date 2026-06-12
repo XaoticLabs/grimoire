@@ -187,6 +187,50 @@ enum Commands {
         name: Option<String>,
     },
 
+    /// Fork a task into competing variants, run each in an isolated git
+    /// worktree, score them against a rubric, and merge the winner.
+    Race {
+        /// The task prompt. A `{variant}` placeholder is replaced per
+        /// variant; otherwise the variant is appended as an instruction.
+        task: String,
+
+        /// Comma-separated variant labels, e.g. "redis,postgres,sqlite".
+        #[arg(long)]
+        variants: String,
+
+        /// Path to the rubric markdown file used to score each variant.
+        #[arg(long)]
+        rubric: String,
+
+        /// Repository to run in (each variant gets a worktree off --branch).
+        #[arg(long, default_value = ".")]
+        repo: std::path::PathBuf,
+
+        /// Base branch/commit each variant's worktree forks from.
+        #[arg(long, default_value = "HEAD")]
+        branch: String,
+
+        /// Provider for the variant agents (and evaluators).
+        #[arg(short, long)]
+        provider: Option<String>,
+
+        /// Model for the variant agents (and evaluators).
+        #[arg(short, long)]
+        model: Option<String>,
+
+        /// Auto-merge the winning variant's branch into the current branch.
+        #[arg(long)]
+        merge: bool,
+
+        /// Per-agent wait budget, in seconds.
+        #[arg(long, default_value_t = 1800)]
+        timeout: u64,
+
+        /// Keep the per-variant worktrees on disk instead of removing them.
+        #[arg(long)]
+        keep_worktrees: bool,
+    },
+
     /// Show an agent's artifact: files changed, unified diff, and cost.
     Artifact {
         /// Agent ID (or prefix)
@@ -627,6 +671,32 @@ async fn main() {
                 } => {
                     let id = resolve_id(&id).await;
                     cli::commands::fork::run(&id, at, task, provider, model, name).await
+                }
+                Commands::Race {
+                    task,
+                    variants,
+                    rubric,
+                    repo,
+                    branch,
+                    provider,
+                    model,
+                    merge,
+                    timeout,
+                    keep_worktrees,
+                } => {
+                    cli::commands::race::run(
+                        &task,
+                        &variants,
+                        &repo,
+                        &branch,
+                        &rubric,
+                        provider,
+                        model,
+                        merge,
+                        timeout,
+                        keep_worktrees,
+                    )
+                    .await
                 }
                 Commands::Artifact { id, json, diff } => {
                     let id = resolve_id(&id).await;

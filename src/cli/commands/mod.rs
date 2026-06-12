@@ -18,6 +18,7 @@ pub mod pact;
 pub mod peer;
 pub mod ps;
 pub mod queue;
+pub mod race;
 pub mod scroll;
 pub mod scry;
 pub mod status;

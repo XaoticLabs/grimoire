@@ -88,8 +88,7 @@ pub fn compute(
         if let Some(numstat) = git(cwd, &["diff", "--numstat", &range]) {
             for line in numstat.lines() {
                 let mut cols = line.split('\t');
-                let (Some(add), Some(del), Some(path)) =
-                    (cols.next(), cols.next(), cols.next())
+                let (Some(add), Some(del), Some(path)) = (cols.next(), cols.next(), cols.next())
                 else {
                     continue;
                 };
@@ -114,11 +113,7 @@ pub fn compute(
                 while cut < diff.len() && !diff.is_char_boundary(cut) {
                     cut += 1;
                 }
-                diff = format!(
-                    "[…{} bytes of diff truncated…]\n{}",
-                    cut,
-                    &diff[cut..]
-                );
+                diff = format!("[…{} bytes of diff truncated…]\n{}", cut, &diff[cut..]);
             }
             if !diff.trim().is_empty() {
                 diff_text = Some(diff);

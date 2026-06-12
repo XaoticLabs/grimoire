@@ -131,9 +131,7 @@ impl super::Database {
 #[cfg(test)]
 mod tests {
     use crate::daemon::persistence::Database;
-    use crate::shared::types::{
-        Agent, AgentArtifact, AgentState, FileChange, RestartPolicy,
-    };
+    use crate::shared::types::{Agent, AgentArtifact, AgentState, FileChange, RestartPolicy};
     use chrono::Utc;
     use std::path::PathBuf;
 

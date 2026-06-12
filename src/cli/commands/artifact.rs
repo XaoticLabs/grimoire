@@ -69,7 +69,10 @@ pub async fn run(id: &str, json: bool, show_diff: bool) -> Result<()> {
             None => println!("\n{}", "(no tracked diff)".dimmed()),
         }
     } else if artifact.diff.is_some() {
-        println!("\n{}", "run with --diff to see the full unified diff".dimmed());
+        println!(
+            "\n{}",
+            "run with --diff to see the full unified diff".dimmed()
+        );
     }
 
     Ok(())

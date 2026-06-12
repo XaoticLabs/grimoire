@@ -86,7 +86,10 @@ async fn summon_idempotency_key_collapses_duplicates() {
     // A second summon with the same key returns the same agent, not a new one.
     let r2 = grimoire::daemon::rpc::handle_rpc_test(&m, &db, &sk, &wr, &wsr, &bus, mk(2)).await;
     let a2: SummonResult = serde_json::from_value(r2.result.unwrap()).unwrap();
-    assert_eq!(a1.id, a2.id, "same idempotency key must return the same agent");
+    assert_eq!(
+        a1.id, a2.id,
+        "same idempotency key must return the same agent"
+    );
     // Exactly one agent exists.
     assert_eq!(db.list_agents(None).unwrap().len(), 1);
 

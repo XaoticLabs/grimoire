@@ -607,12 +607,24 @@ fn scroll_task_lifecycle() {
     assert!(deps.contains(&"task-b".to_string()));
     let dependents = db.get_task_dependents("task-a").unwrap();
     assert_eq!(dependents, vec!["task-c"]);
-    let ready = db.find_ready_tasks("scroll-1").unwrap();
-    assert!(ready.is_empty());
+    // task-a and task-b are Ready with no dependencies, so they are
+    // immediately runnable; task-c stays gated behind them.
+    let ready_ids: Vec<String> = db
+        .find_ready_tasks("scroll-1")
+        .unwrap()
+        .into_iter()
+        .map(|t| t.id)
+        .collect();
+    assert_eq!(ready_ids.len(), 2);
+    assert!(ready_ids.contains(&"task-a".to_string()));
+    assert!(ready_ids.contains(&"task-b".to_string()));
+    assert!(!ready_ids.contains(&"task-c".to_string()));
     db.update_task_state("task-a", &TaskState::Complete)
         .unwrap();
+    // task-b still ready; task-c still blocked on task-b.
     let ready = db.find_ready_tasks("scroll-1").unwrap();
-    assert!(ready.is_empty());
+    assert_eq!(ready.len(), 1);
+    assert_eq!(ready[0].id, "task-b");
     db.update_task_state("task-b", &TaskState::Complete)
         .unwrap();
     let ready = db.find_ready_tasks("scroll-1").unwrap();

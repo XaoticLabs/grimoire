@@ -583,13 +583,15 @@ impl ScrollKeeper {
             .set_task_approval_state(&task.id, ApprovalState::Approved)?;
         // Flip back to a schedulable state; the gate check now passes.
         self.db.update_task_state(&task.id, &TaskState::Ready)?;
-        self.manager.event_bus().publish(StreamEvent::TaskStateChange {
-            scroll_id: task.scroll_id.clone(),
-            task_id: task.id.clone(),
-            task_name: task.name.clone(),
-            old_state: TaskState::AwaitingApproval,
-            new_state: TaskState::Ready,
-        });
+        self.manager
+            .event_bus()
+            .publish(StreamEvent::TaskStateChange {
+                scroll_id: task.scroll_id.clone(),
+                task_id: task.id.clone(),
+                task_name: task.name.clone(),
+                old_state: TaskState::AwaitingApproval,
+                new_state: TaskState::Ready,
+            });
         info!(scroll_id = %scroll_id, task = %task.name, "Task approved");
         self.schedule_tasks(scroll_id).await?;
         Ok(task.name)
