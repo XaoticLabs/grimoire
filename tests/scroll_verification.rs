@@ -78,7 +78,7 @@ Do A.
 // Keeper: verification flow
 // ---------------------------------------------------------------------------
 
-const WORKER_ID: &str = "wrk00001";
+const WORKER_ID: &str = "wkr00001";
 const TASK_ID: &str = "tkv00001";
 const DOWN_ID: &str = "tkv00002";
 const SCROLL_ID: &str = "scv00001";

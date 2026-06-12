@@ -505,7 +505,7 @@ impl ScrollKeeper {
     }
 
     /// An evaluator agent finished: parse its verdict and settle the
-    /// task it was verifying. A missing or unparseable verdict counts
+    /// task it was verifying. A missing or unparsable verdict counts
     /// as a failed verification — the gate must never silently pass.
     async fn finish_verification(&self, task: &Task, evaluator_id: &str) {
         let threshold = task.verify_threshold.unwrap_or(DEFAULT_VERIFY_THRESHOLD);
