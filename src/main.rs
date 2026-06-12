@@ -426,6 +426,10 @@ enum Commands {
         provider: Option<String>,
     },
 
+    /// Serve the daemon to MCP clients over stdio (tools + the Tasks
+    /// primitive). Add to an MCP host as: command `grim`, args `["mcp"]`.
+    Mcp,
+
     /// Print shell completions to stdout (bash, zsh, fish, elvish, powershell)
     Completions {
         /// Shell to generate completions for
@@ -644,6 +648,7 @@ async fn main() {
                 Commands::Ns { cmd } => cli::commands::ns::run(cmd).await,
                 Commands::Peer { cmd } => cli::commands::peer::run(cmd).await,
                 Commands::Topic { cmd } => cli::commands::topic::run(cmd).await,
+                Commands::Mcp => cli::commands::mcp::run().await,
                 Commands::Notify { message, level } => {
                     cli::commands::notify::run(&message, level).await
                 }

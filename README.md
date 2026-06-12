@@ -75,6 +75,7 @@ Everything else composes those two. Wake triggers deliver to a mailbox. Supervis
 - **Worker pool.** Dispatch to remote machines via the `grimw` worker binary over mTLS, with capability-aware placement.
 - **Notifications.** Outbound webhook (Slack/Discord/relay), local JSON-lines log, or `notify-send` desktop toast. Any combination, fan-out independent.
 - **Inbound webhooks.** Configure `[webhooks.<name>]` and `POST /webhooks/<name>` becomes mail on a topic, so a standing agent subscribed to it wakes on real-world events.
+- **MCP server.** `grim mcp` serves the daemon to any MCP client over stdio — and speaks the spec's experimental **Tasks** primitive (2025-11-25): a task-augmented `summon_agent` call returns a pollable task whose result is the agent's final output. The daemon's queue, on the standard async wire.
 - **Time-travel.** `grim chronicle <id>` (alias `grim replay`) reconstructs an agent's full life (stdout interleaved with state changes, wake fires, restarts, mail, and notifications) with state-at-point reconstruction at any seq. `grim fork <id> --at <seq>` branches a new agent seeded with the parent's transcript. `grim eval <id> --rubric <file>` scores a transcript.
 - **Sandboxing.** Per-provider confinement: a `bwrap` filesystem jail (network off, explicit ro/rw paths), `systemd-run` cgroup limits (memory, CPU quota), and per-agent token budgets. Degrades gracefully — if the host tooling is absent it warns once and runs unconfined.
 - **Policy & budgets.** Provider and cwd allow/deny rules enforced at summon; `[budgets.<name>]` daily USD ceilings per provider group, gated at dispatch with spend attributed from token counts. `grim summon --tree-budget-usd 5` puts a hard USD ceiling on a whole supervision tree: when the tree's summed spend crosses the cap, every dispatch and wake in it is blocked and you're notified once — a runaway coordinator can't take its children with it.
@@ -111,8 +112,7 @@ The daemon owns agent lifecycles and persists everything in SQLite over three tr
 
 **Partial:** Federated namespaces replicate writes made after `ns federate`, but there's no initial-state snapshot for a peer joining a populated namespace yet, and concurrent writes to one key resolve LWW rather than surfacing the conflict.
 
-**Not built yet:**
-- An MCP surface — exposing the daemon's queue to MCP clients (the Tasks primitive).
+**Not built yet:** (this section intentionally empties as things ship; see the recipes for what works end-to-end today)
 
 ## Recipes
 

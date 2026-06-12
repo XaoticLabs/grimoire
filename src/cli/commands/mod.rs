@@ -9,6 +9,7 @@ pub mod fork;
 pub mod inscribe;
 pub mod invoke;
 pub mod mail;
+pub mod mcp;
 pub mod memory;
 pub mod notify;
 pub mod ns;
