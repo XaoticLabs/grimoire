@@ -2,6 +2,7 @@
 
 pub mod agent_lifecycle_publisher;
 pub mod agent_manager;
+pub mod artifacts;
 pub mod clock;
 pub mod daemon_id;
 pub mod event_bus;

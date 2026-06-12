@@ -343,6 +343,29 @@ pub(super) async fn handle_agent_result(
     RpcResponse::success_json(req.id, &resp)
 }
 
+/// Return the structured artifact (files changed, unified diff, cost) an
+/// agent produced. Unknown agent → error; known agent with no captured
+/// artifact yet → `{ "artifact": null }`.
+pub(super) async fn handle_agent_artifact(db: &Arc<Database>, req: RpcRequest) -> RpcResponse {
+    use crate::shared::protocol::{AgentArtifactParams, AgentArtifactResult};
+    let params: AgentArtifactParams = try_params!(req);
+    let id = params.id.clone();
+    let outcome = db
+        .run(move |db| match db.get_agent(&id) {
+            Ok(Some(_)) => db.get_artifact(&id).map(Some),
+            Ok(None) => Ok(None),
+            Err(e) => Err(e),
+        })
+        .await;
+    match outcome {
+        Ok(Some(artifact)) => {
+            RpcResponse::success_json(req.id, &AgentArtifactResult { artifact })
+        }
+        Ok(None) => rpc_err(req.id, "agent_not_found"),
+        Err(e) => rpc_fail(req.id, "read artifact", e),
+    }
+}
+
 pub(super) async fn handle_status(
     manager: &Arc<AgentManager>,
     daemon_id: &str,

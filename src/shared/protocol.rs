@@ -376,6 +376,15 @@ pub struct AgentResultParams {
     pub id: AgentId,
 }
 
+pub type AgentArtifactParams = IdParams;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentArtifactResult {
+    /// The captured artifact, or `None` if the agent has not produced one
+    /// yet (still running, or never reached completion).
+    pub artifact: Option<super::types::AgentArtifact>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentResultResponse {
     /// Provider-extracted final result text, or `None` if the agent has no

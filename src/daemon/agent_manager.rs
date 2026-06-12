@@ -394,6 +394,12 @@ impl AgentManager {
                     managed.cancel = None;
                 }
 
+                // Capture the diff/cost artifact before announcing the
+                // terminal state, so consumers reacting to the StateChange
+                // (scroll verification, fork-and-race, approval review) find
+                // the artifact already on disk.
+                manager.capture_artifact(&agent_id).await;
+
                 bus.publish(StreamEvent::StateChange {
                     agent_id,
                     old_state: AgentState::Active,
@@ -608,6 +614,11 @@ impl AgentManager {
             return Err(anyhow::anyhow!(reason));
         }
 
+        // Record the baseline commit the completion-time artifact diffs
+        // against. Best-effort: a non-git cwd records `None`.
+        let base = super::artifacts::head_commit(&PathBuf::from(&row.cwd));
+        let _ = self.db.set_artifact_base(&agent_id, base.as_deref());
+
         let req = ExecuteRequest {
             agent_id: agent_id.clone(),
             task: row.task_text.clone(),
@@ -782,6 +793,37 @@ impl AgentManager {
         let provider = self.registry.get(&provider_name)?;
         let lines = self.db.get_agent_stdout_lines(agent_id).ok()?;
         provider.extract_result(&lines)
+    }
+
+    /// Capture the per-agent artifact (git diff + cost) after a run. Reads
+    /// the agent's cwd and the base commit recorded at dispatch, computes
+    /// the diff on the blocking pool (git shellouts), and upserts the row.
+    /// Best-effort: any failure is logged and swallowed — a missing artifact
+    /// must never disturb the agent's lifecycle.
+    async fn capture_artifact(&self, agent_id: &str) {
+        let Ok(Some(agent)) = self.db.get_agent(agent_id) else {
+            return;
+        };
+        let cwd = agent.cwd.clone();
+        let base = self.db.get_artifact_base(agent_id).unwrap_or(None);
+        let tokens = self.db.get_agent_tokens(agent_id).unwrap_or(0);
+        let usd = self.db.get_agent_usd(agent_id).unwrap_or(0.0);
+        let id = agent_id.to_string();
+        let captured_at = Utc::now().timestamp();
+        let artifact = tokio::task::spawn_blocking(move || {
+            super::artifacts::compute(&id, &cwd, base.as_deref(), tokens, usd, captured_at)
+        })
+        .await;
+        match artifact {
+            Ok(a) => {
+                if let Err(e) = self.db.upsert_artifact(&a) {
+                    tracing::warn!(agent_id = %agent_id, error = %e, "failed to persist artifact");
+                }
+            }
+            Err(e) => {
+                tracing::warn!(agent_id = %agent_id, error = %e, "artifact capture task failed");
+            }
+        }
     }
 
     pub async fn invoke(

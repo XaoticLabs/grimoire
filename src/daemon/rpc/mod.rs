@@ -205,6 +205,7 @@ pub async fn handle_rpc(
         }
         "supervisor.history" => supervision::handle_supervisor_history(db, req).await,
         "agent.result" => agents::handle_agent_result(manager, db, req).await,
+        "agent.artifact" => agents::handle_agent_artifact(db, req).await,
         "budget.list" => misc::handle_budget_list(manager, db, req).await,
         "eval.record" => misc::handle_eval_record(db, req).await,
         "eval.list" => misc::handle_eval_list(db, req).await,

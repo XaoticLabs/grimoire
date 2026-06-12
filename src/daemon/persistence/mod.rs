@@ -13,6 +13,7 @@ use crate::shared::types::{
 
 pub mod agent_lifecycle;
 mod agents;
+mod artifacts;
 mod mail;
 mod pacts;
 mod peers;
@@ -731,6 +732,67 @@ impl Database {
                 received_at      INTEGER NOT NULL,
                 PRIMARY KEY (sender_daemon_id, sender_seq)
              );",
+        )?;
+
+        // Per-agent artifact: the structured diff/cost record captured at
+        // completion. `base_commit` is recorded at dispatch; the rest is
+        // filled in when the agent reaches a terminal state. One row per
+        // agent (upserted), so a restarted agent's artifact reflects its
+        // last run. `files_changed` is a JSON array of `FileChange`.
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS agent_artifacts (
+                agent_id      TEXT PRIMARY KEY REFERENCES agents(id) ON DELETE CASCADE,
+                base_commit   TEXT,
+                files_changed TEXT NOT NULL DEFAULT '[]',
+                diff          TEXT,
+                insertions    INTEGER NOT NULL DEFAULT 0,
+                deletions     INTEGER NOT NULL DEFAULT 0,
+                tokens_used   INTEGER NOT NULL DEFAULT 0,
+                usd_spent     REAL NOT NULL DEFAULT 0,
+                captured_at   INTEGER
+            );",
+        )?;
+
+        // Idempotency keys for `agent.summon`. A caller-supplied key maps to
+        // the agent minted on its first use; a repeat summon with the same
+        // key returns that agent instead of spawning a duplicate. Keys are
+        // global (not per-caller); collisions are the caller's contract.
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS idempotency_keys (
+                key        TEXT PRIMARY KEY,
+                agent_id   TEXT NOT NULL,
+                created_at INTEGER NOT NULL
+            );",
+        )?;
+
+        // Task-level retry policy + approval gate (HITL). `max_retries` is
+        // the count of re-spawns a failed task gets before it is marked
+        // failed for good; `retry_count` tracks how many have happened.
+        // `requires_approval` holds a Ready task until an operator approves;
+        // `approval_state` is none/pending/approved/rejected.
+        add_column_if_missing(
+            &conn,
+            "tasks",
+            "max_retries",
+            "max_retries INTEGER NOT NULL DEFAULT 0",
+        )?;
+        add_column_if_missing(
+            &conn,
+            "tasks",
+            "retry_count",
+            "retry_count INTEGER NOT NULL DEFAULT 0",
+        )?;
+        add_column_if_missing(
+            &conn,
+            "tasks",
+            "requires_approval",
+            "requires_approval INTEGER NOT NULL DEFAULT 0",
+        )?;
+        add_column_if_missing(
+            &conn,
+            "tasks",
+            "approval_state",
+            "approval_state TEXT NOT NULL DEFAULT 'none'",
         )?;
 
         // F4b: agent lifecycle federation. Subscription rows are

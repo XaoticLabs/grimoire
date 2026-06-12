@@ -182,6 +182,20 @@ enum Commands {
         name: Option<String>,
     },
 
+    /// Show an agent's artifact: files changed, unified diff, and cost.
+    Artifact {
+        /// Agent ID (or prefix)
+        id: String,
+
+        /// Emit the raw artifact record as JSON.
+        #[arg(long)]
+        json: bool,
+
+        /// Print the full unified diff after the summary.
+        #[arg(long)]
+        diff: bool,
+    },
+
     /// Replay an agent's full life from the durable event log
     #[command(visible_alias = "replay")]
     Chronicle {
@@ -596,6 +610,10 @@ async fn main() {
                 } => {
                     let id = resolve_id(&id).await;
                     cli::commands::fork::run(&id, at, task, provider, model, name).await
+                }
+                Commands::Artifact { id, json, diff } => {
+                    let id = resolve_id(&id).await;
+                    cli::commands::artifact::run(&id, json, diff).await
                 }
                 Commands::Invoke { id, message } => {
                     let id = resolve_id(&id).await;

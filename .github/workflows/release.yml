@@ -1,0 +1,91 @@
+name: Release
+
+# Tag-driven binary releases: push a `v*` tag and this builds `grim` +
+# `grimw` for Linux (x86_64, aarch64) and macOS (aarch64, x86_64),
+# attaches checksummed tarballs to a GitHub release, and finishes with a
+# combined SHA256SUMS. Deliberately uses only actions/checkout + the
+# preinstalled `gh` CLI — no third-party release actions in the trust
+# chain.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  create-release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Create draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 || \
+            gh release create "$GITHUB_REF_NAME" --draft --title "$GITHUB_REF_NAME" --generate-notes
+
+  build:
+    needs: create-release
+    name: ${{ matrix.target }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-24.04-arm
+          - target: aarch64-apple-darwin
+            os: macos-latest
+          - target: x86_64-apple-darwin
+            os: macos-13
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Install protoc (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+
+      - name: Install protoc (macOS)
+        if: runner.os == 'macOS'
+        run: brew install protobuf
+
+      - name: Build
+        run: cargo build --release --locked --bins
+
+      - name: Package
+        run: |
+          ARCHIVE="grimoire-${GITHUB_REF_NAME}-${{ matrix.target }}.tar.gz"
+          STAGE="$(mktemp -d)"
+          cp target/release/grim target/release/grimw "$STAGE/"
+          cp README.md LICENSE-MIT LICENSE-APACHE "$STAGE/"
+          tar -czf "$ARCHIVE" -C "$STAGE" .
+          shasum -a 256 "$ARCHIVE" > "$ARCHIVE.sha256"
+          echo "ARCHIVE=$ARCHIVE" >> "$GITHUB_ENV"
+
+      - name: Upload
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "$GITHUB_REF_NAME" "$ARCHIVE" "$ARCHIVE.sha256" --clobber
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Combined checksums + publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir dist && cd dist
+          gh release download "$GITHUB_REF_NAME" --pattern '*.sha256'
+          cat ./*.sha256 > SHA256SUMS
+          gh release upload "$GITHUB_REF_NAME" SHA256SUMS --clobber
+          gh release edit "$GITHUB_REF_NAME" --draft=false

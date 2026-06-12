@@ -1,3 +1,4 @@
+pub mod artifact;
 pub mod banish;
 pub mod bind;
 pub mod budget;

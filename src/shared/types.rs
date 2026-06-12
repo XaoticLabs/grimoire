@@ -183,6 +183,40 @@ pub struct Agent {
     pub workspace_id: Option<WorkspaceId>,
 }
 
+/// One file an agent touched, as reported by git. `status` is the
+/// porcelain code (`M`, `A`, `D`, `??`, …) or `"M"` when derived from a
+/// numstat row. Line counts are git's; binary/untracked files report 0.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct FileChange {
+    pub path: String,
+    pub status: String,
+    pub insertions: u64,
+    pub deletions: u64,
+}
+
+/// The orchestrator's structured record of one agent run: what it changed
+/// on disk (relative to the commit recorded at dispatch) and what it cost.
+/// A first-class object so review/merge workflows don't reconstruct the
+/// diff from stdout. Captured best-effort at completion; a non-git cwd
+/// yields a cost-only record (empty `files_changed`, `diff = None`).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentArtifact {
+    pub agent_id: AgentId,
+    /// The `HEAD` commit at dispatch the diff is taken against, if the
+    /// cwd was a git work tree then.
+    pub base_commit: Option<String>,
+    pub files_changed: Vec<FileChange>,
+    /// Unified diff text (tail-truncated past the cap), or `None` when
+    /// there were no tracked changes / no git.
+    pub diff: Option<String>,
+    pub insertions: u64,
+    pub deletions: u64,
+    pub tokens_used: u64,
+    pub usd_spent: f64,
+    /// Unix seconds at capture.
+    pub captured_at: i64,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentEvent {
     pub id: Option<i64>,
