@@ -661,6 +661,19 @@ impl Database {
         // peer (if any) the task is dispatched to. NULL ⇒ local task.
         add_column_if_missing(&conn, "tasks", "peer_name", "peer_name TEXT")?;
 
+        // Verification-gated tasks: optional rubric an evaluator agent
+        // scores the worker's transcript against, the pass threshold,
+        // and the evaluator's agent id once verification is in flight.
+        // NULL rubric ⇒ ordinary task, completes on worker completion.
+        add_column_if_missing(&conn, "tasks", "verify_rubric", "verify_rubric TEXT")?;
+        add_column_if_missing(&conn, "tasks", "verify_threshold", "verify_threshold REAL")?;
+        add_column_if_missing(
+            &conn,
+            "tasks",
+            "verifier_agent_id",
+            "verifier_agent_id TEXT",
+        )?;
+
         // F5a: peers.accept_scroll_dispatch — opt-in flag. The dispatch
         // handler refuses inbound `ScrollTaskDispatch` from peers that
         // haven't been enrolled, so operators can pin which peers may
@@ -923,6 +936,9 @@ pub(super) fn row_to_task(row: &rusqlite::Row) -> Result<Task> {
     let updated_str: String = row.get(12)?;
 
     let peer_name: Option<String> = row.get(13).unwrap_or(None);
+    let verify_rubric: Option<String> = row.get(14).unwrap_or(None);
+    let verify_threshold: Option<f64> = row.get(15).unwrap_or(None);
+    let verifier_agent_id: Option<String> = row.get(16).unwrap_or(None);
     Ok(Task {
         id: row.get(0)?,
         scroll_id: row.get(1)?,
@@ -938,6 +954,9 @@ pub(super) fn row_to_task(row: &rusqlite::Row) -> Result<Task> {
         created_at: parse_timestamp(&created_str)?,
         updated_at: parse_timestamp(&updated_str)?,
         peer_name,
+        verify_rubric,
+        verify_threshold,
+        verifier_agent_id,
     })
 }
 
@@ -1081,6 +1100,9 @@ mod tests {
             created_at: Utc::now(),
             updated_at: Utc::now(),
             peer_name: None,
+            verify_rubric: None,
+            verify_threshold: None,
+            verifier_agent_id: None,
         }
     }
 

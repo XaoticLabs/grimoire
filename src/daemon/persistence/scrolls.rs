@@ -54,8 +54,8 @@ impl super::Database {
     pub fn insert_task(&self, task: &Task) -> Result<()> {
         let file_patterns_json = serde_json::to_string(&task.file_patterns)?;
         self.exec(
-            "INSERT INTO tasks (id, scroll_id, name, prompt, state, agent_id, provider, model, cwd, file_patterns, order_index, created_at, updated_at, peer_name)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+            "INSERT INTO tasks (id, scroll_id, name, prompt, state, agent_id, provider, model, cwd, file_patterns, order_index, created_at, updated_at, peer_name, verify_rubric, verify_threshold, verifier_agent_id)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
             params![
                 task.id,
                 task.scroll_id,
@@ -71,6 +71,9 @@ impl super::Database {
                 task.created_at.to_rfc3339(),
                 task.updated_at.to_rfc3339(),
                 task.peer_name,
+                task.verify_rubric,
+                task.verify_threshold,
+                task.verifier_agent_id,
             ],
         )?;
         Ok(())
@@ -86,7 +89,7 @@ impl super::Database {
 
     pub fn get_tasks_for_scroll(&self, scroll_id: &str) -> Result<Vec<Task>> {
         self.query_vec(
-            "SELECT id, scroll_id, name, prompt, state, agent_id, provider, model, cwd, file_patterns, order_index, created_at, updated_at, peer_name
+            "SELECT id, scroll_id, name, prompt, state, agent_id, provider, model, cwd, file_patterns, order_index, created_at, updated_at, peer_name, verify_rubric, verify_threshold, verifier_agent_id
              FROM tasks WHERE scroll_id = ?1 ORDER BY order_index ASC",
             params![scroll_id],
             row_to_task,
@@ -95,7 +98,7 @@ impl super::Database {
 
     pub fn get_task(&self, task_id: &str) -> Result<Option<Task>> {
         self.query_opt(
-            "SELECT id, scroll_id, name, prompt, state, agent_id, provider, model, cwd, file_patterns, order_index, created_at, updated_at, peer_name
+            "SELECT id, scroll_id, name, prompt, state, agent_id, provider, model, cwd, file_patterns, order_index, created_at, updated_at, peer_name, verify_rubric, verify_threshold, verifier_agent_id
              FROM tasks WHERE id = ?1",
             params![task_id],
             row_to_task,
@@ -104,11 +107,35 @@ impl super::Database {
 
     pub fn get_task_by_agent_id(&self, agent_id: &str) -> Result<Option<Task>> {
         self.query_opt(
-            "SELECT id, scroll_id, name, prompt, state, agent_id, provider, model, cwd, file_patterns, order_index, created_at, updated_at, peer_name
+            "SELECT id, scroll_id, name, prompt, state, agent_id, provider, model, cwd, file_patterns, order_index, created_at, updated_at, peer_name, verify_rubric, verify_threshold, verifier_agent_id
              FROM tasks WHERE agent_id = ?1",
             params![agent_id],
             row_to_task,
         )
+    }
+
+    /// Find the task whose in-flight verification is being performed by
+    /// `agent_id`. Mirrors `get_task_by_agent_id`, but resolves the
+    /// *evaluator* side of a verification-gated task.
+    pub fn get_task_by_verifier_agent_id(&self, agent_id: &str) -> Result<Option<Task>> {
+        self.query_opt(
+            "SELECT id, scroll_id, name, prompt, state, agent_id, provider, model, cwd, file_patterns, order_index, created_at, updated_at, peer_name, verify_rubric, verify_threshold, verifier_agent_id
+             FROM tasks WHERE verifier_agent_id = ?1",
+            params![agent_id],
+            row_to_task,
+        )
+    }
+
+    /// Record the evaluator agent summoned to verify `task_id`'s worker
+    /// transcript. The task itself stays in its current state; the keeper
+    /// settles it when the evaluator finishes.
+    pub fn set_task_verifier(&self, task_id: &str, agent_id: &str) -> Result<()> {
+        let now = Utc::now().to_rfc3339();
+        self.exec(
+            "UPDATE tasks SET verifier_agent_id = ?1, updated_at = ?2 WHERE id = ?3",
+            params![agent_id, now, task_id],
+        )?;
+        Ok(())
     }
 
     pub fn update_task_state(&self, id: &str, state: &TaskState) -> Result<()> {

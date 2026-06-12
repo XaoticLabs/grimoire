@@ -610,6 +610,21 @@ pub struct Task {
     /// the dispatch ack arrives.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub peer_name: Option<String>,
+    /// Verification gate: when set, the worker's completion does not
+    /// finish the task. Instead an evaluator agent scores the worker's
+    /// transcript against this rubric, and the task completes only if
+    /// the score clears `verify_threshold`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub verify_rubric: Option<String>,
+    /// Minimum evaluator score (0.0–1.0) required for a verified task
+    /// to count as complete. `None` means the keeper's default (0.7).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub verify_threshold: Option<f64>,
+    /// The evaluator agent currently scoring (or having scored) this
+    /// task's worker transcript. Set when verification is summoned so
+    /// the keeper can route the evaluator's completion back here.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub verifier_agent_id: Option<AgentId>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -814,6 +829,9 @@ mod tests {
             created_at: Utc::now(),
             updated_at: Utc::now(),
             peer_name: None,
+            verify_rubric: None,
+            verify_threshold: None,
+            verifier_agent_id: None,
         }
     }
 }

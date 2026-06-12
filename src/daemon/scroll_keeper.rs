@@ -13,6 +13,10 @@ use super::persistence::Database;
 use super::scroll_parser::ScrollSpec;
 use tokio::sync::Mutex;
 
+/// Pass bar for verification-gated tasks whose spec sets a rubric but
+/// no explicit `verify_threshold`.
+const DEFAULT_VERIFY_THRESHOLD: f64 = 0.7;
+
 pub struct ScrollKeeper {
     db: Arc<Database>,
     manager: Arc<AgentManager>,
@@ -161,6 +165,9 @@ impl ScrollKeeper {
                 created_at: now,
                 updated_at: now,
                 peer_name: task_spec.peer.clone(),
+                verify_rubric: task_spec.verify.clone(),
+                verify_threshold: task_spec.verify_threshold,
+                verifier_agent_id: None,
             };
 
             self.db.insert_task(&task)?;
@@ -314,6 +321,21 @@ impl ScrollKeeper {
     // --- Internal ---
 
     async fn handle_agent_completion(&self, agent_id: &str) {
+        // A completing agent may be an evaluator verifying another
+        // task's worker, not a worker itself. Check that link first:
+        // its completion carries a verdict, not task output.
+        match self.db.get_task_by_verifier_agent_id(agent_id) {
+            Ok(Some(task)) => {
+                self.finish_verification(&task, agent_id).await;
+                return;
+            }
+            Ok(None) => {}
+            Err(e) => {
+                error!(agent_id = %agent_id, error = %e, "Failed to look up verifier task");
+                return;
+            }
+        }
+
         let task = match self.db.get_task_by_agent_id(agent_id) {
             Ok(Some(r)) => r,
             Ok(None) => return, // Not a scroll-managed agent
@@ -323,6 +345,22 @@ impl ScrollKeeper {
             }
         };
 
+        // Verification gate: a rubric-bearing task is not complete when
+        // its worker finishes; an evaluator scores the transcript first.
+        if task.verify_rubric.is_some() {
+            if task.verifier_agent_id.is_none() {
+                self.start_verification(&task, agent_id).await;
+            } else {
+                debug!(
+                    scroll_id = %task.scroll_id,
+                    task = %task.name,
+                    agent_id = %agent_id,
+                    "Worker completed again while verification is pending; ignoring"
+                );
+            }
+            return;
+        }
+
         info!(
             scroll_id = %task.scroll_id,
             task = %task.name,
@@ -330,6 +368,14 @@ impl ScrollKeeper {
             "Task completed"
         );
 
+        self.complete_task_and_advance(&task).await;
+    }
+
+    /// Mark `task` complete and move the scroll forward: finish the
+    /// scroll if every task is terminal, otherwise schedule the next
+    /// batch. Shared by the plain completion path and a passed
+    /// verification.
+    async fn complete_task_and_advance(&self, task: &Task) {
         if let Err(e) = self.db.update_task_state(&task.id, &TaskState::Complete) {
             error!(task_id = %task.id, error = %e, "Failed to update task state");
             return;
@@ -367,36 +413,10 @@ impl ScrollKeeper {
         }
     }
 
-    async fn handle_agent_failure(&self, agent_id: &str) {
-        // If the agent has an active restart policy, defer the failure
-        // handling to the supervisor, which will transition the agent to
-        // Restarting and eventually to terminal Failed if the budget is
-        // exhausted. Without this gate, scroll-keeper could mark the task
-        // failed before the supervisor flips state.
-        if let Ok(Some(cfg)) = self.db.get_supervision(agent_id) {
-            use crate::shared::types::RestartPolicy;
-            if cfg.policy != RestartPolicy::Never {
-                debug!(agent_id = %agent_id, "scroll-keeper: deferring failure handling to supervisor");
-                return;
-            }
-        }
-
-        let task = match self.db.get_task_by_agent_id(agent_id) {
-            Ok(Some(r)) => r,
-            Ok(None) => return,
-            Err(e) => {
-                error!(agent_id = %agent_id, error = %e, "Failed to look up task");
-                return;
-            }
-        };
-
-        warn!(
-            scroll_id = %task.scroll_id,
-            task = %task.name,
-            agent_id = %agent_id,
-            "Task failed"
-        );
-
+    /// Mark `task` failed, skip everything downstream of it, and either
+    /// finish the scroll (all terminal) or keep scheduling independent
+    /// tasks. Shared by worker failure and a failed verification.
+    async fn fail_task_and_advance(&self, task: &Task) {
         let _ = self.db.update_task_state(&task.id, &TaskState::Failed);
 
         self.skip_downstream(&task.id);
@@ -421,6 +441,175 @@ impl ScrollKeeper {
             // There may still be independent tasks that can run
             let _ = self.schedule_tasks(&task.scroll_id).await;
         }
+    }
+
+    /// The worker for a rubric-bearing task just completed: summon an
+    /// evaluator agent to score the worker's transcript. The task stays
+    /// in its current (non-terminal) state until the verdict arrives.
+    async fn start_verification(&self, task: &Task, worker_agent_id: &str) {
+        let rubric = task.verify_rubric.clone().unwrap_or_default();
+
+        let events = self
+            .db
+            .read_stream_events(worker_agent_id)
+            .unwrap_or_else(|e| {
+                warn!(agent_id = %worker_agent_id, error = %e,
+                    "Failed to read worker events; verifying against an empty transcript");
+                Vec::new()
+            });
+        let max_seq = events.last().map_or(0, |e| e.seq);
+        let transcript = crate::shared::eval::fold_stdout_output(events.iter().map(|e| &e.event));
+        let prompt =
+            crate::shared::eval::build_eval_prompt(worker_agent_id, max_seq, &rubric, &transcript);
+
+        let cwd = self
+            .manager
+            .resolve_cwd(task.cwd.as_ref().map(PathBuf::from));
+        match self
+            .manager
+            .enqueue(
+                &prompt,
+                Some(format!("verify:{}", task.name)),
+                task.model.clone(),
+                task.provider.clone(),
+                &cwd,
+                crate::daemon::agent_manager::Lane::Adhoc,
+            )
+            .await
+        {
+            Ok(evaluator) => {
+                if let Err(e) = self.db.set_task_verifier(&task.id, &evaluator.id) {
+                    error!(task_id = %task.id, error = %e,
+                        "Failed to record verifier agent; failing task instead of leaving it hung");
+                    self.fail_task_and_advance(task).await;
+                    return;
+                }
+                info!(
+                    scroll_id = %task.scroll_id,
+                    task = %task.name,
+                    worker = %worker_agent_id,
+                    verifier = %evaluator.id,
+                    "Worker finished; evaluator summoned to verify against rubric"
+                );
+            }
+            Err(e) => {
+                warn!(
+                    scroll_id = %task.scroll_id,
+                    task = %task.name,
+                    error = %e,
+                    "Failed to enqueue verifier agent; treating verification as failed"
+                );
+                self.fail_task_and_advance(task).await;
+            }
+        }
+    }
+
+    /// An evaluator agent finished: parse its verdict and settle the
+    /// task it was verifying. A missing or unparseable verdict counts
+    /// as a failed verification — the gate must never silently pass.
+    async fn finish_verification(&self, task: &Task, evaluator_id: &str) {
+        let threshold = task.verify_threshold.unwrap_or(DEFAULT_VERIFY_THRESHOLD);
+
+        let verdict = self
+            .manager
+            .agent_result(evaluator_id)
+            .ok_or_else(|| anyhow::anyhow!("verifier produced no result text"))
+            .and_then(|text| crate::shared::eval::parse_verdict(&text));
+
+        let verdict = match verdict {
+            Ok(v) => v,
+            Err(e) => {
+                warn!(
+                    task = %task.name,
+                    verifier = %evaluator_id,
+                    error = %e,
+                    "No usable verdict from verifier; verification fails"
+                );
+                self.fail_task_and_advance(task).await;
+                return;
+            }
+        };
+
+        // Record the verdict so `grim eval <worker> --list` shows scroll
+        // verifications alongside manual evals.
+        let target_id = task.agent_id.clone().unwrap_or_else(|| task.id.clone());
+        if let Err(e) = self.db.insert_eval_result(
+            &target_id,
+            evaluator_id,
+            verdict.score,
+            verdict.verdict.as_deref(),
+            verdict.rationale.as_deref(),
+        ) {
+            warn!(task = %task.name, error = %e, "Failed to persist verification verdict");
+        }
+
+        if verdict.score >= threshold {
+            info!(
+                scroll_id = %task.scroll_id,
+                task = %task.name,
+                verifier = %evaluator_id,
+                score = verdict.score,
+                threshold,
+                "Verification passed"
+            );
+            self.complete_task_and_advance(task).await;
+        } else {
+            warn!(
+                scroll_id = %task.scroll_id,
+                task = %task.name,
+                verifier = %evaluator_id,
+                score = verdict.score,
+                threshold,
+                "Verification failed: score below threshold"
+            );
+            self.fail_task_and_advance(task).await;
+        }
+    }
+
+    async fn handle_agent_failure(&self, agent_id: &str) {
+        // If the agent has an active restart policy, defer the failure
+        // handling to the supervisor, which will transition the agent to
+        // Restarting and eventually to terminal Failed if the budget is
+        // exhausted. Without this gate, scroll-keeper could mark the task
+        // failed before the supervisor flips state.
+        if let Ok(Some(cfg)) = self.db.get_supervision(agent_id) {
+            use crate::shared::types::RestartPolicy;
+            if cfg.policy != RestartPolicy::Never {
+                debug!(agent_id = %agent_id, "scroll-keeper: deferring failure handling to supervisor");
+                return;
+            }
+        }
+
+        // A dying evaluator means the verdict will never arrive: the
+        // verification (and therefore the task) fails rather than hangs.
+        if let Ok(Some(task)) = self.db.get_task_by_verifier_agent_id(agent_id) {
+            warn!(
+                scroll_id = %task.scroll_id,
+                task = %task.name,
+                verifier = %agent_id,
+                "Verifier agent failed; treating verification as failed"
+            );
+            self.fail_task_and_advance(&task).await;
+            return;
+        }
+
+        let task = match self.db.get_task_by_agent_id(agent_id) {
+            Ok(Some(r)) => r,
+            Ok(None) => return,
+            Err(e) => {
+                error!(agent_id = %agent_id, error = %e, "Failed to look up task");
+                return;
+            }
+        };
+
+        warn!(
+            scroll_id = %task.scroll_id,
+            task = %task.name,
+            agent_id = %agent_id,
+            "Task failed"
+        );
+
+        self.fail_task_and_advance(&task).await;
     }
 
     fn skip_downstream(&self, task_id: &str) {

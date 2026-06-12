@@ -1,6 +1,7 @@
 pub mod auth;
 pub mod config;
 pub mod constants;
+pub mod eval;
 pub mod fs_util;
 pub mod mail;
 pub mod peer_proto;

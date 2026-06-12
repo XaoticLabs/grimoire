@@ -64,6 +64,9 @@ fn seed_scroll_with_task(db: &Database, scroll_id: &str, task_id: &str, agent_id
         created_at: Utc::now(),
         updated_at: Utc::now(),
         peer_name: None,
+        verify_rubric: None,
+        verify_threshold: None,
+        verifier_agent_id: None,
     };
     db.insert_task(&task).unwrap();
     db.update_task_agent(task_id, agent_id).unwrap();
@@ -163,6 +166,9 @@ async fn dependent_task_blocked_during_restart() {
         created_at: Utc::now(),
         updated_at: Utc::now(),
         peer_name: None,
+        verify_rubric: None,
+        verify_threshold: None,
+        verifier_agent_id: None,
     };
     let child = Task {
         id: "tkchild0".into(),
@@ -179,6 +185,9 @@ async fn dependent_task_blocked_during_restart() {
         created_at: Utc::now(),
         updated_at: Utc::now(),
         peer_name: None,
+        verify_rubric: None,
+        verify_threshold: None,
+        verifier_agent_id: None,
     };
     db.insert_task(&parent).unwrap();
     db.insert_task(&child).unwrap();

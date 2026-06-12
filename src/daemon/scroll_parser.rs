@@ -32,6 +32,13 @@ pub struct TaskSpec {
     /// have `accept_scroll_dispatch = 1` and lifecycle federation in
     /// the inbound direction back to the coordinator.
     pub peer: Option<String>,
+    /// Verification rubric: when set, the worker's completion is
+    /// scored by an evaluator agent against this text before the DAG
+    /// is allowed to proceed.
+    pub verify: Option<String>,
+    /// Optional pass threshold (0.0–1.0) for the verification score.
+    /// `None` falls back to the keeper's default when `verify` is set.
+    pub verify_threshold: Option<f64>,
 }
 
 /// Parse a markdown spec file into a [`ScrollSpec`].
@@ -181,6 +188,8 @@ fn walk(content: &str) -> Result<Doc> {
                             file_patterns: Vec::new(),
                             depends_on: Vec::new(),
                             peer: None,
+                            verify: None,
+                            verify_threshold: None,
                         });
                         scope = Scope::InTask {
                             metadata_open: true,
@@ -200,7 +209,7 @@ fn walk(content: &str) -> Result<Doc> {
                     Scope::PreTask => apply_workspace_directive(&line, &mut doc),
                     Scope::InTask { metadata_open } if *metadata_open => {
                         if let Some(task) = current.as_mut() {
-                            apply_task_metadata(&line, task);
+                            apply_task_metadata(&line, task)?;
                         }
                     }
                     Scope::InTask { .. } => {
@@ -280,7 +289,7 @@ fn apply_workspace_directive(line: &str, doc: &mut Doc) {
     }
 }
 
-fn apply_task_metadata(line: &str, task: &mut TaskSpec) {
+fn apply_task_metadata(line: &str, task: &mut TaskSpec) -> Result<()> {
     if let Some(v) = line.strip_prefix("files:") {
         task.file_patterns = split_csv(v);
     } else if let Some(v) = line.strip_prefix("depends:") {
@@ -299,7 +308,31 @@ fn apply_task_metadata(line: &str, task: &mut TaskSpec) {
         if !v.is_empty() {
             task.peer = Some(v.to_string());
         }
+    } else if let Some(v) = line.strip_prefix("verify_threshold:") {
+        let v = v.trim();
+        let parsed: f64 = v.parse().map_err(|_| {
+            anyhow!(
+                "Task '{}': verify_threshold '{}' is not a number between 0.0 and 1.0",
+                task.name,
+                v
+            )
+        })?;
+        // `contains` is false for NaN, so that path is rejected too.
+        if !(0.0..=1.0).contains(&parsed) {
+            return Err(anyhow!(
+                "Task '{}': verify_threshold {} is out of range (expected 0.0-1.0)",
+                task.name,
+                parsed
+            ));
+        }
+        task.verify_threshold = Some(parsed);
+    } else if let Some(v) = line.strip_prefix("verify:") {
+        let v = v.trim();
+        if !v.is_empty() {
+            task.verify = Some(v.to_string());
+        }
     }
+    Ok(())
 }
 
 fn split_csv(s: &str) -> Vec<String> {
