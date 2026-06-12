@@ -6,14 +6,51 @@ use crate::daemon::scroll_keeper::ScrollStatus;
 use crate::shared::protocol::ScrollDispatchTaskResult;
 use crate::shared::types::Scroll;
 
+#[allow(clippy::too_many_arguments)]
 pub async fn run(
     id: Option<String>,
     activate: bool,
     abandon: bool,
     dispatch_task: Option<String>,
     to: Option<String>,
+    approve: Option<String>,
+    reject: Option<String>,
 ) -> Result<()> {
     let mut client = DaemonClient::connect().await?;
+
+    // HITL approve / reject of a held task.
+    if let Some(ref scroll_id) = id
+        && (approve.is_some() || reject.is_some())
+    {
+        let (method, task) = match (&approve, &reject) {
+            (Some(t), _) => ("scroll.approve", t.clone()),
+            (_, Some(t)) => ("scroll.reject", t.clone()),
+            _ => unreachable!(),
+        };
+        let resp = client
+            .call(
+                method,
+                serde_json::json!({ "scroll_id": scroll_id, "task": task }),
+            )
+            .await?;
+        if let Some(err) = resp.error {
+            return Err(anyhow!("{}", err.message));
+        }
+        let result: crate::shared::protocol::ScrollApproveResult =
+            serde_json::from_value(resp.result.unwrap_or_default())?;
+        let verb = if result.decision == "approved" {
+            "Approved".green()
+        } else {
+            "Rejected".red()
+        };
+        println!(
+            "{} task {} in scroll {}",
+            verb,
+            result.task_name.bold(),
+            result.scroll_id.dimmed(),
+        );
+        return Ok(());
+    }
 
     if let (Some(scroll_id), Some(task_id), Some(peer)) = (id.as_ref(), dispatch_task, to) {
         let resp = client
@@ -141,6 +178,14 @@ fn print_scroll_status(status: &ScrollStatus) {
         status.failed.to_string().red(),
         status.skipped,
     );
+    if status.awaiting_approval > 0 {
+        println!(
+            "  {} {} awaiting approval — review then `grim scroll {} --approve <task>`",
+            "⏸".magenta(),
+            status.awaiting_approval.to_string().magenta(),
+            status.scroll.id,
+        );
+    }
     println!();
 
     for rs in &status.tasks {
@@ -148,6 +193,7 @@ fn print_scroll_status(status: &ScrollStatus) {
             "complete" => ("✓".green(), "done".green()),
             "active" => ("◆".yellow(), "active".yellow()),
             "blocked" => ("◇".dimmed(), "blocked".dimmed()),
+            "awaiting_approval" => ("⏸".magenta(), "approve?".magenta()),
             "ready" => ("○".cyan(), "ready".cyan()),
             "failed" => ("✗".red(), "failed".red()),
             "skipped" => ("–".dimmed(), "skipped".dimmed()),

@@ -195,6 +195,8 @@ pub async fn handle_rpc(
         "scroll.status" => scrolls::handle_scroll_status(scroll_keeper, req),
         "scroll.list" => scrolls::handle_scroll_list(db, req).await,
         "scroll.abandon" => scrolls::handle_scroll_abandon(scroll_keeper, req).await,
+        "scroll.approve" => scrolls::handle_scroll_approve(scroll_keeper, req).await,
+        "scroll.reject" => scrolls::handle_scroll_reject(scroll_keeper, req).await,
         "daemon.status" => agents::handle_status(manager, daemon_id, req).await,
         "agent.queue.list" => agents::handle_queue_list(db, req).await,
         "agent.processes" => agents::handle_agent_processes(db, req).await,

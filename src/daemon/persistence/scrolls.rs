@@ -173,10 +173,16 @@ impl super::Database {
     }
 
     pub fn find_ready_tasks(&self, scroll_id: &str) -> Result<Vec<Task>> {
+        // Runnable tasks: those whose dependencies are all complete and that
+        // are not yet in flight. A no-dependency task is created `ready`; a
+        // dependency-bearing task sits `blocked` until its deps complete and
+        // an approved gate flips it back to `ready`. Both states are
+        // schedulable here; `awaiting_approval`, `active`, and terminal
+        // states are deliberately excluded.
         self.query_vec(
             "SELECT r.id, r.scroll_id, r.name, r.prompt, r.state, r.agent_id, r.provider, r.model, r.cwd, r.file_patterns, r.order_index, r.created_at, r.updated_at
              FROM tasks r
-             WHERE r.scroll_id = ?1 AND r.state = 'blocked'
+             WHERE r.scroll_id = ?1 AND r.state IN ('blocked', 'ready')
              AND NOT EXISTS (
                  SELECT 1 FROM task_dependencies rd
                  JOIN tasks dep ON dep.id = rd.depends_on_id
@@ -185,6 +191,83 @@ impl super::Database {
             params![scroll_id],
             row_to_task,
         )
+    }
+
+    // --- HITL approval + retry directives (DB-only task columns) ----------
+
+    /// Stamp the approval/retry directives parsed from the spec onto a task
+    /// row at inscribe time. Called right after `insert_task`.
+    pub fn set_task_directives(
+        &self,
+        task_id: &str,
+        requires_approval: bool,
+        max_retries: u32,
+    ) -> Result<()> {
+        self.exec(
+            "UPDATE tasks SET requires_approval = ?1, max_retries = ?2 WHERE id = ?3",
+            params![i64::from(requires_approval), max_retries as i64, task_id],
+        )?;
+        Ok(())
+    }
+
+    /// `(requires_approval, approval_state)` for a task. Defaults to
+    /// `(false, None)` for rows that predate the columns.
+    pub fn get_task_approval(
+        &self,
+        task_id: &str,
+    ) -> Result<(bool, crate::shared::types::ApprovalState)> {
+        use crate::shared::types::ApprovalState;
+        let row = self.query_opt(
+            "SELECT requires_approval, approval_state FROM tasks WHERE id = ?1",
+            params![task_id],
+            |r| {
+                let req: i64 = r.get(0)?;
+                let state: String = r.get(1)?;
+                Ok((req != 0, state))
+            },
+        )?;
+        match row {
+            Some((req, state)) => Ok((req, state.parse().unwrap_or(ApprovalState::None))),
+            None => Ok((false, ApprovalState::None)),
+        }
+    }
+
+    /// Set a task's approval state (the human decision or the pending hold).
+    pub fn set_task_approval_state(
+        &self,
+        task_id: &str,
+        state: crate::shared::types::ApprovalState,
+    ) -> Result<()> {
+        self.exec(
+            "UPDATE tasks SET approval_state = ?1 WHERE id = ?2",
+            params![state.as_str(), task_id],
+        )?;
+        Ok(())
+    }
+
+    /// `(max_retries, retry_count)` for a task. Defaults to `(0, 0)`.
+    pub fn get_task_retry(&self, task_id: &str) -> Result<(u32, u32)> {
+        let row = self.query_opt(
+            "SELECT max_retries, retry_count FROM tasks WHERE id = ?1",
+            params![task_id],
+            |r| Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?)),
+        )?;
+        Ok(row.map_or((0, 0), |(m, c)| (m.max(0) as u32, c.max(0) as u32)))
+    }
+
+    /// Increment a task's retry counter, returning the new count.
+    pub fn bump_task_retry(&self, task_id: &str) -> Result<u32> {
+        let conn = self.conn_lock();
+        conn.execute(
+            "UPDATE tasks SET retry_count = retry_count + 1 WHERE id = ?1",
+            params![task_id],
+        )?;
+        let n: i64 = conn.query_row(
+            "SELECT retry_count FROM tasks WHERE id = ?1",
+            params![task_id],
+            |r| r.get(0),
+        )?;
+        Ok(n.max(0) as u32)
     }
 
     /// Count active tasks in a scroll

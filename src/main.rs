@@ -300,6 +300,16 @@ enum Commands {
         /// `--dispatch-task`.
         #[arg(long)]
         to: Option<String>,
+
+        /// HITL: approve a held task (by name or id) so the DAG schedules
+        /// it. Requires the scroll `id`.
+        #[arg(long, value_name = "TASK", requires = "id")]
+        approve: Option<String>,
+
+        /// HITL: reject a held task (by name or id), failing it and
+        /// skipping everything downstream. Requires the scroll `id`.
+        #[arg(long, value_name = "TASK", requires = "id")]
+        reject: Option<String>,
     },
 
     /// Show daemon status
@@ -642,7 +652,20 @@ async fn main() {
                     abandon,
                     dispatch_task,
                     to,
-                } => cli::commands::scroll::run(id, activate, abandon, dispatch_task, to).await,
+                    approve,
+                    reject,
+                } => {
+                    cli::commands::scroll::run(
+                        id,
+                        activate,
+                        abandon,
+                        dispatch_task,
+                        to,
+                        approve,
+                        reject,
+                    )
+                    .await
+                }
                 Commands::Status { json } => cli::commands::status::run(json).await,
                 Commands::Queue { json } => cli::commands::queue::run(json).await,
                 Commands::Ps { json } => cli::commands::ps::run(json).await,

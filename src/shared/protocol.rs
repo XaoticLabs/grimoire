@@ -1225,6 +1225,22 @@ pub type ScrollActivateParams = IdParams;
 pub type ScrollStatusParams = IdParams;
 pub type ScrollAbandonParams = IdParams;
 
+/// HITL approve/reject of a held task. `task` is an exact task id or name
+/// within the scroll.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ScrollApproveParams {
+    pub scroll_id: ScrollId,
+    pub task: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ScrollApproveResult {
+    pub scroll_id: ScrollId,
+    pub task_name: String,
+    /// `approved` or `rejected`.
+    pub decision: String,
+}
+
 // --- Federation peer / topic params ---
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

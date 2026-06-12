@@ -135,6 +135,48 @@ pub(super) async fn handle_scroll_abandon(
     )
 }
 
+/// HITL: approve a held task, letting the DAG schedule it.
+pub(super) async fn handle_scroll_approve(
+    keeper: &Arc<ScrollKeeper>,
+    req: RpcRequest,
+) -> RpcResponse {
+    use crate::shared::protocol::{ScrollApproveParams, ScrollApproveResult};
+    let params: ScrollApproveParams = try_params!(req);
+    try_op(
+        req.id,
+        "approve task",
+        keeper
+            .approve_task(&params.scroll_id, &params.task)
+            .await
+            .map(|task_name| ScrollApproveResult {
+                scroll_id: params.scroll_id,
+                task_name,
+                decision: "approved".to_string(),
+            }),
+    )
+}
+
+/// HITL: reject a held task, failing it and skipping everything downstream.
+pub(super) async fn handle_scroll_reject(
+    keeper: &Arc<ScrollKeeper>,
+    req: RpcRequest,
+) -> RpcResponse {
+    use crate::shared::protocol::{ScrollApproveParams, ScrollApproveResult};
+    let params: ScrollApproveParams = try_params!(req);
+    try_op(
+        req.id,
+        "reject task",
+        keeper
+            .reject_task(&params.scroll_id, &params.task)
+            .await
+            .map(|task_name| ScrollApproveResult {
+                scroll_id: params.scroll_id,
+                task_name,
+                decision: "rejected".to_string(),
+            }),
+    )
+}
+
 /// F5a: dispatch one scroll task to a peer.
 ///
 /// The coordinator looks up the task, serializes the payload, writes

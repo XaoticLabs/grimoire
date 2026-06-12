@@ -39,6 +39,12 @@ pub struct TaskSpec {
     /// Optional pass threshold (0.0–1.0) for the verification score.
     /// `None` falls back to the keeper's default when `verify` is set.
     pub verify_threshold: Option<f64>,
+    /// HITL gate: when true, the task is held for human approval once its
+    /// dependencies are met, before any agent spawns. `- approve: true`.
+    pub approve: bool,
+    /// Task-level retry budget: how many times a failed run is re-spawned
+    /// before the task is marked failed for good. `- retries: N`.
+    pub retries: u32,
 }
 
 /// Parse a markdown spec file into a [`ScrollSpec`].
@@ -190,6 +196,8 @@ fn walk(content: &str) -> Result<Doc> {
                             peer: None,
                             verify: None,
                             verify_threshold: None,
+                            approve: false,
+                            retries: 0,
                         });
                         scope = Scope::InTask {
                             metadata_open: true,
@@ -331,6 +339,19 @@ fn apply_task_metadata(line: &str, task: &mut TaskSpec) -> Result<()> {
         if !v.is_empty() {
             task.verify = Some(v.to_string());
         }
+    } else if let Some(v) = line.strip_prefix("approve:") {
+        let v = v.trim().to_ascii_lowercase();
+        task.approve = matches!(v.as_str(), "true" | "yes" | "1" | "human");
+    } else if let Some(v) = line.strip_prefix("retries:") {
+        let v = v.trim();
+        let parsed: u32 = v.parse().map_err(|_| {
+            anyhow!(
+                "Task '{}': retries '{}' is not a non-negative integer",
+                task.name,
+                v
+            )
+        })?;
+        task.retries = parsed;
     }
     Ok(())
 }
@@ -403,6 +424,31 @@ Run the build on the build-bot peer.
         let spec = parse_scroll(content).unwrap();
         assert_eq!(spec.tasks.len(), 1);
         assert_eq!(spec.tasks[0].peer.as_deref(), Some("build-bot"));
+    }
+
+    /// HITL `approve:` and `retries:` directives attach to the task.
+    #[test]
+    fn approve_and_retries_directives() {
+        let content = r"# Scroll: Gated
+
+## Task: Build
+
+Build it.
+
+## Task: Deploy
+- depends: Build
+- approve: true
+- retries: 2
+
+Deploy it.
+";
+        let spec = parse_scroll(content).unwrap();
+        let build = &spec.tasks[0];
+        let deploy = &spec.tasks[1];
+        assert!(!build.approve);
+        assert_eq!(build.retries, 0);
+        assert!(deploy.approve);
+        assert_eq!(deploy.retries, 2);
     }
 
     #[test]

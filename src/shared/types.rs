@@ -596,6 +596,10 @@ impl_state_enum!(ScrollState {
 pub enum TaskState {
     Blocked,
     Ready,
+    /// HITL gate: the task is runnable (dependencies met) but held for a
+    /// human to approve before it spawns. Not terminal — the scroll stays
+    /// Active. Transitions to Ready on approval, Failed on rejection.
+    AwaitingApproval,
     Active,
     Complete,
     Failed,
@@ -605,10 +609,34 @@ pub enum TaskState {
 impl_state_enum!(TaskState {
     Blocked => "blocked",
     Ready => "ready",
+    AwaitingApproval => "awaiting_approval",
     Active => "active",
     Complete => "complete",
     Failed => "failed",
     Skipped => "skipped",
+});
+
+/// HITL approval state for a task that carries an approval gate. Stored as
+/// a DB-only column on `tasks`; surfaced in scroll status and settled by
+/// `scroll.approve` / `scroll.reject`.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ApprovalState {
+    /// No decision pending: either the task has no gate, or it has not yet
+    /// reached the gate.
+    #[default]
+    None,
+    /// Held, waiting for a human decision.
+    Pending,
+    Approved,
+    Rejected,
+}
+
+impl_state_enum!(ApprovalState {
+    None => "none",
+    Pending => "pending",
+    Approved => "approved",
+    Rejected => "rejected",
 });
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -748,12 +776,25 @@ mod tests {
         for (s, expected) in [
             ("blocked", TaskState::Blocked),
             ("ready", TaskState::Ready),
+            ("awaiting_approval", TaskState::AwaitingApproval),
             ("active", TaskState::Active),
             ("complete", TaskState::Complete),
             ("failed", TaskState::Failed),
             ("skipped", TaskState::Skipped),
         ] {
             let parsed: TaskState = s.parse().unwrap();
+            assert_eq!(parsed, expected);
+            assert_eq!(parsed.to_string(), s);
+        }
+
+        // ApprovalState
+        for (s, expected) in [
+            ("none", ApprovalState::None),
+            ("pending", ApprovalState::Pending),
+            ("approved", ApprovalState::Approved),
+            ("rejected", ApprovalState::Rejected),
+        ] {
+            let parsed: ApprovalState = s.parse().unwrap();
             assert_eq!(parsed, expected);
             assert_eq!(parsed.to_string(), s);
         }
