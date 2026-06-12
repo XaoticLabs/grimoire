@@ -357,6 +357,12 @@ impl AgentManager {
                     }
                 }
 
+                // Detect tree-budget exhaustion at attribution time (not just
+                // at the next dispatch attempt) so the operator notification
+                // fires as soon as spend crosses the cap. Return value
+                // ignored: this run already happened.
+                let _ = manager.tree_budget_block(&agent_id);
+
                 if let Err(e) = db.update_agent_state(&agent_id, &result.state, result.exit_code) {
                     error!(agent_id = %agent_id, error = %e, "Failed to update agent state");
                 }
@@ -500,6 +506,36 @@ impl AgentManager {
 
     /// Drive a claimed queue row through `executor.start` and the
     /// `Summoning -> Active` transition. Called only by the scheduler after a
+    /// Tree-budget gate. `None` = proceed; `Some(reason)` = the supervision
+    /// tree this agent belongs to has spent its USD cap, so no further run
+    /// may start anywhere in the tree (queue dispatch, mail wake, manual
+    /// invoke — every path funnels through here). The operator notification
+    /// fires exactly once per exhaustion, on whichever check observes it
+    /// first. DB errors fail open: a broken budget lookup must not stop the
+    /// fleet.
+    fn tree_budget_block(&self, agent_id: &str) -> Option<String> {
+        let root = self.db.find_tree_root(agent_id).ok()?;
+        let (cap, _) = self.db.get_tree_budget(&root).ok().flatten()?;
+        let spent = self.db.tree_spend_usd(&root).unwrap_or(0.0);
+        if spent < cap {
+            return None;
+        }
+        if self.db.mark_tree_budget_exhausted(&root).unwrap_or(false) {
+            self.event_bus.publish(StreamEvent::Notification {
+                agent_id: Some(root.clone()),
+                message: format!(
+                    "tree budget exhausted: tree {root} spent ${spent:.4} >= cap ${cap:.4}; \
+                     dispatches and wakes in this tree are blocked"
+                ),
+                level: "error".to_string(),
+                source: "system".to_string(),
+            });
+        }
+        Some(format!(
+            "tree_budget_exhausted: tree {root} spent ${spent:.4} >= ${cap:.4}"
+        ))
+    }
+
     /// successful `claim_for_dispatch`. On failure, returns `Err` *without*
     /// mutating queue state, since the scheduler owns the requeue path so the
     /// row's original `enqueued_at` (and therefore lane fairness) is preserved.
@@ -562,6 +598,14 @@ impl AgentManager {
                 daily_cap_usd = b.daily_usd,
                 "Soft budget exceeded; dispatching anyway"
             );
+        }
+
+        // Tree-budget gate: refuses dispatch anywhere in a tree whose USD
+        // cap is spent. Requeue-via-Err like the daily gate (the block is
+        // visible via `grim queue`'s block_reason).
+        if let Some(reason) = self.tree_budget_block(&agent_id) {
+            tracing::warn!(agent_id = %agent_id, %reason, "Refusing dispatch");
+            return Err(anyhow::anyhow!(reason));
         }
 
         let req = ExecuteRequest {
@@ -746,6 +790,13 @@ impl AgentManager {
         message: &str,
         model: Option<String>,
     ) -> Result<()> {
+        // Every resume path (mail wake, wake sources, manual `grim invoke`)
+        // funnels through here, so this one gate pauses a whole exhausted
+        // tree: dormant members stay dormant, their pending mail stays
+        // pending, and a re-budget (`set_tree_budget`) lets it all flow again.
+        if let Some(reason) = self.tree_budget_block(id) {
+            return Err(anyhow!(reason));
+        }
         let (session_id, cwd, provider_name) = {
             let agents = self.agents.lock().await;
             let managed = agents

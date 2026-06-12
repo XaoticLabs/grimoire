@@ -115,6 +115,12 @@ pub struct SummonParams {
     /// coordinator agent spawn helpers and know they'll all die together.
     #[serde(default)]
     pub parent_agent_id: Option<AgentId>,
+    /// USD ceiling for the supervision tree rooted at this agent. Once the
+    /// tree's summed spend reaches the cap, no member may start another run
+    /// (queue dispatch, mail wake, and manual invoke are all blocked) and
+    /// the operator is notified once.
+    #[serde(default)]
+    pub tree_budget_usd: Option<f64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

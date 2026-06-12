@@ -77,7 +77,7 @@ Everything else composes those two. Wake triggers deliver to a mailbox. Supervis
 - **Inbound webhooks.** Configure `[webhooks.<name>]` and `POST /webhooks/<name>` becomes mail on a topic, so a standing agent subscribed to it wakes on real-world events.
 - **Time-travel.** `grim chronicle <id>` (alias `grim replay`) reconstructs an agent's full life (stdout interleaved with state changes, wake fires, restarts, mail, and notifications) with state-at-point reconstruction at any seq. `grim fork <id> --at <seq>` branches a new agent seeded with the parent's transcript. `grim eval <id> --rubric <file>` scores a transcript.
 - **Sandboxing.** Per-provider confinement: a `bwrap` filesystem jail (network off, explicit ro/rw paths), `systemd-run` cgroup limits (memory, CPU quota), and per-agent token budgets. Degrades gracefully — if the host tooling is absent it warns once and runs unconfined.
-- **Policy & budgets.** Provider and cwd allow/deny rules enforced at summon; `[budgets.<name>]` daily USD ceilings per provider group, gated at dispatch with spend attributed from token counts.
+- **Policy & budgets.** Provider and cwd allow/deny rules enforced at summon; `[budgets.<name>]` daily USD ceilings per provider group, gated at dispatch with spend attributed from token counts. `grim summon --tree-budget-usd 5` puts a hard USD ceiling on a whole supervision tree: when the tree's summed spend crosses the cap, every dispatch and wake in it is blocked and you're notified once — a runaway coordinator can't take its children with it.
 - **Metrics & tracing.** `GET /metrics` exposes Prometheus text exposition behind the same bearer auth as `/api/*`. OTel span export ships behind `--features otel` (`OTEL_EXPORTER_OTLP_ENDPOINT` gates it at runtime).
 
 ## The mystic vocabulary, translated
@@ -113,7 +113,6 @@ The daemon owns agent lifecycles and persists everything in SQLite over three tr
 
 **Not built yet:**
 - An MCP surface — exposing the daemon's queue to MCP clients (the Tasks primitive).
-- Tree-level budget supervision: budgets gate dispatch per agent today; pausing or escalating a whole supervision tree at a spend ceiling is next.
 
 ## Recipes
 

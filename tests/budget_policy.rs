@@ -335,3 +335,227 @@ async fn policy_denies_cwd_outside_allow_prefix() {
     let err = resp.error.expect("expected denial");
     assert_eq!(err.message, "policy_cwd_not_allowed");
 }
+
+// --- Tree budgets ----------------------------------------------------------
+// A USD ceiling on a whole supervision tree, set on the root at summon time.
+// Enforced in `dispatch_internal` (queue path) and `invoke` (every wake
+// path); the operator notification fires exactly once per exhaustion.
+
+#[tokio::test]
+async fn tree_helpers_walk_up_and_sum_down() {
+    let (db, manager, _log) = manager_with(Config::default()).await;
+    let root = manager
+        .enqueue(
+            "r",
+            None,
+            None,
+            Some("claude".into()),
+            Path::new("/tmp"),
+            Lane::Adhoc,
+        )
+        .await
+        .unwrap();
+    let child = manager
+        .enqueue(
+            "c",
+            None,
+            None,
+            Some("claude".into()),
+            Path::new("/tmp"),
+            Lane::Adhoc,
+        )
+        .await
+        .unwrap();
+    let grandchild = manager
+        .enqueue(
+            "g",
+            None,
+            None,
+            Some("claude".into()),
+            Path::new("/tmp"),
+            Lane::Adhoc,
+        )
+        .await
+        .unwrap();
+    db.set_agent_parent(&child.id, Some(&root.id)).unwrap();
+    db.set_agent_parent(&grandchild.id, Some(&child.id))
+        .unwrap();
+
+    assert_eq!(db.find_tree_root(&grandchild.id).unwrap(), root.id);
+    assert_eq!(db.find_tree_root(&root.id).unwrap(), root.id);
+
+    db.add_agent_usd(&root.id, 0.25).unwrap();
+    db.add_agent_usd(&child.id, 0.50).unwrap();
+    db.add_agent_usd(&grandchild.id, 0.125).unwrap();
+    let total = db.tree_spend_usd(&root.id).unwrap();
+    assert!((total - 0.875).abs() < 1e-9, "got {total}");
+    // Subtree query from the child excludes the root's own spend.
+    let sub = db.tree_spend_usd(&child.id).unwrap();
+    assert!((sub - 0.625).abs() < 1e-9, "got {sub}");
+}
+
+#[tokio::test]
+async fn tree_budget_exhausted_refuses_dispatch_of_any_member() {
+    let (db, manager, log) = manager_with(Config::default()).await;
+    let root = manager
+        .enqueue(
+            "r",
+            None,
+            None,
+            Some("claude".into()),
+            Path::new("/tmp"),
+            Lane::Adhoc,
+        )
+        .await
+        .unwrap();
+    let child = manager
+        .enqueue(
+            "c",
+            None,
+            None,
+            Some("claude".into()),
+            Path::new("/tmp"),
+            Lane::Adhoc,
+        )
+        .await
+        .unwrap();
+    db.set_agent_parent(&child.id, Some(&root.id)).unwrap();
+    db.set_tree_budget(&root.id, 1.0).unwrap();
+    db.add_agent_usd(&root.id, 1.25).unwrap();
+
+    // Both queue rows exist; claim + dispatch each — both must refuse.
+    for _ in 0..2 {
+        let row = db.peek_next_dispatch().unwrap().expect("queue row");
+        assert!(db.claim_for_dispatch(&row.id).unwrap());
+        let err = (manager.as_ref() as &dyn Dispatcher)
+            .dispatch(row.clone())
+            .await
+            .expect_err("tree budget should refuse dispatch");
+        assert!(
+            err.to_string().contains("tree_budget_exhausted"),
+            "expected tree_budget_exhausted, got: {err}"
+        );
+        // Park the row out of the queue so peek advances (banish clears it).
+        manager.banish(&row.id).await.unwrap();
+    }
+    assert!(log.calls.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn tree_budget_under_cap_dispatches() {
+    let (db, manager, log) = manager_with(Config::default()).await;
+    let root = manager
+        .enqueue(
+            "r",
+            None,
+            None,
+            Some("claude".into()),
+            Path::new("/tmp"),
+            Lane::Adhoc,
+        )
+        .await
+        .unwrap();
+    db.set_tree_budget(&root.id, 5.0).unwrap();
+    db.add_agent_usd(&root.id, 1.0).unwrap();
+
+    let row = db.peek_next_dispatch().unwrap().expect("queue row");
+    assert!(db.claim_for_dispatch(&row.id).unwrap());
+    (manager.as_ref() as &dyn Dispatcher)
+        .dispatch(row)
+        .await
+        .expect("under-cap dispatch proceeds");
+    assert_eq!(log.calls.lock().unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn tree_budget_notification_fires_exactly_once() {
+    let db = Arc::new(Database::open_in_memory().unwrap());
+    let bus = EventBus::new(db.clone());
+    let mut rx = bus.subscribe();
+    let log = Arc::new(ExecutorLog::default());
+    let executor: Arc<dyn Executor> = Arc::new(MockExecutor { log });
+    let manager =
+        AgentManager::new_with_executor(db.clone(), bus, Config::default(), executor).await;
+    let root = manager
+        .enqueue(
+            "r",
+            None,
+            None,
+            Some("claude".into()),
+            Path::new("/tmp"),
+            Lane::Adhoc,
+        )
+        .await
+        .unwrap();
+    let child = manager
+        .enqueue(
+            "c",
+            None,
+            None,
+            Some("claude".into()),
+            Path::new("/tmp"),
+            Lane::Adhoc,
+        )
+        .await
+        .unwrap();
+    db.set_agent_parent(&child.id, Some(&root.id)).unwrap();
+    db.set_tree_budget(&root.id, 1.0).unwrap();
+    db.add_agent_usd(&root.id, 2.0).unwrap();
+
+    for _ in 0..2 {
+        let row = db.peek_next_dispatch().unwrap().expect("queue row");
+        assert!(db.claim_for_dispatch(&row.id).unwrap());
+        let _ = (manager.as_ref() as &dyn Dispatcher)
+            .dispatch(row.clone())
+            .await;
+        manager.banish(&row.id).await.unwrap();
+    }
+
+    let mut notifications = 0;
+    while let Ok(ev) = rx.try_recv() {
+        if let grimoire::shared::protocol::StreamEvent::Notification { source, .. } = ev
+            && source == "system"
+        {
+            notifications += 1;
+        }
+    }
+    assert_eq!(notifications, 1, "exhaustion notification must fire once");
+}
+
+#[tokio::test]
+async fn summon_with_tree_budget_persists_cap() {
+    let db = Arc::new(Database::open_in_memory().unwrap());
+    let bus = EventBus::new(db.clone());
+    let manager = AgentManager::new(db.clone(), bus.clone(), Config::default()).await;
+    let sk = Arc::new(ScrollKeeper::new(db.clone(), manager.clone()));
+    let clock: Arc<dyn grimoire::daemon::clock::Clock> =
+        Arc::new(grimoire::daemon::clock::SystemClock);
+    let wr = WakeRegistry::with_default_sender(db.clone(), bus.clone(), clock);
+    let wsr = WorkspaceRegistry::with_default_git(db.clone(), bus.clone());
+    let req = RpcRequest {
+        method: "agent.summon".into(),
+        params: json!({"task": "t", "tree_budget_usd": 2.5}),
+        id: 1,
+        protocol_version: None,
+        auth_token: None,
+    };
+    let resp =
+        grimoire::daemon::rpc::handle_rpc_test(&manager, &db, &sk, &wr, &wsr, &bus, req).await;
+    assert!(resp.error.is_none(), "{resp:?}");
+    let id = resp.result.unwrap()["id"].as_str().unwrap().to_string();
+    let (cap, exhausted) = db.get_tree_budget(&id).unwrap().expect("budget row");
+    assert!((cap - 2.5).abs() < 1e-9);
+    assert!(!exhausted);
+
+    // Invalid caps are rejected.
+    let req = RpcRequest {
+        method: "agent.summon".into(),
+        params: json!({"task": "t", "tree_budget_usd": 0.0}),
+        id: 2,
+        protocol_version: None,
+        auth_token: None,
+    };
+    let resp =
+        grimoire::daemon::rpc::handle_rpc_test(&manager, &db, &sk, &wr, &wsr, &bus, req).await;
+    assert_eq!(resp.error.expect("error").message, "invalid_tree_budget");
+}

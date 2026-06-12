@@ -1,6 +1,6 @@
 use anyhow::Result;
 use chrono::Utc;
-use rusqlite::params;
+use rusqlite::{OptionalExtension, params};
 
 use crate::shared::protocol::StreamEvent;
 use crate::shared::types::{Agent, AgentEvent, AgentId, AgentState};
@@ -184,6 +184,83 @@ impl super::Database {
                 |r| r.get(0),
             )
             .unwrap_or(0.0);
+        Ok(total.max(0.0))
+    }
+
+    // --- Tree budgets -----------------------------------------------------
+    // A tree budget is a USD ceiling on a whole supervision tree, set on the
+    // root at summon time. Enforcement walks the parent chain up to find the
+    // root, then sums `usd_spent` over the subtree.
+
+    /// Set (or replace) the USD cap for the tree rooted at `root_id`.
+    pub fn set_tree_budget(&self, root_id: &str, cap_usd: f64) -> Result<()> {
+        let conn = self.conn_lock();
+        conn.execute(
+            "INSERT INTO tree_budgets (root_agent_id, cap_usd, exhausted_at) VALUES (?1, ?2, NULL)
+             ON CONFLICT(root_agent_id) DO UPDATE SET cap_usd = ?2, exhausted_at = NULL",
+            params![root_id, cap_usd],
+        )?;
+        Ok(())
+    }
+
+    /// Cap and exhaustion flag for the tree rooted at `root_id`, if budgeted.
+    pub fn get_tree_budget(&self, root_id: &str) -> Result<Option<(f64, bool)>> {
+        let conn = self.conn_lock();
+        let row = conn
+            .query_row(
+                "SELECT cap_usd, exhausted_at IS NOT NULL FROM tree_budgets WHERE root_agent_id = ?1",
+                params![root_id],
+                |r| Ok((r.get::<_, f64>(0)?, r.get::<_, bool>(1)?)),
+            )
+            .optional()?;
+        Ok(row)
+    }
+
+    /// Mark the tree exhausted. Returns `true` only on the first marking, so
+    /// the caller can fire the operator notification exactly once.
+    pub fn mark_tree_budget_exhausted(&self, root_id: &str) -> Result<bool> {
+        let conn = self.conn_lock();
+        let changed = conn.execute(
+            "UPDATE tree_budgets SET exhausted_at = ?1
+             WHERE root_agent_id = ?2 AND exhausted_at IS NULL",
+            params![chrono::Utc::now().to_rfc3339(), root_id],
+        )?;
+        Ok(changed > 0)
+    }
+
+    /// Walk `parent_agent_id` links up to the tree root. An agent with no
+    /// parent is its own root. Depth-capped to defuse cycles.
+    pub fn find_tree_root(&self, agent_id: &str) -> Result<String> {
+        let conn = self.conn_lock();
+        let root: String = conn.query_row(
+            "WITH RECURSIVE up(id, parent, depth) AS (
+                 SELECT id, parent_agent_id, 0 FROM agents WHERE id = ?1
+                 UNION ALL
+                 SELECT a.id, a.parent_agent_id, up.depth + 1
+                 FROM agents a JOIN up ON a.id = up.parent
+                 WHERE up.depth < 32
+             )
+             SELECT id FROM up ORDER BY depth DESC LIMIT 1",
+            params![agent_id],
+            |r| r.get(0),
+        )?;
+        Ok(root)
+    }
+
+    /// Total `usd_spent` across the subtree rooted at `root_id` (inclusive).
+    pub fn tree_spend_usd(&self, root_id: &str) -> Result<f64> {
+        let conn = self.conn_lock();
+        let total: f64 = conn.query_row(
+            "WITH RECURSIVE tree(id) AS (
+                 SELECT id FROM agents WHERE id = ?1
+                 UNION
+                 SELECT a.id FROM agents a JOIN tree t ON a.parent_agent_id = t.id
+             )
+             SELECT COALESCE(SUM(usd_spent), 0.0) FROM agents
+             WHERE id IN (SELECT id FROM tree)",
+            params![root_id],
+            |r| r.get(0),
+        )?;
         Ok(total.max(0.0))
     }
 

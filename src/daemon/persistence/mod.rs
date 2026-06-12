@@ -323,6 +323,16 @@ impl Database {
                 FOREIGN KEY(agent_id) REFERENCES agents(id)
             );
 
+            -- Tree-level USD ceilings. One row per supervision-tree root;
+            -- spend is summed over the whole subtree at enforcement time.
+            -- exhausted_at records the first time the cap was hit so the
+            -- operator notification fires exactly once.
+            CREATE TABLE IF NOT EXISTS tree_budgets (
+                root_agent_id   TEXT PRIMARY KEY REFERENCES agents(id),
+                cap_usd         REAL NOT NULL,
+                exhausted_at    TEXT
+            );
+
             CREATE TABLE IF NOT EXISTS restart_history (
                 id              INTEGER PRIMARY KEY AUTOINCREMENT,
                 agent_id        TEXT NOT NULL REFERENCES agents(id),

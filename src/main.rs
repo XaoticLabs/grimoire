@@ -80,6 +80,12 @@ enum Commands {
         /// the parent cascades to this agent and any of its descendants.
         #[arg(long)]
         parent: Option<String>,
+
+        /// USD ceiling for the supervision tree rooted at this agent.
+        /// When the tree's summed spend reaches the cap, dispatches and
+        /// wakes anywhere in the tree are blocked and you're notified once.
+        #[arg(long, value_name = "USD")]
+        tree_budget_usd: Option<f64>,
     },
 
     /// List all agents in the circle
@@ -501,6 +507,7 @@ async fn main() {
                     escalate_to,
                     workspace,
                     parent,
+                    tree_budget_usd,
                 } => {
                     cli::commands::summon::run(
                         &task,
@@ -514,6 +521,7 @@ async fn main() {
                         escalate_to,
                         workspace,
                         parent,
+                        tree_budget_usd,
                     )
                     .await
                 }

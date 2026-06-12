@@ -178,6 +178,19 @@ pub(super) async fn handle_summon(
         }
     }
 
+    // Tree budget: this agent becomes the budgeted root of its (future)
+    // subtree. Children summoned with `--parent <this>` count against it.
+    if let Some(cap) = params.tree_budget_usd {
+        if !cap.is_finite() || cap <= 0.0 {
+            let _ = manager.banish(&result.id).await;
+            return rpc_err(req.id, "invalid_tree_budget");
+        }
+        let root_id = result.id.clone();
+        if let Err(e) = db.run(move |db| db.set_tree_budget(&root_id, cap)).await {
+            tracing::warn!(agent = %result.id, error = %e, "set_tree_budget failed");
+        }
+    }
+
     // Self-escalation check, post-id-generation, before any further state.
     if let Some(addr) = &params.escalate_to {
         let self_addr = format!("agent://{}", result.id);

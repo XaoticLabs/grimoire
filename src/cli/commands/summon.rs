@@ -34,6 +34,7 @@ pub async fn run(
     escalate_to: Option<String>,
     workspace: Option<String>,
     parent: Option<String>,
+    tree_budget_usd: Option<f64>,
 ) -> Result<()> {
     let mut client = DaemonClient::connect().await?;
 
@@ -72,6 +73,7 @@ pub async fn run(
         "escalate_to": escalate_to,
         "workspace": workspace,
         "parent_agent_id": parent_id,
+        "tree_budget_usd": tree_budget_usd,
     });
 
     let response = client.call("agent.summon", params).await?;
