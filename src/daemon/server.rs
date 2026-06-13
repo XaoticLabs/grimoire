@@ -787,7 +787,7 @@ async fn http_metrics(State(state): State<AppState>) -> axum::response::Response
 }
 
 async fn http_dashboard() -> axum::response::Html<String> {
-    axum::response::Html(include_str!("../dashboard/templates/index.html").to_string())
+    axum::response::Html(include_str!("dashboard.html").to_string())
 }
 
 // --- HTTP auth middleware + login flow ---
