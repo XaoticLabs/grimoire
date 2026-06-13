@@ -29,20 +29,16 @@ pub struct SummonParams {
     /// Workspace name to summon into. Mutually exclusive with `cwd`.
     #[serde(default)]
     pub workspace: Option<String>,
-    /// Supervision-tree parent. When set, banishing the parent cascades:
-    /// every live child of `parent_agent_id` is also banished. Lets a
-    /// coordinator agent spawn helpers and know they'll all die together.
+    /// Supervision-tree parent. Banishing the parent cascades to every live child.
     #[serde(default)]
     pub parent_agent_id: Option<AgentId>,
-    /// USD ceiling for the supervision tree rooted at this agent. Once the
-    /// tree's summed spend reaches the cap, no member may start another run
-    /// (queue dispatch, mail wake, and manual invoke are all blocked) and
-    /// the operator is notified once.
+    /// USD ceiling for the supervision tree rooted here. Once summed tree spend
+    /// reaches the cap, no member may start another run (queue dispatch, mail
+    /// wake, manual invoke all blocked) and the operator is notified once.
     #[serde(default)]
     pub tree_budget_usd: Option<f64>,
-    /// Idempotency key: if a summon with this key already minted an agent,
-    /// return that agent instead of spawning a duplicate. Makes `summon`
-    /// safe to retry on a flaky connection without double-spawning.
+    /// Idempotency key: a repeat summon with this key returns the existing agent
+    /// instead of spawning a duplicate, so `summon` is retry-safe.
     #[serde(default)]
     pub idempotency_key: Option<String>,
 }
@@ -127,8 +123,6 @@ pub struct StatusResponse {
     pub daemon_id: Option<DaemonId>,
 }
 
-// --- Queue params/results ---
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct QueueEntry {
     pub id: AgentId,
@@ -146,15 +140,11 @@ pub struct QueueListResponse {
     pub entries: Vec<QueueEntry>,
 }
 
-// --- Replay / chronicle params/results ---
-
 pub type ReplayParams = IdParams;
 
-/// One entry of an agent's reconstructed life: the durable per-agent `seq`,
-/// the event `kind` tag, the stored timestamp, and the full event payload.
-/// The daemon returns the whole timeline; windowing (`--from`/`--until`),
-/// kind filtering, and state-at-point reconstruction happen client-side so
-/// the RPC stays a dumb read and the reconstruction logic stays testable.
+/// One entry of an agent's reconstructed life. The daemon returns the whole
+/// timeline; windowing, kind filtering, and state-at-point reconstruction
+/// happen client-side so the RPC stays a dumb read.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReplayEntry {
     pub seq: i64,
@@ -168,8 +158,6 @@ pub struct ReplayResponse {
     pub agent_id: AgentId,
     pub entries: Vec<ReplayEntry>,
 }
-
-// --- Pact params/results ---
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PactCreateParams {
@@ -194,8 +182,6 @@ pub struct PactListResult {
     pub pacts: Vec<Pact>,
 }
 
-// --- Agent result / artifact ---
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentResultParams {
     pub id: AgentId,
@@ -205,20 +191,16 @@ pub type AgentArtifactParams = IdParams;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentArtifactResult {
-    /// The captured artifact, or `None` if the agent has not produced one
-    /// yet (still running, or never reached completion).
+    /// The captured artifact, or `None` if the agent has not produced one yet.
     pub artifact: Option<AgentArtifact>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentResultResponse {
-    /// Provider-extracted final result text, or `None` if the agent has no
-    /// usable result yet (still running, no stdout, provider declined).
+    /// Provider-extracted final result text, or `None` if none is available yet.
     pub result: Option<String>,
     pub state: String,
 }
-
-// --- Per-provider budgets ---
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BudgetStatus {
@@ -235,11 +217,7 @@ pub struct BudgetListResult {
     pub budgets: Vec<BudgetStatus>,
 }
 
-// --- Process inventory ---
-// Per-agent OS-process visibility for the dashboard's "Processes" panel.
-// `alive` is a kill(pid, 0) check at request time; a "stuck" row is one
-// where the agent is in a terminal state but the OS process is still alive.
-
+// Per-agent OS-process inventory. `alive` is a kill(pid, 0) check at request time.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentProcess {
     pub agent_id: AgentId,
@@ -247,8 +225,7 @@ pub struct AgentProcess {
     pub task: Option<String>,
     pub pid: u32,
     pub alive: bool,
-    /// `true` iff the agent's state is terminal (Complete/Failed/Banished)
-    /// but `alive` is also true (i.e. the OS process outlived its agent).
+    /// `true` iff the agent's state is terminal but the OS process is still alive.
     pub stuck: bool,
 }
 

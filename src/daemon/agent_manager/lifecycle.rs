@@ -17,7 +17,7 @@ use super::{AgentManager, CONTEXT_REPLAY_BUDGET_BYTES};
 
 impl AgentManager {
     /// Wire an executor's completion future into agent state updates and the
-    /// event bus, mirroring the previous spawn_monitor body.
+    /// event bus.
     pub(crate) fn watch_completion(
         self: &Arc<Self>,
         agent_id: AgentId,
@@ -26,10 +26,8 @@ impl AgentManager {
         let db = self.db.clone();
         let bus = self.event_bus.clone();
         let manager = self.clone();
-        // One span per agent run, following the OTel GenAI semantic
-        // conventions (`gen_ai.*`) so OTLP consumers (Langfuse, Phoenix,
-        // Jaeger dashboards keyed on the semconv) can read runs without a
-        // translation layer. Usage fields are recorded at completion.
+        // One span per run using OTel GenAI semconv (`gen_ai.*`) so OTLP
+        // consumers read runs without translation. Usage fields filled at completion.
         let span = tracing::info_span!(
             "invoke_agent",
             gen_ai.operation.name = "invoke_agent",
@@ -80,8 +78,7 @@ impl AgentManager {
                     error!(agent_id = %agent_id, error = %e, "Failed to store session_id");
                 }
 
-                // keep-alive agents that complete normally with a session land
-                // in Dormant instead of Complete.
+                // keep-alive agents completing with a session land Dormant, not Complete.
                 if matches!(result.state, AgentState::Complete) {
                     let keep_alive = db.get_keep_alive(&agent_id).unwrap_or(false);
                     if keep_alive {
@@ -90,10 +87,8 @@ impl AgentManager {
                         } else if manager.provider_resume_strategy(&agent_id)
                             == Some(ResumeStrategy::ContextReplay)
                         {
-                            // No native session, but the provider supports
-                            // daemon-managed continuity: mint a synthetic session id
-                            // so the agent goes Dormant and the scheduler will wake it.
-                            // Continuity is reconstructed from the event log on resume.
+                            // No native session: mint a synthetic id so the agent
+                            // goes Dormant; continuity is rebuilt from the event log on resume.
                             let sid = format!("daemon:{}", uuid::Uuid::new_v4());
                             if let Err(e) = db.update_agent_session_id(&agent_id, &sid) {
                                 error!(agent_id = %agent_id, error = %e, "Failed to store synthetic session_id");
@@ -128,12 +123,9 @@ impl AgentManager {
                     }
                 }
 
-                // USD attribution. Compute spend from the breakdown × provider
-                // pricing, then charge the agent's lifetime spend AND every
-                // budget whose `providers` list matches this run's provider.
-                // No pricing or no breakdown → no charge, by design (free models
-                // and providers without usage telemetry are silently
-                // un-budget-able).
+                // USD attribution: charge the agent's lifetime spend and every
+                // matching budget. No pricing or no breakdown → no charge, by
+                // design (free models / no usage telemetry are un-budget-able).
                 if let Some(provider_name) = db
                     .get_agent(&agent_id)
                     .ok()
@@ -142,9 +134,8 @@ impl AgentManager {
                     && let Some(pricing) = manager.registry.pricing_for(&provider_name)
                 {
                     let breakdown = result.token_breakdown.unwrap_or_else(|| {
-                        // No breakdown but we may still have a total. Charge it
-                        // as input tokens (conservative; vendors price input
-                        // cheaper than output, so this *under*-bills slightly).
+                        // No breakdown: charge any total as input tokens
+                        // (conservative — input is priced cheaper, so this under-bills).
                         crate::daemon::provider::TokenBreakdown {
                             input: result.tokens_used.unwrap_or(0),
                             ..Default::default()
@@ -179,9 +170,8 @@ impl AgentManager {
                     }
                 }
 
-                // Detect tree-budget exhaustion at attribution time (not just
-                // at the next dispatch attempt) so the operator notification
-                // fires as soon as spend crosses the cap. Return value
+                // Check tree-budget exhaustion now (not just at next dispatch)
+                // so the notification fires as spend crosses the cap. Return
                 // ignored: this run already happened.
                 let _ = manager.tree_budget_block(&agent_id);
 
@@ -189,9 +179,8 @@ impl AgentManager {
                     error!(agent_id = %agent_id, error = %e, "Failed to update agent state");
                 }
 
-                // Supervision history reconciliation: if there's a scheduled
-                // history row for this agent, flip it based on the final state.
-                // Only Complete bumps restart_count; Failed just records outcome.
+                // Reconcile a scheduled restart-history row from the final
+                // state. Only Complete bumps restart_count.
                 let outcome = match result.state {
                     AgentState::Complete => Some(RestartHistoryOutcome::Succeeded),
                     AgentState::Failed => Some(RestartHistoryOutcome::FailedAgain),
@@ -216,10 +205,8 @@ impl AgentManager {
                     managed.cancel = None;
                 }
 
-                // Capture the diff/cost artifact before announcing the
-                // terminal state, so consumers reacting to the StateChange
-                // (scroll verification, fork-and-race, approval review) find
-                // the artifact already on disk.
+                // Capture the artifact before announcing the terminal state so
+                // StateChange consumers find it already persisted.
                 manager.capture_artifact(&agent_id).await;
 
                 bus.publish(StreamEvent::StateChange {
@@ -232,18 +219,14 @@ impl AgentManager {
         ))
     }
 
-    /// Look up an agent's provider and report its resume strategy, if both the
-    /// agent and its provider are known.
+    /// An agent's provider resume strategy, if agent and provider are known.
     pub(crate) fn provider_resume_strategy(&self, agent_id: &str) -> Option<ResumeStrategy> {
         let provider_name = self.db.get_agent(agent_id).ok().flatten()?.provider?;
         Some(self.registry.get(&provider_name)?.resume_strategy())
     }
 
-    /// Capture the per-agent artifact (git diff + cost) after a run. Reads
-    /// the agent's cwd and the base commit recorded at dispatch, computes
-    /// the diff on the blocking pool (git shellouts), and upserts the row.
-    /// Best-effort: any failure is logged and swallowed — a missing artifact
-    /// must never disturb the agent's lifecycle.
+    /// Compute and upsert the per-agent artifact (git diff + cost) on the
+    /// blocking pool. Best-effort: failures are logged and swallowed.
     pub(crate) async fn capture_artifact(&self, agent_id: &str) {
         let Ok(Some(agent)) = self.db.get_agent(agent_id) else {
             return;
@@ -276,10 +259,8 @@ impl AgentManager {
         message: &str,
         model: Option<String>,
     ) -> Result<()> {
-        // Every resume path (mail wake, wake sources, manual `grim invoke`)
-        // funnels through here, so this one gate pauses a whole exhausted
-        // tree: dormant members stay dormant, their pending mail stays
-        // pending, and a re-budget (`set_tree_budget`) lets it all flow again.
+        // Every resume path funnels here, so this gate pauses a whole exhausted
+        // tree until a re-budget (`set_tree_budget`) lets it flow again.
         if let Some(reason) = self.tree_budget_block(id) {
             return Err(anyhow!(reason));
         }
@@ -319,10 +300,8 @@ impl AgentManager {
             .get(&provider_name)
             .ok_or_else(|| anyhow!("Unknown provider: {provider_name}"))?;
 
-        // How we resume depends on the provider:
-        //   Native        → hand the message to the CLI's own session resume.
-        //   ContextReplay  → reconstruct prior output from the event log, prepend
-        //                    it to the message, and start a fresh process.
+        // Native → CLI session resume; ContextReplay → prepend prior output
+        // from the event log and start a fresh process.
         let (task, resume_session_id) = match provider.resume_strategy() {
             ResumeStrategy::Native => (message.to_string(), Some(session_id)),
             ResumeStrategy::ContextReplay => {
@@ -397,8 +376,7 @@ impl AgentManager {
     pub async fn banish(&self, id: &str) -> Result<bool> {
         let result = self.banish_inner(id).await?;
         if result {
-            // Cascade: retire wake sources after the state flip. Errors are
-            // logged but don't fail the banish (banish must always succeed).
+            // Cascade: retire wake sources. Errors logged, never fail the banish.
             if let Some(reg) = self.wake_registry.lock().await.clone()
                 && let Err(e) = reg.retire_for_agent(id).await
             {
@@ -413,9 +391,8 @@ impl AgentManager {
             if let Err(e) = self.db.clear_supervision(id) {
                 tracing::warn!(agent_id = %id, error = %e, "clear_supervision on banish failed");
             }
-            // Cascade: supervision-tree children die with their parent.
-            // Recursive: each child's `banish` likewise cascades to its own
-            // children, so the whole subtree collapses in one call.
+            // Cascade: children die with their parent, recursively, so the
+            // whole subtree collapses in one call.
             match self.db.list_live_children(id) {
                 Ok(children) => {
                     for child in children {
@@ -445,11 +422,8 @@ impl AgentManager {
 
         match managed.agent.state {
             AgentState::Queued => {
-                // Queued agents have no process and no executor handle. Just
-                // dequeue and flip to Banished. `delete_from_queue` is
-                // idempotent: if the scheduler already claimed the row (state
-                // would have moved to Summoning, so we wouldn't be here), the
-                // false return is harmless.
+                // No process: just dequeue and flip to Banished.
+                // `delete_from_queue` is idempotent if the row was already claimed.
                 self.db.delete_from_queue(&id.to_string())?;
                 managed.agent.state = AgentState::Banished;
                 self.db
@@ -501,8 +475,8 @@ impl AgentManager {
                 Ok(true)
             }
             AgentState::Restarting => {
-                // No live process and no executor handle. The supervisor's
-                // pending heap is cancelled by the outer cascade.
+                // No live process; the supervisor's pending restart is
+                // cancelled by the outer cascade.
                 managed.agent.state = AgentState::Banished;
                 self.db
                     .update_agent_state(id, &AgentState::Banished, None)?;

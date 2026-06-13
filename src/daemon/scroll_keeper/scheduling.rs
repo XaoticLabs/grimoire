@@ -44,12 +44,10 @@ impl ScrollKeeper {
                 break;
             }
 
-            // HITL gate: a task that requires approval is held the first
-            // time it becomes runnable. A human reviews the upstream work
-            // (artifacts) and runs `scroll.approve`, which flips the gate
-            // to `approved` and re-schedules. An unapproved gate parks the
-            // task in `AwaitingApproval` and skips it — it does not consume
-            // a slot and is not re-found by `find_ready_tasks`.
+            // HITL gate: an approval-required task is parked in
+            // `AwaitingApproval` until `scroll.approve` flips it to `approved`.
+            // A parked task consumes no slot and isn't re-found by
+            // `find_ready_tasks`.
             match self.db.get_task_approval(&task.id) {
                 Ok((true, approval_state)) => {
                     use crate::shared::types::ApprovalState;
@@ -60,10 +58,9 @@ impl ScrollKeeper {
                             continue;
                         }
                         ApprovalState::Rejected => {
-                            // Defensive: a rejected gate should already be
-                            // Failed. Settle it inline (not via
+                            // Defensive: settle inline, not via
                             // fail_task_and_advance, which re-enters
-                            // schedule_tasks and would recurse).
+                            // schedule_tasks and would recurse.
                             let _ = self.db.update_task_state(&task.id, &TaskState::Failed);
                             self.skip_downstream(&task.id);
                             continue;
@@ -88,10 +85,9 @@ impl ScrollKeeper {
                 continue;
             }
 
-            // Peer-targeted tasks are dispatched, not spawned.
-            // The receiver enqueues an agent of its own and federates
-            // lifecycle back; the task's local `agent_id` is filled in
-            // by the dispatch ack handler.
+            // Peer-targeted tasks are dispatched, not spawned: the receiver
+            // enqueues its own agent and federates lifecycle back. Local
+            // `agent_id` is filled in by the dispatch ack handler.
             if let Some(peer_name) = task.peer_name.clone() {
                 match self.dispatch_to_peer(task, &peer_name).await {
                     Ok(()) => {
@@ -149,10 +145,8 @@ impl ScrollKeeper {
         Ok(())
     }
 
-    /// Dispatch a single peer-targeted task to its named peer. Writes
-    /// the durable `scroll_task_dispatches` row, enqueues the wire
-    /// outbox row, and pokes the drainer. Marks the local task
-    /// `Active` so DAG accounting sees it as in-flight.
+    /// Dispatch a peer-targeted task: write the durable dispatch row, enqueue
+    /// the wire outbox row, poke the drainer, and mark the local task `Active`.
     async fn dispatch_to_peer(&self, task: &Task, peer_name: &str) -> anyhow::Result<()> {
         use crate::daemon::peer_client::ScrollDispatchPayload;
         let Some(registry) = self.peer_registry.lock().await.clone() else {
@@ -176,8 +170,6 @@ impl ScrollKeeper {
         self.db
             .scroll_dispatch_insert(&dispatch_id, &task.scroll_id, &task.id, &peer.id)?;
         self.db.scroll_dispatch_enqueue(&peer.id, &bytes)?;
-        // The task is now considered in-flight; the receiver's local
-        // agent id will be patched in by the ack handler.
         self.db.update_task_state(&task.id, &TaskState::Active)?;
         registry.notify_outbox(&peer.id).await;
         Ok(())

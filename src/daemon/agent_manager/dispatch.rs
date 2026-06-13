@@ -19,10 +19,8 @@ use super::super::supervisor::RestartDispatcher;
 use super::{AgentManager, Lane, ManagedAgent};
 
 impl AgentManager {
-    /// Enqueue an agent for the scheduler to pick up. Inserts the agent in
-    /// `Queued` state and writes a row into `task_queue`; does NOT start the
-    /// executor (that is the scheduler's job, handled by
-    /// `AgentManager::dispatch_internal`).
+    /// Insert an agent `Queued` and write a `task_queue` row. Does NOT start
+    /// the executor — the scheduler does that via `dispatch_internal`.
     pub async fn enqueue(
         self: &Arc<Self>,
         task: &str,
@@ -119,15 +117,10 @@ impl AgentManager {
         Ok(agent)
     }
 
-    /// Drive a claimed queue row through `executor.start` and the
-    /// `Summoning -> Active` transition. Called only by the scheduler after a
-    /// Tree-budget gate. `None` = proceed; `Some(reason)` = the supervision
-    /// tree this agent belongs to has spent its USD cap, so no further run
-    /// may start anywhere in the tree (queue dispatch, mail wake, manual
-    /// invoke — every path funnels through here). The operator notification
-    /// fires exactly once per exhaustion, on whichever check observes it
-    /// first. DB errors fail open: a broken budget lookup must not stop the
-    /// fleet.
+    /// Tree-budget gate: `None` to proceed, `Some(reason)` if the agent's
+    /// supervision tree has spent its USD cap (every dispatch/wake/invoke path
+    /// funnels here). Fires the operator notification exactly once per
+    /// exhaustion. Fails open — a broken budget lookup must not stop the fleet.
     pub(crate) fn tree_budget_block(&self, agent_id: &str) -> Option<String> {
         let root = self.db.find_tree_root(agent_id).ok()?;
         let (cap, _) = self.db.get_tree_budget(&root).ok().flatten()?;
@@ -151,10 +144,9 @@ impl AgentManager {
         ))
     }
 
-    /// Drive a row claimed via `claim_for_dispatch` through the executor. On
-    /// failure, returns `Err` *without* mutating queue state, since the
-    /// scheduler owns the requeue path so the row's original `enqueued_at`
-    /// (and therefore lane fairness) is preserved.
+    /// Drive a claimed row through the executor. On failure returns `Err`
+    /// without mutating queue state — the scheduler owns requeue, preserving
+    /// the original `enqueued_at` (lane fairness).
     pub(crate) async fn dispatch_internal(self: &Arc<Self>, row: QueueRow) -> Result<()> {
         let agent_id = row.id.clone();
         let provider_name = row
@@ -162,9 +154,8 @@ impl AgentManager {
             .clone()
             .unwrap_or_else(|| self.registry.default_name().to_string());
 
-        // Token-budget gate: if the provider sandbox caps lifetime token
-        // spend and we're already past it, refuse to start another turn and
-        // banish with a clear reason instead of silently re-running.
+        // Token-budget gate: past the sandbox's lifetime token cap, banish
+        // rather than silently re-run.
         if let Some(sb) = self.registry.sandbox_for(&provider_name)
             && let Some(budget) = sb.token_budget
         {
@@ -179,11 +170,8 @@ impl AgentManager {
             }
         }
 
-        // Daily USD budget gate. For every budget that includes this
-        // provider, check today's running spend. Hard budgets refuse
-        // dispatch; soft budgets only log. Unlike the token gate above,
-        // this does NOT banish. The next day will let work through, so we
-        // requeue-via-Err and the scheduler retries naturally.
+        // Daily USD budget gate. Hard budgets requeue-via-Err (no banish —
+        // tomorrow lets work through); soft budgets only log.
         let today = chrono::Utc::now().format("%Y-%m-%d").to_string();
         for (name, b) in &self.config.budgets {
             let matches = b.providers.is_empty() || b.providers.contains(&provider_name);
@@ -216,16 +204,13 @@ impl AgentManager {
             );
         }
 
-        // Tree-budget gate: refuses dispatch anywhere in a tree whose USD
-        // cap is spent. Requeue-via-Err like the daily gate (the block is
-        // visible via `grim queue`'s block_reason).
+        // Tree-budget gate: requeue-via-Err like the daily gate.
         if let Some(reason) = self.tree_budget_block(&agent_id) {
             tracing::warn!(agent_id = %agent_id, %reason, "Refusing dispatch");
             return Err(anyhow::anyhow!(reason));
         }
 
-        // Record the baseline commit the completion-time artifact diffs
-        // against. Best-effort: a non-git cwd records `None`.
+        // Baseline commit the completion-time artifact diffs against.
         let base = super::super::artifacts::head_commit(&PathBuf::from(&row.cwd));
         let _ = self.db.set_artifact_base(&agent_id, base.as_deref());
 
@@ -262,9 +247,8 @@ impl AgentManager {
 
         let mut agents = self.agents.lock().await;
         if !agents.contains_key(&agent_id) {
-            // Rare path: scheduler ticked before `reload_from_db` populated
-            // the in-memory map (e.g., a `Queued` row recovered after
-            // restart). Backfill the entry from the queue row + DB state.
+            // Rare: scheduler ticked before `reload_from_db` populated the map
+            // (e.g. a `Queued` row recovered after restart). Backfill it.
             agents.insert(
                 agent_id.clone(),
                 ManagedAgent {
@@ -303,10 +287,8 @@ impl AgentManager {
         Ok(())
     }
 
-    /// Restart-dispatch path. Resumes the agent's session under the same
-    /// `Active` state used by ad-hoc dispatch. Caller (the supervisor +
-    /// scheduler) is responsible for ensuring `agent.state == Restarting`
-    /// before invoking this.
+    /// Resume an agent's session into `Active`. Caller must ensure
+    /// `agent.state == Restarting` first.
     pub(crate) async fn restart_dispatch(
         self: &Arc<Self>,
         agent_id: &str,

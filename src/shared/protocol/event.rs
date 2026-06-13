@@ -169,7 +169,7 @@ pub enum StreamEvent {
         kinds: Vec<String>,
         truncated_count: u32,
     },
-    // --- Federation (peer-link) events ---
+    // Federation (peer-link) events.
     #[serde(rename = "peer_handshake_ok")]
     PeerHandshakeOk {
         peer_id: String,
@@ -211,10 +211,8 @@ pub enum StreamEvent {
     },
     #[serde(rename = "topic_federation_removed")]
     TopicFederationRemoved { peer_id: String, topic: String },
-    /// A notification destined for the human operator. Emitted by the `notify`
-    /// RPC (`source = "agent"`, an agent calling `grim notify`) or internally
-    /// (`source = "system"`). The `Notifier` subscriber forwards matching ones
-    /// to the configured webhook; it also lands in the durable event log.
+    /// Notification for the human operator. `source` is `"agent"` (via `grim notify`)
+    /// or `"system"`. The `Notifier` subscriber forwards matching ones to the webhook.
     #[serde(rename = "notification")]
     Notification {
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -223,19 +221,15 @@ pub enum StreamEvent {
         level: String,
         source: String,
     },
-    /// Republished agent state-change from a federated peer.
-    /// Produced by the inbound `AgentLifecycleDeliver` handler after
-    /// dedupe; consumed by `RemoteAgentCompletion` wake sources and
-    /// the dashboard's federated-agents view.
+    /// Republished agent state-change from a federated peer. Consumed by
+    /// `RemoteAgentCompletion` wake sources and the dashboard's federated view.
     #[serde(rename = "remote_agent_state_changed")]
     RemoteAgentStateChanged {
         sender_daemon_id: DaemonId,
         agent_id: AgentId,
         old_state: AgentState,
         new_state: AgentState,
-        /// Optional snapshot fields the producer ships alongside the
-        /// state — `None` when the producer didn't include them
-        /// (older daemons / minimal payloads).
+        /// Optional snapshot fields; `None` when the producer omitted them.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         name: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -250,9 +244,7 @@ impl StreamEvent {
     /// events this returns the stream the event should appear on (sender for
     /// `MailSent`/`MailFailed`, recipient for `MailReceived`/`MailDelivered`).
     pub fn agent_id(&self) -> Option<&str> {
-        // Each variant binds a differently-named field (agent_id vs
-        // recipient_id vs sender_id); collapsing the arms would obscure
-        // which field is being read for each event type.
+        // Arms aren't collapsed: each reads a differently-named field.
         #[allow(clippy::match_same_arms)]
         match self {
             Self::Output { agent_id, .. } => Some(agent_id),
@@ -280,8 +272,6 @@ impl StreamEvent {
                 agent_id.as_deref()
             }
             Self::Notification { agent_id, .. } => agent_id.as_deref(),
-            // Federated state changes report the remote agent's id so
-            // local wake sources can match against it.
             Self::RemoteAgentStateChanged { agent_id, .. } => Some(agent_id),
             Self::ScrollProgress { .. }
             | Self::TaskStateChange { .. }
@@ -312,12 +302,9 @@ impl StreamEvent {
         }
     }
 
-    /// Wire tag for this event (the `type` field on the JSON envelope) and
-    /// the SQL `events.kind` column value. The drift-detection test
-    /// `kind_matches_serde_rename_for_each_variant` keeps these in sync with
-    /// each variant's `#[serde(rename = "…")]`. Hand-maintained because
-    /// `serde_variant::to_variant_name` does not support internally-tagged
-    /// enums.
+    /// Wire tag for this event (JSON `type` field and SQL `events.kind` value).
+    /// Hand-maintained (serde_variant can't read internally-tagged enums); the
+    /// `kind_matches_serde_rename_for_each_variant` test guards drift from the renames.
     pub const fn kind(&self) -> &'static str {
         match self {
             Self::Output { .. } => "output",
@@ -384,7 +371,6 @@ mod tests {
         };
         assert_eq!(event.agent_id(), Some("xyz"));
 
-        // AgentCreated event
         let agent = Agent {
             id: "test1234".to_string(),
             name: None,

@@ -52,7 +52,7 @@ async fn escalate_to_agent_writes_one_mail_with_supervisor_sender() {
         },
     )
     .unwrap();
-    // Fill budget so next Failed exhausts.
+    // spend the budget so the next Failed exhausts it
     let now = Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap();
     for _ in 0..2 {
         db.insert_restart_history_row(
@@ -73,7 +73,6 @@ async fn escalate_to_agent_writes_one_mail_with_supervisor_sender() {
         .await
         .unwrap();
 
-    // Find the mail row written for recipient bbcd0001
     let mails = db
         .list_mail_by_recipient("bbcd0001", None, None, 100)
         .unwrap();

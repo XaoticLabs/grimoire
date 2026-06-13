@@ -7,10 +7,9 @@ use crate::cli::client::DaemonClient;
 use crate::cli::stream_formatter;
 use crate::shared::protocol::{ReplayEntry, ReplayResponse, StreamEvent};
 
-/// Reconstructed agent state at the `--until` cut point. Folded from the full
-/// considered window (seq 0..=cut) regardless of display filters, so the
-/// footer always reflects the true state even when `--kinds`/`--no-output`
-/// hide rows from the printed timeline.
+/// Reconstructed agent state at the `--until` cut. Folded from the full window
+/// (seq 0..=cut) regardless of display filters, so the footer stays accurate
+/// even when `--kinds`/`--no-output` hide rows from the printed timeline.
 #[derive(Default)]
 struct ReconState {
     state: Option<String>,
@@ -139,7 +138,7 @@ pub async fn run(
     print_footer(&recon, considered.last(), base_ts);
 
     if follow {
-        // If the agent already terminated, there's nothing to follow.
+        // Nothing to follow if the agent already terminated.
         let terminal = recon
             .state
             .as_deref()
@@ -197,11 +196,10 @@ fn render_entry(
     }
 }
 
-/// Subscribe to live events for `agent_id` via the streaming `agent.bind`
-/// path. Exits when the agent reaches a terminal state or the socket closes.
-/// There is a small replay-vs-subscribe race: events emitted between the
-/// `agent.replay` snapshot and this subscribe may be lost. Acceptable for
-/// `--follow`; documented in the help text.
+/// Subscribe to live events via `agent.bind`; exits on terminal state or
+/// socket close. Small replay-vs-subscribe race: events emitted between the
+/// `agent.replay` snapshot and this subscribe may be lost (acceptable for
+/// `--follow`).
 async fn follow_live(
     agent_id: &str,
     no_output: bool,

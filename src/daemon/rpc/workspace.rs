@@ -95,7 +95,6 @@ pub(super) async fn handle_memory_put(
     if validate_memory_key(&params.key).is_err() {
         return rpc_err(req.id, "invalid_memory_key");
     }
-    // Workspace must exist and be Active.
     let ws = try_rpc!(resolve_workspace(req.id, db, &params.workspace_id).await);
     if ws.state != crate::shared::types::WorkspaceState::Active {
         return rpc_err(req.id, "workspace_destroying");
@@ -116,9 +115,8 @@ pub(super) async fn handle_memory_put(
     let bus_clone = bus.clone();
     let expected = params.expected_version;
     let total_cap = cfg.daemon.workspace_total_cap_bytes;
-    // One trip: total-cap pre-check + CAS write + memory-topic fanout
-    // (which itself does mail-batch inserts). Bus emission for MemoryWritten
-    // stays on the caller side so the success branch is clean.
+    // One trip: total-cap pre-check + CAS write + memory-topic fanout.
+    // MemoryWritten emission stays caller-side to keep the success branch clean.
     let outcome: Result<MemoryWriteOutcome, RpcResponse> = db
         .run(move |db| {
             let total = db

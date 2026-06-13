@@ -10,8 +10,8 @@ pub async fn run(id: &str, tail: Option<usize>) -> Result<()> {
 
     let params = serde_json::json!({ "id": id, "tail": tail });
 
-    // Same load-or-fall-through pattern as `client.rs`: peercred-trusted
-    // UDS connections work without a token, so a missing file isn't fatal.
+    // peercred-trusted UDS connections work without a token, so a missing
+    // token file isn't fatal (same pattern as `client.rs`).
     let auth_token = crate::shared::auth::load_for_client()
         .ok()
         .map(|t| t.as_str().to_string());
@@ -43,8 +43,7 @@ pub async fn run(id: &str, tail: Option<usize>) -> Result<()> {
                     if stream == "stderr" {
                         eprintln!("{}", line.dimmed());
                     } else if let Some(formatted) = stream_formatter::format_stream_json(&line) {
-                        // Suppress any line that the formatter declines
-                        // (rate_limit notices, internal events, etc.)
+                        // Formatter returns None to suppress noise (rate-limit notices, internal events).
                         println!("{formatted}");
                     }
                 }

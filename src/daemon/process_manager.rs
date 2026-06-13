@@ -25,21 +25,17 @@ pub struct MonitorResult {
     pub exit_code: Option<i32>,
     pub session_id: Option<String>,
     pub error_reason: Option<String>,
-    /// Tokens consumed by this run, when the provider reports usage. `None`
-    /// for providers that don't (the agent is then unbillable against
-    /// `SandboxConfig.token_budget`).
+    /// Run token total when the provider reports usage; `None` makes the agent
+    /// unbillable against `SandboxConfig.token_budget`.
     pub tokens_used: Option<u64>,
-    /// Per-bucket breakdown used to attribute USD spend through
-    /// `[providers.<name>.pricing]`. `None` for providers that only report
-    /// a total. Budgets then attribute the total at `input_per_mtok`.
+    /// Per-bucket breakdown for USD attribution; `None` when the provider only
+    /// reports a total (budgets then bill the total at `input_per_mtok`).
     pub token_breakdown: Option<super::provider::TokenBreakdown>,
 }
 
 impl Default for MonitorResult {
-    /// `Failed` with no exit code is the "no information" baseline used by
-    /// every fabricated/error-path `MonitorResult` in this codebase. Tests
-    /// override one or two fields with `..Default::default()` so new
-    /// fields don't ripple through every init site.
+    /// `Failed` with no exit code is the "no information" baseline for every
+    /// error-path `MonitorResult`; tests override individual fields.
     fn default() -> Self {
         Self {
             state: AgentState::Failed,
@@ -83,8 +79,7 @@ pub struct ConsumedRun {
     pub stdout_lines: Vec<String>,
 }
 
-/// Persist a single output line as an `AgentEvent` row. Shared between the
-/// local consume_lines path and the future RemoteExecutor.
+/// Persist one output line as an `AgentEvent` row.
 pub fn persist_event(db: &Database, agent_id: &str, source: LineSource, line: &str) -> Result<()> {
     let event = AgentEvent {
         id: None,
@@ -96,8 +91,7 @@ pub fn persist_event(db: &Database, agent_id: &str, source: LineSource, line: &s
     db.insert_event(&event).map(|_| ())
 }
 
-/// Publish a single output line as a `StreamEvent::Output`. Shared between the
-/// local consume_lines path and the future RemoteExecutor.
+/// Publish one output line as a `StreamEvent::Output`.
 pub fn publish_output(event_bus: &EventBus, agent_id: &str, source: LineSource, line: &str) {
     event_bus.publish(StreamEvent::Output {
         agent_id: agent_id.to_string(),
@@ -235,9 +229,7 @@ pub fn kill_process(pid: u32) -> Result<()> {
     Ok(())
 }
 
-/// Non-destructive liveness check: signal 0 returns Ok iff the pid exists
-/// and we have permission to send to it. Used by the dashboard's
-/// "Processes" panel to flag agents whose recorded PID has gone away.
+/// Liveness check via signal 0: Ok iff the pid exists and is signalable.
 #[must_use]
 pub fn process_alive(pid: u32) -> bool {
     use nix::sys::signal::kill;

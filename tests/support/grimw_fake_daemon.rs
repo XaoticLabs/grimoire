@@ -1,8 +1,7 @@
 #![allow(unreachable_pub)] // shared via `mod support` in each test crate; pub is load-bearing
-// Test-only helper. Spins a tonic gRPC server implementing the WorkerControl
-// service against `127.0.0.1:0`, captures the worker's bidi stream, and
-// exposes a queue of received `WorkerMessage`s plus a sender for outbound
-// `DaemonMessage`s. Used by `tests/grimw_integration.rs`.
+// Test-only WorkerControl gRPC server on `127.0.0.1:0`: captures the worker's
+// bidi stream into a queue of `WorkerMessage`s and exposes a `DaemonMessage`
+// sender. Used by `tests/grimw_integration.rs`.
 
 use std::path::PathBuf;
 use std::pin::Pin;
@@ -43,14 +42,14 @@ impl WorkerControl for Service {
         let received = self.received.clone();
         let to_worker_rx = self.to_worker_rx.lock().await.take();
 
-        // Reader task: stuff every WorkerMessage we get into `received`.
+        // reader: push every inbound WorkerMessage into `received`
         tokio::spawn(async move {
             while let Ok(Some(msg)) = inbound.message().await {
                 received.lock().await.push(msg);
             }
         });
 
-        // Writer stream: forward DaemonMessages from the channel.
+        // writer: forward DaemonMessages from the channel
         let (tx, rx) = mpsc::channel::<Result<DaemonMessage, Status>>(64);
         if let Some(mut rx_in) = to_worker_rx {
             tokio::spawn(async move {
@@ -113,7 +112,7 @@ impl FakeDaemon {
                 .await;
         });
 
-        // Write a temp grimw.toml pinning the daemon cert + worker identity.
+        // grimw.toml pinning the daemon cert + worker identity
         let config_path = tempdir.path().join("grimw.toml");
         let toml = format!(
             r#"
@@ -137,8 +136,7 @@ version = "{version}"
         );
         std::fs::write(&config_path, toml).unwrap();
 
-        // Brief settle so the server is ready to accept.
-        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await; // let the server become ready
 
         Self {
             received,

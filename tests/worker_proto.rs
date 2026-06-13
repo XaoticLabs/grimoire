@@ -49,7 +49,6 @@ fn worker_proto_assign_task_optional_fields_default_to_none() {
         provider_name: "claude".to_string(),
         cwd: "/tmp".to_string(),
         env: std::collections::HashMap::new(),
-        // Both optional fields explicitly absent.
         model: None,
         optional_resume_session_id: None,
     };
@@ -69,9 +68,8 @@ const fn check_server_type<T>() {}
 
 #[test]
 fn worker_proto_compiles() {
-    // Type-only checks: each oneof variant exists; client and server stubs
-    // are reachable from the public surface. If this file compiles, the
-    // proto wiring satisfies the contract.
+    // Type-only checks: each oneof variant and the client/server stubs exist.
+    // Compiling is the assertion.
     let _: fn(_) -> WorkerMessage = |kind: worker_message::Kind| WorkerMessage { kind: Some(kind) };
     let _: fn(_) -> DaemonMessage = |kind: daemon_message::Kind| DaemonMessage { kind: Some(kind) };
 
@@ -91,11 +89,9 @@ fn worker_proto_compiles() {
     let _ = TaskState::Failed;
     let _ = TaskState::Banished;
 
-    // Reference the generated client/server stubs so the symbol is exercised.
     check_client_type::<WorkerControlClient<tonic::transport::Channel>>();
     check_server_type::<WorkerControlServer<()>>();
 
-    // OptionalModel was introduced as a sanity check that prost's `optional`
-    // field markers produce real `Option<T>` types (no oneof wrapper).
+    // confirms prost's `optional` markers produce real `Option<T>`, not a oneof wrapper
     let _: Option<OptionalModel> = None;
 }

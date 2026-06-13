@@ -31,9 +31,8 @@ impl_state_enum!(ScrollState {
 pub enum TaskState {
     Blocked,
     Ready,
-    /// HITL gate: the task is runnable (dependencies met) but held for a
-    /// human to approve before it spawns. Not terminal — the scroll stays
-    /// Active. Transitions to Ready on approval, Failed on rejection.
+    /// HITL gate: runnable but held for human approval before spawning. Not
+    /// terminal (scroll stays Active); → Ready on approval, Failed on rejection.
     AwaitingApproval,
     Active,
     Complete,
@@ -51,14 +50,12 @@ impl_state_enum!(TaskState {
     Skipped => "skipped",
 });
 
-/// HITL approval state for a task that carries an approval gate. Stored as
-/// a DB-only column on `tasks`; surfaced in scroll status and settled by
+/// HITL approval state, a DB-only column on `tasks`; settled by
 /// `scroll.approve` / `scroll.reject`.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum ApprovalState {
-    /// No decision pending: either the task has no gate, or it has not yet
-    /// reached the gate.
+    /// No gate, or the gate hasn't been reached yet.
     #[default]
     None,
     /// Held, waiting for a human decision.
@@ -100,26 +97,22 @@ pub struct Task {
     pub order_index: u32,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
-    /// When set, the scroll coordinator dispatches this task to the
-    /// named peer instead of spawning a local agent. The receiver
-    /// queues a local agent and federates lifecycle back; the
-    /// coordinator's `agent_id` is set to the receiver's local id once
-    /// the dispatch ack arrives.
+    /// Dispatch to this peer instead of spawning locally. The receiver queues
+    /// a local agent and federates lifecycle back; `agent_id` is set to the
+    /// receiver's local id once the dispatch ack arrives.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub peer_name: Option<String>,
-    /// Verification gate: when set, the worker's completion does not
-    /// finish the task. Instead an evaluator agent scores the worker's
-    /// transcript against this rubric, and the task completes only if
-    /// the score clears `verify_threshold`.
+    /// Verification gate: when set, worker completion doesn't finish the task;
+    /// an evaluator scores the transcript against this rubric and the task
+    /// completes only if the score clears `verify_threshold`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub verify_rubric: Option<String>,
-    /// Minimum evaluator score (0.0–1.0) required for a verified task
-    /// to count as complete. `None` means the keeper's default (0.7).
+    /// Min evaluator score (0.0–1.0) for a verified task to complete. `None` =
+    /// keeper's default (0.7).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub verify_threshold: Option<f64>,
-    /// The evaluator agent currently scoring (or having scored) this
-    /// task's worker transcript. Set when verification is summoned so
-    /// the keeper can route the evaluator's completion back here.
+    /// Evaluator agent scoring this task's transcript; set when verification
+    /// is summoned so the keeper can route its completion back here.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub verifier_agent_id: Option<AgentId>,
 }
@@ -170,7 +163,6 @@ mod tests {
 
     #[test]
     fn state_enum_roundtrips() {
-        // AgentState
         for (s, expected) in [
             ("queued", AgentState::Queued),
             ("summoning", AgentState::Summoning),
@@ -184,7 +176,6 @@ mod tests {
             assert_eq!(parsed.to_string(), s);
         }
 
-        // PactState
         for (s, expected) in [
             ("pending", PactState::Pending),
             ("fired", PactState::Fired),
@@ -195,7 +186,6 @@ mod tests {
             assert_eq!(parsed.to_string(), s);
         }
 
-        // ScrollState
         for (s, expected) in [
             ("inscribed", ScrollState::Inscribed),
             ("active", ScrollState::Active),
@@ -208,7 +198,6 @@ mod tests {
             assert_eq!(parsed.to_string(), s);
         }
 
-        // TaskState
         for (s, expected) in [
             ("blocked", TaskState::Blocked),
             ("ready", TaskState::Ready),
@@ -223,7 +212,6 @@ mod tests {
             assert_eq!(parsed.to_string(), s);
         }
 
-        // ApprovalState
         for (s, expected) in [
             ("none", ApprovalState::None),
             ("pending", ApprovalState::Pending),

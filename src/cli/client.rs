@@ -12,8 +12,7 @@ static REQ_ID: AtomicU64 = AtomicU64::new(1);
 pub struct DaemonClient {
     reader: BufReader<tokio::net::unix::OwnedReadHalf>,
     writer: tokio::net::unix::OwnedWriteHalf,
-    /// Cached at connect time. `None` means we couldn't load a token, but
-    /// peercred trust may still let us through; the daemon decides.
+    /// `None` if no token loaded; peercred trust may still authorize us.
     auth_token: Option<String>,
 }
 
@@ -27,11 +26,8 @@ impl DaemonClient {
             )
         })?;
 
-        // Best-effort token load. UDS connections from the daemon's own UID
-        // get a peercred bypass server-side, so we don't bail here if the
-        // token file is missing (that case is the dev's first run before
-        // the daemon has created it). Cross-UID calls without a token will
-        // get a clean "unauthenticated" back from the daemon.
+        // Best-effort: same-UID UDS connections get a peercred bypass server-side,
+        // so a missing token is fine; cross-UID calls without one get "unauthenticated".
         let auth_token = auth::load_for_client().ok().map(|t| t.as_str().to_string());
 
         let (reader, writer) = stream.into_split();
@@ -43,11 +39,7 @@ impl DaemonClient {
     }
 
     /// Send `method` with `params` and decode the OK payload as `T`.
-    ///
-    /// Bails out cleanly on transport errors, on RPC `error` responses, on
-    /// an unexpectedly empty `result` field, and on JSON-decoding failures.
-    /// All four error paths carry the method name for grep-ability, so a
-    /// stack trace from production should pinpoint which RPC misbehaved.
+    /// Every error path carries the method name for grep-ability.
     pub async fn call_typed<T: serde::de::DeserializeOwned>(
         &mut self,
         method: &str,
@@ -89,8 +81,7 @@ impl DaemonClient {
     }
 }
 
-/// Resolve a short ID prefix to a full agent ID.
-/// Queries the daemon for all agents and finds the unique match.
+/// Resolve a short ID prefix to a unique full agent ID.
 pub async fn resolve_agent_id(prefix: &str) -> Result<String> {
     let mut client = DaemonClient::connect().await?;
     let response = client.call("agent.circle", serde_json::json!({})).await?;

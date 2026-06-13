@@ -1,21 +1,17 @@
 //! Rubric-scored evaluation primitives shared by `grim eval` and the
 //! daemon's verification-gated scroll tasks.
 //!
-//! Both consumers must speak the same contract: the evaluator agent is
-//! prompted with [`build_eval_prompt`] (rubric + folded transcript + the
-//! `{"score": ...}` JSON output spec) and its reply is decoded with
-//! [`parse_verdict`]. Keep prompt and parser in lock-step — changing the
-//! output spec here changes what every evaluator is asked to emit.
+//! The evaluator is prompted with [`build_eval_prompt`] (rubric + folded
+//! transcript + `{"score": ...}` output spec); its reply is decoded with
+//! [`parse_verdict`]. Keep prompt and parser in lock-step.
 
 use anyhow::{Context, Result, anyhow};
 
 use super::protocol::StreamEvent;
 
-/// Maximum bytes of folded transcript we send to the evaluator. Tail-keep
-/// the most recent output (latest behavior dominates most rubric calls) and
-/// mark the truncation explicitly so the evaluator can choose to weight or
-/// caveat its score. Mirrors `fork`'s fold cap deliberately: anywhere the
-/// daemon reasons about an agent's "context", 16 KiB is the line.
+/// Max bytes of folded transcript sent to the evaluator. Tail-keeps the most
+/// recent output and marks truncation explicitly. Deliberately mirrors `fork`'s
+/// fold cap: 16 KiB is the line anywhere the daemon reasons about agent context.
 pub const MAX_FOLDED_TRANSCRIPT: usize = 16 * 1024;
 
 /// One rubric-scored verdict as emitted by an evaluator agent.
@@ -31,10 +27,9 @@ pub struct EvalVerdict {
     pub rationale: Option<String>,
 }
 
-/// Build the prompt sent to the evaluator agent. Inputs are intentionally
-/// concatenated rather than templated through a schema so the rubric author
-/// can put anything they want in the rubric file, including stricter
-/// JSON-output instructions that override the default suggestion.
+/// Build the evaluator prompt. Inputs are concatenated, not schema-templated,
+/// so the rubric author can include anything — including JSON-output
+/// instructions that override the default suggestion.
 pub fn build_eval_prompt(target_id: &str, max_seq: i64, rubric: &str, transcript: &str) -> String {
     let (transcript_block, note) = if transcript.len() > MAX_FOLDED_TRANSCRIPT {
         let start = transcript.len() - MAX_FOLDED_TRANSCRIPT;
@@ -64,10 +59,9 @@ pub fn build_eval_prompt(target_id: &str, max_seq: i64, rubric: &str, transcript
     )
 }
 
-/// Pull the score JSON out of the evaluator's free-form reply. We accept
-/// either a bare JSON object (the strict path requested by the prompt) or
-/// a JSON object embedded anywhere in the result, because agents reliably drift
-/// from "JSON only" and rejecting that drift would make eval brittle.
+/// Pull the score JSON from the evaluator's reply, accepting a bare object or
+/// one embedded anywhere — agents reliably drift from "JSON only" and rejecting
+/// that drift would make eval brittle.
 pub fn parse_verdict(text: &str) -> Result<EvalVerdict> {
     if let Ok(v) = serde_json::from_str::<EvalVerdict>(text.trim()) {
         return Ok(v);
@@ -85,10 +79,8 @@ pub fn parse_verdict(text: &str) -> Result<EvalVerdict> {
         .with_context(|| "parsing evaluator score JSON")
 }
 
-/// Fold a sequence of stream events into the transcript text sent to an
-/// evaluator: stdout `Output` lines concatenated in order, everything else
-/// dropped. Shared by the CLI (which walks `ReplayEntry` items) and the
-/// daemon (which walks `StoredEvent` rows); both carry a `StreamEvent`.
+/// Fold stream events into evaluator transcript text: stdout `Output` lines
+/// concatenated in order, everything else dropped. Shared by CLI and daemon.
 pub fn fold_stdout_output<'a, I>(events: I) -> String
 where
     I: IntoIterator<Item = &'a StreamEvent>,

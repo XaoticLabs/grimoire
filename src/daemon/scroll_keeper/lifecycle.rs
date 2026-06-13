@@ -10,7 +10,7 @@ use crate::daemon::scroll_parser::ScrollSpec;
 use super::{InscribeResult, ScrollKeeper, ScrollStatus, TaskStatus};
 
 impl ScrollKeeper {
-    /// Inscribe a scroll from a parsed spec
+    /// Inscribe a scroll from a parsed spec.
     pub fn inscribe(
         &self,
         spec: ScrollSpec,
@@ -32,7 +32,6 @@ impl ScrollKeeper {
 
         self.db.insert_scroll(&scroll)?;
 
-        // Create tasks and build name->id map
         let mut name_to_id: HashMap<String, String> = HashMap::new();
         let mut tasks = Vec::new();
 
@@ -92,7 +91,7 @@ impl ScrollKeeper {
         })
     }
 
-    /// Activate a scroll. Starts scheduling ready tasks.
+    /// Activate a scroll and start scheduling ready tasks.
     pub async fn activate(&self, scroll_id: &str) -> anyhow::Result<()> {
         let scroll = self
             .db
@@ -117,7 +116,7 @@ impl ScrollKeeper {
         Ok(())
     }
 
-    /// Abandon a scroll. Banishes active agents and marks incomplete tasks as skipped.
+    /// Abandon a scroll: banish active agents, skip incomplete tasks.
     pub async fn abandon(&self, scroll_id: &str) -> anyhow::Result<()> {
         let tasks = self.db.get_tasks_for_scroll(scroll_id)?;
 
@@ -143,7 +142,7 @@ impl ScrollKeeper {
         Ok(())
     }
 
-    /// Get full status of a scroll
+    /// Full status snapshot of a scroll.
     pub fn status(&self, scroll_id: &str) -> anyhow::Result<ScrollStatus> {
         let scroll = self
             .db
@@ -197,7 +196,6 @@ impl ScrollKeeper {
             .filter(|r| r.state == TaskState::AwaitingApproval)
             .count();
 
-        // Detect conflicts among active + ready tasks
         let conflictable: Vec<Task> = tasks
             .iter()
             .filter(|r| r.state == TaskState::Active || r.state == TaskState::Ready)

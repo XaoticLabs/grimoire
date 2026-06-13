@@ -1,10 +1,7 @@
-//! File-watch wake source: arms a `notify::RecommendedWatcher` over the
-//! agent's cwd and fires (debounced) when a path under it matches the
-//! configured glob set and is not in the ignore set.
-//!
-//! The bridge from `notify`'s sync callback into the registry's tokio
-//! runtime is a bounded `tokio::sync::mpsc::Sender`. The watcher thread
-//! pushes events, a debounce task drains them.
+//! File-watch wake source: arms a `notify::RecommendedWatcher` over the agent's
+//! cwd and fires (debounced) on a path matching the glob set but not the ignore
+//! set. The watcher's sync callback bridges into tokio via a bounded mpsc
+//! `Sender`, drained by a debounce task.
 
 use anyhow::{Result, anyhow};
 use globset::{Glob, GlobSet, GlobSetBuilder};
@@ -49,8 +46,7 @@ impl FileWatchSource {
     }
 
     pub fn matches(&self, path: &Path) -> bool {
-        // Strip root prefix if present so globs are interpreted relative to
-        // the watched root.
+        // Globs are interpreted relative to the watched root.
         let Ok(relative) = path.strip_prefix(&self.root_canonical) else {
             return false;
         };
@@ -60,9 +56,8 @@ impl FileWatchSource {
         self.include_set.is_match(relative)
     }
 
-    /// Spawn a `notify` watcher (blocking, on its own thread) that pushes
-    /// `MatchedChange` events through the supplied tokio Sender. Returns
-    /// the watcher; dropping it stops the watch.
+    /// Spawn a `notify` watcher that pushes `MatchedChange` through `tx`.
+    /// Dropping the returned watcher stops the watch.
     pub fn arm(
         self: Arc<Self>,
         tx: tokio::sync::mpsc::Sender<MatchedChange>,

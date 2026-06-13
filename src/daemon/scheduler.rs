@@ -1,16 +1,9 @@
 //! Daemon-owned scheduler that promotes `Queued` agents to `Active` while
-//! global capacity allows and an eligible worker exists. The scheduler is the
-//! single caller of the dispatch path; `agent_manager::enqueue` only inserts
-//! work, the scheduler decides when it actually starts.
+//! global capacity allows and an eligible worker exists. It is the single
+//! caller of the dispatch path; `agent_manager::enqueue` only inserts work.
 //!
-//! The reactor wakes on:
-//!   * `StateChange` events whose `new_state` is terminal (slot freed),
-//!   * `AgentQueued` events (new work arrived),
-//!   * `WorkerRegistered` events (a previously-blocked task may now fit),
-//!   * a 100ms periodic tick (safety net for any signal we missed).
-//!
-//! Tests drive the scheduler via [`Scheduler::tick_now`] without spawning the
-//! background task. See `tests/scheduler.rs`.
+//! The reactor wakes on terminal `StateChange` (slot freed), `AgentQueued`,
+//! `WorkerRegistered`, and a 100ms periodic tick as a missed-signal safety net.
 
 use std::collections::HashSet;
 use std::fmt::Write as _;
@@ -31,35 +24,29 @@ use crate::daemon::worker_registry::WorkerRegistry;
 use crate::shared::protocol::StreamEvent;
 use crate::shared::types::{AgentState, MailState};
 
-/// Maximum bytes for the folded wake prompt. Single mail bodies up to 64 KiB
-/// are accepted by `mail.send`; the wake-fold cap is intentionally tighter so
+/// Folded wake-prompt cap. Tighter than `mail.send`'s 64 KiB body limit so
 /// resume prompts stay manageable.
 const WAKE_FOLD_MAX_BYTES: usize = 16_384;
 
 const TICK_INTERVAL: Duration = Duration::from_millis(100);
 
-/// Seam for the scheduler to call back into `AgentManager::dispatch_internal`.
-/// Tests substitute a fake.
+/// Seam onto `AgentManager::dispatch_internal`.
 #[async_trait]
 pub trait Dispatcher: Send + Sync {
     async fn dispatch(&self, row: QueueRow) -> Result<()>;
 }
 
-/// Seam for the scheduler to wake a `Complete` agent on incoming mail.
-/// The implementation calls `AgentManager::invoke()`; tests substitute a
-/// recording fake.
+/// Seam to wake an agent on incoming mail (wired to `AgentManager::invoke()`).
 #[async_trait]
 pub trait MailWaker: Send + Sync {
     async fn wake(&self, agent_id: &str, prompt: &str) -> Result<()>;
 }
 
 /// Get-only access to an agent's runtime state for the mail-wake check.
-/// Tests can substitute a fake; production wires this to the database.
 pub trait AgentStateLookup: Send + Sync {
     fn get_state_and_session(&self, id: &str) -> Result<Option<(AgentState, Option<String>)>>;
 }
 
-/// Default implementation backed by the database.
 pub struct DbStateLookup {
     pub db: Arc<Database>,
 }
@@ -70,9 +57,8 @@ impl AgentStateLookup for DbStateLookup {
     }
 }
 
-/// The scheduler. Construct via [`Scheduler::new`], then either drive ticks
-/// manually with [`Scheduler::tick_now`] (tests) or spawn the background
-/// reactor via [`Scheduler::spawn`] (daemon boot).
+/// Drive ticks manually with [`Scheduler::tick_now`] (tests) or spawn the
+/// background reactor via [`Scheduler::spawn`] (daemon boot).
 pub struct Scheduler {
     db: Arc<Database>,
     workers: Arc<WorkerRegistry>,
@@ -84,9 +70,8 @@ pub struct Scheduler {
     state_lookup: Option<Arc<dyn AgentStateLookup>>,
     supervisor: Option<Arc<Supervisor>>,
     restart_dispatcher: Option<Arc<dyn RestartDispatcher>>,
-    /// Providers the daemon's own `LocalExecutor` can run. The eligibility
-    /// check waives the "must have a remote worker" requirement for these,
-    /// so a local-only daemon (no federated workers) can dispatch.
+    /// Providers the in-process `LocalExecutor` runs; eligibility waives the
+    /// "must have a remote worker" requirement for these.
     local_providers: HashSet<String>,
 }
 
@@ -113,11 +98,8 @@ impl Scheduler {
         }
     }
 
-    /// Declare providers handled by the daemon's in-process `LocalExecutor`.
-    /// Dispatch for these will not be gated on a registered remote worker.
-    /// When the local executor and a matching remote worker both exist, the
-    /// dispatcher (AgentManager) currently routes locally; federated
-    /// placement is a separate concern owned by the executor layer.
+    /// Declare providers handled by the in-process `LocalExecutor`; dispatch
+    /// for these is not gated on a registered remote worker.
     #[must_use]
     pub fn with_local_providers<I, S>(mut self, providers: I) -> Self
     where
@@ -128,9 +110,8 @@ impl Scheduler {
         self
     }
 
-    /// Wire mail-wake. When both a waker and a state lookup are set, every
-    /// `tick_now()` call inspects pending wake-eligible mail and invokes the
-    /// recipient (if Complete with a session_id) up to the global cap.
+    /// Wire mail-wake: each tick invokes recipients of pending wake-eligible
+    /// mail (Dormant + session_id) up to the global cap.
     #[must_use]
     pub fn with_mail_wake(
         mut self,
@@ -142,8 +123,8 @@ impl Scheduler {
         self
     }
 
-    /// Wire the supervisor + restart dispatcher. When set, every `tick_now()`
-    /// pulls due restarts from the supervisor's pending heap.
+    /// Wire supervision: each tick pulls due restarts from the supervisor's
+    /// pending heap.
     #[must_use]
     pub fn with_supervision(
         mut self,
@@ -155,9 +136,9 @@ impl Scheduler {
         self
     }
 
-    /// Run one full tick: dispatch as many queued rows as capacity and
-    /// eligibility allow, then return. Re-entrant calls serialize via an
-    /// internal mutex so two wake-up signals can't interleave their claims.
+    /// Dispatch as many queued rows as capacity and eligibility allow.
+    /// Re-entrant calls serialize via a mutex so concurrent wake-up signals
+    /// can't interleave their claims.
     #[tracing::instrument(name = "scheduler.tick", skip(self))]
     pub async fn tick_now(&self) -> Result<()> {
         let _guard = self.tick_lock.lock().await;
@@ -169,29 +150,26 @@ impl Scheduler {
             return Ok(());
         }
 
-        // Mail-wake branch runs before the queue dispatch loop so a wake
-        // and a queued dispatch can't race for the same slot.
+        // Mail-wake runs before queue dispatch so a wake and a queued dispatch
+        // can't race for the same slot.
         in_flight = self.tick_mail_wake(in_flight, cap).await?;
         if in_flight >= cap {
             return Ok(());
         }
 
-        // Supervision branch: drain due pending restarts.
         in_flight = self.tick_supervision(in_flight, cap).await?;
         if in_flight >= cap {
             return Ok(());
         }
 
-        // We iterate `list_queue()` (already in dispatch order) rather than
-        // calling `peek_next_dispatch()` repeatedly so we can skip rows that
-        // have no eligible worker without losing place in the line.
+        // `list_queue()` is already in dispatch order; iterating it lets us
+        // skip ineligible rows without losing place in line.
         let rows = self.db.list_queue()?;
 
         for row in rows {
             if in_flight >= cap {
-                // Mark the rest as capacity-blocked for visibility in
-                // `grim queue`. Cosmetic; scheduler will revisit them on
-                // the next signal.
+                // Mark the rest capacity-blocked for `grim queue` visibility;
+                // cosmetic, revisited on next signal.
                 if row.block_reason.as_deref() != Some("capacity")
                     && let Err(e) = self.db.set_block_reason(&row.id, Some("capacity"))
                 {
@@ -200,11 +178,9 @@ impl Scheduler {
                 continue;
             }
 
-            // Eligibility peek: provider_name=None means "any worker"; skip
-            // the check entirely and let dispatch_internal pick. When set,
-            // require at least one registered worker that advertises it,
-            // OR that the provider is listed in `local_providers` (the
-            // daemon's in-process LocalExecutor handles it).
+            // Eligibility peek: provider_name=None means "any worker" (let
+            // dispatch_internal pick). When set, require a worker advertising
+            // it or a matching local_providers entry.
             if let Some(provider) = row.provider_name.as_deref()
                 && !self.local_providers.contains(provider)
                 && !self
@@ -221,9 +197,8 @@ impl Scheduler {
                 continue;
             }
 
-            // Atomically claim: deletes the queue row and flips agents.state
-            // to `summoning` in one transaction. `false` means someone else
-            // already claimed (e.g., banish raced us).
+            // Atomic claim: deletes the queue row and flips state to
+            // `summoning` in one txn. `false` means someone else claimed first.
             match self.db.claim_for_dispatch(&row.id) {
                 Ok(true) => {}
                 Ok(false) => {
@@ -236,12 +211,8 @@ impl Scheduler {
                 }
             }
 
-            // Hand off to dispatcher. We pass the row by value (the caller no
-            // longer owns it after the claim succeeded; the queue row is
-            // gone). On success the dispatcher is responsible for moving the
-            // agent through `Summoning -> Active`. On failure we requeue with
-            // the original `enqueued_at` so fairness is preserved, then break
-            // to avoid a tight failure loop on this tick.
+            // On failure, requeue with the original `enqueued_at` to preserve
+            // fairness, then break to avoid a tight failure loop this tick.
             match self.dispatcher.dispatch(row.clone()).await {
                 Ok(()) => {
                     in_flight += 1;
@@ -261,18 +232,15 @@ impl Scheduler {
         Ok(())
     }
 
-    /// Spawn the background reactor: subscribe to the event bus, also wake
-    /// every 100ms as a safety net, and call `tick_now()` on each signal.
-    /// The returned handle owns the task; dropping the handle aborts it.
+    /// Spawn the background reactor: tick on each bus signal plus a 100ms
+    /// safety-net interval. Dropping the returned handle aborts the task.
     pub fn spawn(self: Arc<Self>) -> SchedulerHandle {
         let mut rx = self.bus.subscribe();
         let sched = self;
         let handle = tokio::spawn(async move {
             let mut interval = tokio::time::interval(TICK_INTERVAL);
-            // Skip the immediate fire so a quiet boot doesn't spin a tick
-            // before the daemon has anything queued.
             interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-            interval.tick().await;
+            interval.tick().await; // consume the immediate fire
 
             loop {
                 tokio::select! {
@@ -317,8 +285,8 @@ impl Scheduler {
         }
     }
 
-    /// Drain due pending restarts and dispatch them under the cap. Returns
-    /// the updated in-flight count.
+    /// Drain due restarts and dispatch them under the cap. Returns the
+    /// updated in-flight count.
     async fn tick_supervision(&self, mut in_flight: usize, cap: usize) -> Result<usize> {
         let (Some(sup), Some(dispatcher)) = (&self.supervisor, &self.restart_dispatcher) else {
             return Ok(in_flight);
@@ -364,10 +332,9 @@ impl Scheduler {
             let Some(state_session) = lookup.get_state_and_session(&agent_id)? else {
                 continue;
             };
-            // Only Dormant agents with a session_id can be woken. Complete
-            // is the truly-finished state and is no longer a wake candidate;
-            // boot-time migration promotes Complete-with-session agents to
-            // Dormant so existing DBs continue to behave the same way.
+            // Only Dormant agents with a session_id are wakeable; Complete is
+            // truly-finished. (Boot migration promotes Complete-with-session
+            // agents to Dormant.)
             if state_session.0 != AgentState::Dormant {
                 continue;
             }
@@ -410,14 +377,10 @@ impl Scheduler {
     }
 }
 
-/// Fold a list of pending mail rows into a single resume prompt.
-/// Bodies are joined with `\n\n---\n\n` and the result is truncated at
-/// `WAKE_FOLD_MAX_BYTES` bytes; if any messages are dropped, a
-/// `[... N more messages truncated]` note is appended.
-///
-/// Returns (prompt, folded_mail_ids) where `folded_mail_ids` is the list of
-/// mail rows that contributed. Any partially truncated message still counts
-/// as folded, so it doesn't block forever.
+/// Fold pending mail into one resume prompt: bodies joined with `\n\n---\n\n`,
+/// truncated at `WAKE_FOLD_MAX_BYTES` with a `[... N more truncated]` note.
+/// Returns (prompt, folded_mail_ids). A partially-truncated message still
+/// counts as folded so it can't block forever.
 pub fn build_wake_prompt(mails: &[crate::shared::types::Mail]) -> (String, Vec<String>) {
     const SEP: &str = "\n\n---\n\n";
     let mut buf = String::new();
@@ -431,9 +394,8 @@ pub fn build_wake_prompt(mails: &[crate::shared::types::Mail]) -> (String, Vec<S
             format!("{}{}", SEP, m.body)
         };
         if buf.len() + candidate.len() > WAKE_FOLD_MAX_BYTES {
-            // The remaining messages (this one and the rest) won't fit in
-            // full. If `buf` is still empty, accept a single oversized
-            // message in truncated form so we don't deadlock.
+            // If `buf` is empty, accept a single oversized message truncated
+            // so we don't deadlock.
             if buf.is_empty() {
                 let take_chars = m.body.chars().count().min(WAKE_FOLD_MAX_BYTES / 4);
                 buf.push_str(&m.body.chars().take(take_chars).collect::<String>());

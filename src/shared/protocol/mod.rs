@@ -1,8 +1,7 @@
 #![allow(missing_docs)] // RPC wire types; one-line docs per message pending.
 
 //! JSON-RPC wire types shared between the CLI and the daemon, split by domain.
-//! Every type is re-exported flat, so callers keep using `protocol::Foo`
-//! regardless of which submodule it lives in.
+//! Every type is re-exported flat, so callers use `protocol::Foo` regardless of submodule.
 
 mod agent;
 mod envelope;

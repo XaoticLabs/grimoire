@@ -12,10 +12,8 @@ use super::AppState;
 
 const AUTH_COOKIE_NAME: &str = "grim_auth";
 
-// --- HTTP auth middleware + login flow ---
-
-/// Extract the auth token from the request. Order of precedence matches the
-/// CLI: `Authorization: Bearer …` header, then `grim_auth` cookie.
+/// Extract the auth token: `Authorization: Bearer …` header, then `grim_auth`
+/// cookie (precedence matches the CLI).
 fn extract_request_token(headers: &axum::http::HeaderMap) -> Option<String> {
     if let Some(h) = headers.get(axum::http::header::AUTHORIZATION)
         && let Ok(s) = h.to_str()
@@ -48,11 +46,8 @@ pub(super) async fn http_auth_middleware(
     }
 }
 
-/// Test-only helper: build a tiny router that wraps a single protected
-/// route with the same auth middleware shape `/api/*` uses in production.
-/// Exposed via `#[cfg(any(test, feature = "test-helpers"))]` so the HTTP
-/// auth integration tests can hit the middleware without dragging in the
-/// rest of `AppState`.
+/// Test-only router wrapping one protected route with the production auth
+/// middleware, so tests can exercise it without the rest of `AppState`.
 #[cfg(test)]
 pub(super) fn test_auth_router(token: Arc<AuthToken>) -> axum::Router {
     use axum::Router;
@@ -71,9 +66,7 @@ pub(super) fn test_auth_router(token: Arc<AuthToken>) -> axum::Router {
     Router::new().merge(protected).merge(public)
 }
 
-/// 401 with a small JSON body for `/api/*` and an HTML pointer to
-/// `/auth/login` for everything else. Either way the body is constant;
-/// the auth check is constant-time on its hot path.
+/// 401: JSON body for `/api/*`, the login page HTML for everything else.
 fn unauthorized_response(path: &str) -> axum::response::Response {
     use axum::http::StatusCode;
     if path.starts_with("/api/") {
@@ -93,10 +86,8 @@ fn unauthorized_response(path: &str) -> axum::response::Response {
     }
 }
 
-/// `GET /auth/login`. Also accepts `?t=<token>` so `grim dashboard --open`
-/// can produce a single-shot URL the user clicks once. If `?t=` validates,
-/// we set the cookie and redirect to `/`; otherwise we render the login
-/// form and let the user paste the token by hand.
+/// `GET /auth/login`. A valid `?t=<token>` (from `grim dashboard --open`) sets
+/// the cookie and redirects to `/`; otherwise renders the login form.
 pub(super) async fn http_login_get(
     axum::extract::State(state): axum::extract::State<AppState>,
     axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
@@ -152,8 +143,8 @@ pub(super) struct LoginForm {
 }
 
 fn login_success_response(token: &str) -> axum::response::Response {
-    // HttpOnly + SameSite=Strict: no JS access, no cross-site CSRF.
-    // No `Secure` flag because the daemon listens on plain HTTP loopback.
+    // HttpOnly + SameSite=Strict: no JS access, no cross-site CSRF. No `Secure`
+    // because the daemon listens on plain HTTP loopback.
     let cookie =
         format!("{AUTH_COOKIE_NAME}={token}; Path=/; HttpOnly; SameSite=Strict; Max-Age=86400");
     (

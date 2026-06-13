@@ -1,5 +1,4 @@
-//! Integration tests for the persistence layer, spanning agents, scrolls,
-//! tasks, pacts and the durable event stream.
+//! Integration tests for the persistence layer.
 
 use super::*;
 use crate::shared::types::*;

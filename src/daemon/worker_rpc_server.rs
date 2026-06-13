@@ -15,8 +15,7 @@ use crate::shared::worker_proto::{
 
 use super::worker_registry::{RegisterParams, WorkerRegistry, worker_version_meets_minimum};
 
-/// Tight-loop yield while waiting for the worker registry to observe a
-/// just-registered worker before serving its first message stream.
+/// Settle delay so the registry observes a just-registered worker.
 const REGISTRY_SETTLE_YIELD: Duration = Duration::from_millis(50);
 
 /// Routes inbound TaskEvent/TaskFinished/TaskAccepted/TaskRejected back to a
@@ -34,8 +33,7 @@ impl WorkerControl for WorkerControlService {
     type ChannelStream =
         Pin<Box<dyn Stream<Item = Result<DaemonMessage, Status>> + Send + 'static>>;
 
-    // `tonic::Status` is large but the trait fixes the Err type; boxing here would
-    // change the API generated from the proto definition.
+    // Err type is fixed by the generated trait; the large `Status` can't be boxed.
     #[allow(clippy::result_large_err)]
     async fn channel(
         &self,
@@ -133,10 +131,8 @@ impl WorkerControl for WorkerControlService {
 }
 
 impl WorkerControlService {
-    /// Construct the service. `routing` is shared with the (future)
-    /// `RemoteExecutor` so task events reach the originating agent; the
-    /// register/heartbeat/eviction path that makes the transport live does
-    /// not depend on it.
+    /// `routing` is shared with `RemoteExecutor` to route task events back to
+    /// the originating agent; the register/heartbeat/eviction path is independent.
     pub const fn new(
         registry: Arc<WorkerRegistry>,
         bearer_secret: String,
@@ -250,7 +246,6 @@ pub mod test_helpers {
                 })
                 .await;
         });
-        // Brief settle.
         tokio::time::sleep(REGISTRY_SETTLE_YIELD).await;
         TestServerHandle {
             addr,

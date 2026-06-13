@@ -53,7 +53,7 @@ async fn placement_picks_remote_when_worker_available() {
     let remote_factory: Arc<
         dyn Fn(String) -> Arc<dyn grimoire::daemon::executor::Executor> + Send + Sync,
     > = Arc::new(|wid| {
-        // Construct a stub RemoteExecutor that records the worker id.
+        // stub RemoteExecutor records the worker id
         Arc::new(RemoteExecutor::stub_for_test(wid))
             as Arc<dyn grimoire::daemon::executor::Executor>
     });

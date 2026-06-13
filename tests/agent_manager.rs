@@ -171,11 +171,10 @@ async fn dispatch_drives_executor_exactly_once() {
         .await
         .unwrap();
 
-    // Mirror the scheduler's claim phase: fetch the row and atomically claim.
+    // Mirror the scheduler's claim phase before dispatching.
     let row = db.peek_next_dispatch().unwrap().expect("queue has the row");
     assert!(db.claim_for_dispatch(&row.id).unwrap());
 
-    // Dispatch via the public trait method.
     (manager.as_ref() as &dyn Dispatcher)
         .dispatch(row)
         .await
@@ -209,8 +208,8 @@ async fn dispatch_failure_returns_err_without_touching_queue() {
         .await;
     assert!(result.is_err(), "forced executor failure must propagate");
 
-    // dispatch_internal must NOT mutate queue/state on failure, that's the
-    // scheduler's job (it owns the requeue path so fairness is preserved).
+    // dispatch_internal must not mutate queue/state on failure; the scheduler owns
+    // the requeue path so fairness is preserved.
     assert_eq!(
         db.count_queued().unwrap(),
         0,
@@ -286,9 +285,8 @@ async fn banish_queued_sets_state_banished() {
 
 #[tokio::test]
 async fn banish_queued_does_not_invoke_kill() {
-    // For a Queued agent, no executor handle, no pid, and no cancel were
-    // registered, banish must take the queue-only path and never reach the
-    // process-kill code. Observable: executor was never called.
+    // A Queued agent has no handle/pid/cancel, so banish must take the queue-only
+    // path and never reach process-kill. Observable: the executor is never called.
     let (_, _, manager, log) = fresh_manager().await;
 
     let agent = manager
@@ -332,9 +330,8 @@ async fn invoke_queued_returns_error_with_clear_message() {
 
 #[tokio::test]
 async fn invoke_complete_unchanged() {
-    // Regression guard: invoke against a Dormant agent (with a real session)
-    // continues to drive the executor. The helper seeds Dormant, which is the
-    // state Complete-with-session agents land in after the boot migration.
+    // Regression guard: invoke against a Dormant agent (with a session) still drives
+    // the executor. Dormant is where Complete-with-session agents land post-migration.
     let (_, _, manager, log) = fresh_manager().await;
 
     let agent_id = manager
@@ -416,9 +413,6 @@ async fn invoke_context_replay_prepends_transcript_and_no_native_resume() {
 
 // --- summon symbol removal contract --------------------------------------
 
-// Compile-time guard: if `AgentManager::summon` is reintroduced, this test
-// will not break, but the spec's contract says it is removed. Runtime check:
-// build a manager and confirm the new `enqueue` API is the entry point.
 #[tokio::test]
 async fn enqueue_is_the_entry_point_not_summon() {
     let (_, _, manager, log) = fresh_manager().await;
@@ -428,8 +422,7 @@ async fn enqueue_is_the_entry_point_not_summon() {
         .await
         .unwrap();
 
-    // After enqueue alone (no scheduler tick), the executor must NOT have
-    // been called, proving enqueue is non-dispatching.
+    // Enqueue alone (no scheduler tick) must not call the executor.
     assert_eq!(
         log.calls.lock().unwrap().len(),
         0,

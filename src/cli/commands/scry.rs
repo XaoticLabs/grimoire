@@ -5,10 +5,8 @@ use crate::shared::auth;
 use crate::shared::constants;
 
 pub async fn run() -> Result<()> {
-    // Mint a one-shot login URL so the browser is auto-authenticated. The
-    // daemon validates `?t=…`, sets the `grim_auth` cookie, and redirects
-    // to `/`. If the token isn't loadable we fall back to the bare URL,
-    // and the user can paste the token into the login form.
+    // Mint a one-shot login URL (`?t=…`) so the browser auto-authenticates;
+    // fall back to the bare URL for manual token entry if the token won't load.
     let base = format!("http://127.0.0.1:{}", constants::DAEMON_PORT);
     let (url, authed) = match auth::load_for_client() {
         Ok(tok) => (format!("{}/auth/login?t={}", base, tok.as_str()), true),

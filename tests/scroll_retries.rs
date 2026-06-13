@@ -1,9 +1,6 @@
-//! Integration tests for task-level retries.
-//!
-//! A task marked `- retries: N` gets up to N re-spawns (a fresh agent each
-//! time) when its worker fails, before the task is marked failed for good.
-//! Driven through the keeper's event-bus completion path; the scheduler is
-//! not running, so re-spawns enqueue a new agent without dispatching it.
+//! Task-level retries: `- retries: N` gives up to N re-spawns (fresh agent
+//! each) on worker failure before the task fails for good. Driven through the
+//! keeper's event-bus path; no scheduler, so re-spawns enqueue without dispatch.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -58,7 +55,7 @@ async fn task_retries_then_fails_when_budget_exhausted() {
     keeper.activate(&scroll_id).await.unwrap();
     let a0 = db.get_task(&task.id).unwrap().unwrap().agent_id.unwrap();
 
-    // First failure → retry 1, fresh agent, still Active.
+    // first failure → retry 1, fresh agent, still Active
     let failed0 = fail_current_agent(&db, &bus, &task.id).await;
     assert_eq!(failed0, a0);
     let t1 = db.get_task(&task.id).unwrap().unwrap();
@@ -67,13 +64,13 @@ async fn task_retries_then_fails_when_budget_exhausted() {
     assert_ne!(a1, a0, "retry uses a fresh agent");
     assert_eq!(db.get_task_retry(&task.id).unwrap(), (2, 1));
 
-    // Second failure → retry 2.
+    // second failure → retry 2
     fail_current_agent(&db, &bus, &task.id).await;
     let t2 = db.get_task(&task.id).unwrap().unwrap();
     assert_eq!(t2.state, TaskState::Active);
     assert_eq!(db.get_task_retry(&task.id).unwrap(), (2, 2));
 
-    // Third failure → budget exhausted → task fails for good, scroll fails.
+    // third failure → budget exhausted → task and scroll fail
     fail_current_agent(&db, &bus, &task.id).await;
     let t3 = db.get_task(&task.id).unwrap().unwrap();
     assert_eq!(t3.state, TaskState::Failed);

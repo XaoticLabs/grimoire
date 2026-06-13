@@ -170,8 +170,7 @@ async fn summon_window_too_large_rejects() {
 
 #[tokio::test]
 async fn summon_self_escalation_rejects() {
-    // IDs are random, so true self-escalation can't be triggered deterministically
-    // here; that path is covered by integration testing. This exercises the
+    // Random IDs prevent deterministic self-escalation; this exercises the
     // `escalate_to` address-validation branch with an invalid-hex agent address.
     let resp = summon(json!({
         "task": "t",

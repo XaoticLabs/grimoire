@@ -109,7 +109,7 @@ async fn banish_cancels_pending_restart() {
 async fn banish_clears_supervision_config() {
     let db = Arc::new(Database::open_in_memory().unwrap());
     let bus = EventBus::new(db.clone());
-    // Use Restarting so banish_inner returns true and the cascade fires.
+    // Restarting so banish_inner returns true and the cascade fires
     seed(&db, "ban00003", AgentState::Restarting);
     db.set_supervision(
         "ban00003",
@@ -132,16 +132,13 @@ async fn banish_clears_supervision_config() {
 
 #[tokio::test]
 async fn banish_continues_when_supervisor_cancel_fails() {
-    // The cascade is fire-and-forget. We model "supervisor returning Err"
-    // by simply ensuring banish completes when no supervisor is wired and
-    // verify the state still flips. (A truly-failing supervisor is hard
-    // to inject without a fake; the cascade structure already logs warn.)
+    // Cascade is fire-and-forget; with no supervisor wired we just confirm
+    // banish completes. A truly-failing supervisor is hard to inject here.
     let db = Arc::new(Database::open_in_memory().unwrap());
     let bus = EventBus::new(db.clone());
     seed(&db, "ban00004", AgentState::Failed);
     let manager = AgentManager::new(db.clone(), bus.clone(), Config::default()).await;
-    // No supervisor wired, cascade no-ops.
     let ok = manager.banish("ban00004").await.unwrap();
-    // Failed agents are not banishable currently, so just confirm no crash.
+    // Failed agents aren't banishable currently; just confirm no crash.
     let _ = ok;
 }

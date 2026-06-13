@@ -78,9 +78,7 @@ fn migration_adds_supervision_columns() {
 
 #[test]
 fn migration_is_idempotent() {
-    // Calling open_in_memory creates the schema; opening another
-    // connection on the same path would re-run migrate. To exercise
-    // idempotency, simulate by opening a temp file twice.
+    // open the same file twice so migrate() runs a second time
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("g.db");
     {

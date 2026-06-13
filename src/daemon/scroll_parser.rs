@@ -1,9 +1,8 @@
-//! Markdown spec → ScrollSpec parser.
+//! Markdown spec → `ScrollSpec` parser.
 //!
-//! Walks `pulldown-cmark` events rather than line-prefix matching so the
-//! grammar can grow without re-implementing markdown semantics (indented
-//! list items, fenced code blocks ignored inside prompts, etc.). The
-//! on-disk format is unchanged from the legacy parser.
+//! Walks `pulldown-cmark` events rather than matching line prefixes, so the
+//! grammar can grow without re-implementing markdown semantics (indented list
+//! items, fenced code inside prompts, etc.).
 
 use anyhow::{Result, anyhow};
 use pulldown_cmark::{Event, HeadingLevel, Parser, Tag, TagEnd};
@@ -27,23 +26,18 @@ pub struct TaskSpec {
     pub cwd: Option<String>,
     pub file_patterns: Vec<String>,
     pub depends_on: Vec<String>,
-    /// When set, the coordinator dispatches this task to the
-    /// named peer instead of spawning a local agent. The peer must
-    /// have `accept_scroll_dispatch = 1` and lifecycle federation in
-    /// the inbound direction back to the coordinator.
+    /// Dispatch to this peer instead of a local agent. The peer needs
+    /// `accept_scroll_dispatch = 1` and inbound lifecycle federation back here.
     pub peer: Option<String>,
-    /// Verification rubric: when set, the worker's completion is
-    /// scored by an evaluator agent against this text before the DAG
-    /// is allowed to proceed.
+    /// Rubric: when set, completion is scored by an evaluator agent before the
+    /// DAG proceeds.
     pub verify: Option<String>,
-    /// Optional pass threshold (0.0–1.0) for the verification score.
-    /// `None` falls back to the keeper's default when `verify` is set.
+    /// Pass threshold (0.0–1.0); `None` falls back to the keeper default.
     pub verify_threshold: Option<f64>,
-    /// HITL gate: when true, the task is held for human approval once its
-    /// dependencies are met, before any agent spawns. `- approve: true`.
+    /// HITL gate: hold for human approval once dependencies are met, before any
+    /// agent spawns.
     pub approve: bool,
-    /// Task-level retry budget: how many times a failed run is re-spawned
-    /// before the task is marked failed for good. `- retries: N`.
+    /// Re-spawns of a failed run before the task is marked failed for good.
     pub retries: u32,
 }
 
@@ -77,7 +71,6 @@ pub fn parse_scroll(content: &str) -> Result<ScrollSpec> {
         ));
     }
 
-    // Reject tasks with no prompt body.
     for task in &doc.tasks {
         if task.prompt.is_empty() {
             return Err(anyhow!(
@@ -87,7 +80,6 @@ pub fn parse_scroll(content: &str) -> Result<ScrollSpec> {
         }
     }
 
-    // Validate dependency references.
     let task_names: Vec<&str> = doc.tasks.iter().map(|t| t.name.as_str()).collect();
     for task in &doc.tasks {
         for dep in &task.depends_on {
@@ -140,11 +132,9 @@ fn walk(content: &str) -> Result<Doc> {
     let mut current: Option<TaskSpec> = None;
     let mut prompt_buf = String::new();
 
-    // Heading state.
     let mut h1_buf: Option<String> = None;
     let mut h2_buf: Option<String> = None;
 
-    // List item text accumulator.
     let mut in_list_item = false;
     let mut item_buf = String::new();
 
@@ -172,9 +162,8 @@ fn walk(content: &str) -> Result<Doc> {
                 level: HeadingLevel::H2,
                 ..
             }) => {
-                // Close any in-flight task.
                 finalize_task(&mut current, &mut prompt_buf, &mut doc);
-                scope = Scope::PreTask; // until we confirm this is a Task: heading
+                scope = Scope::PreTask; // until confirmed a `Task:` heading
                 h2_buf = Some(String::new());
             }
             Event::End(TagEnd::Heading(HeadingLevel::H2)) => {
@@ -221,7 +210,6 @@ fn walk(content: &str) -> Result<Doc> {
                         }
                     }
                     Scope::InTask { .. } => {
-                        // List items after prompt text begins are part of the prompt.
                         if !prompt_buf.is_empty() {
                             prompt_buf.push('\n');
                         }

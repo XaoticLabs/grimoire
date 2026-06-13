@@ -14,9 +14,6 @@ mod handlers;
 mod http;
 mod uds;
 
-// Submodules reach each other via explicit `super::<mod>::item` paths. Only
-// the HTTP/UDS entry points need to be in scope for `run`, and the UDS auth
-// surface is re-exported for completeness.
 use http::run_http_server;
 use uds::run_uds_server;
 pub use uds::{UdsAuthDecision, check_uds_auth};
@@ -32,12 +29,11 @@ pub struct AppState {
     pub peer_registry: Arc<super::peer_registry::PeerRegistry>,
     pub daemon_id: String,
     pub auth_token: Arc<AuthToken>,
-    /// Captured at server startup. Drives the `grimoire_uptime_seconds`
-    /// metric; an `Instant` (not a wall-clock time) so clock skew doesn't
-    /// confuse the value across daemon restarts on the same host.
+    /// Drives `grimoire_uptime_seconds`; an `Instant` so clock skew can't
+    /// confuse the value.
     pub started_at: std::time::Instant,
-    /// Inbound webhook configuration keyed by `name` (the URL segment in
-    /// `POST /webhooks/<name>`). Empty map = the webhook surface is closed.
+    /// Inbound webhook config keyed by the `name` URL segment in
+    /// `POST /webhooks/<name>`. Empty map = webhook surface closed.
     pub webhooks: Arc<std::collections::HashMap<String, crate::shared::config::WebhookConfig>>,
 }
 

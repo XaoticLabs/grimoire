@@ -105,8 +105,7 @@ impl super::Database {
         Ok(n.max(0) as u32)
     }
 
-    /// Update the most recent `restart_history` row for `agent_id` whose
-    /// `outcome = 'scheduled'`. Returns the number of rows updated.
+    /// Re-stamp the outcome of `agent_id`'s most recent `'scheduled'` row.
     pub fn update_latest_scheduled_outcome(
         &self,
         agent_id: &str,
@@ -135,8 +134,7 @@ impl super::Database {
         Ok(v)
     }
 
-    /// One row per agent with everything the supervisor dashboard needs to
-    /// render the tree. Single query — no N+1.
+    /// One row per agent for the supervisor tree, in a single query (no N+1).
     pub fn list_supervisor_nodes(&self) -> Result<Vec<SupervisorNode>> {
         let conn = self.conn_lock();
         let mut stmt = conn.prepare(
@@ -175,8 +173,7 @@ impl super::Database {
         Ok(rows.filter_map(std::result::Result::ok).collect())
     }
 
-    /// Most recent `restart_history` rows for `agent_id`, newest first.
-    /// Backs the dashboard's expandable history drawer.
+    /// Recent `restart_history` rows for `agent_id`, newest first.
     pub fn list_restart_history(
         &self,
         agent_id: &str,
@@ -228,9 +225,8 @@ impl super::Database {
         Ok(ids)
     }
 
-    /// Return `true` if there is an `Escalated` event for `agent_id` whose
-    /// row id is later than the latest `restart_history` row for the agent.
-    /// Used by boot replay to skip re-escalation.
+    /// True if an `Escalated` event for `agent_id` postdates its latest
+    /// `restart_history` row. Lets boot replay skip re-escalation.
     pub fn has_escalated_event_after_latest_history(&self, agent_id: &str) -> Result<bool> {
         let conn = self.conn_lock();
         let latest_history_ts: Option<String> = conn

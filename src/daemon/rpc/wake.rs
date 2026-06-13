@@ -16,8 +16,7 @@ pub(super) async fn handle_wake_add(
     req: RpcRequest,
 ) -> RpcResponse {
     let params: WakeAddParams = try_params!(req);
-    // Validate agent exists (and capture it: file-watch roots resolve
-    // against the *agent's* cwd below).
+    // Capture the agent: file-watch roots resolve against its cwd below.
     let agent_id = params.agent_id.clone();
     let agent = match db.run(move |db| db.get_agent(&agent_id)).await {
         Ok(Some(a)) => a,
@@ -28,10 +27,8 @@ pub(super) async fn handle_wake_add(
         Ok(k) => k,
         Err(_) => return rpc_err(req.id, "invalid_kind"),
     };
-    // The documented contract is "globs watch under the agent's cwd". The
-    // daemon owns that resolution: whatever root the client sent (older
-    // CLIs sent their own current_dir, which is wrong whenever the
-    // operator's shell isn't sitting in the agent's cwd) is overwritten.
+    // Globs watch under the agent's cwd: override any client-sent root, since
+    // older CLIs sent their own current_dir (wrong unless it matched the cwd).
     let mut config = params.config.clone();
     if kind == WakeSourceKind::FileWatch
         && let Some(obj) = config.as_object_mut()

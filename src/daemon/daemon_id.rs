@@ -1,10 +1,7 @@
-//! DaemonId minting + persistence.
-//!
-//! On first daemon boot we mint an 8-hex `DaemonId` and persist it atomically
-//! to `~/.grimoire/daemon.id` (override via `GRIMOIRE_DAEMON_ID_PATH`). On
-//! subsequent boots we load and validate the existing file. The file holds
-//! the bare 8-hex string; the `grimd-` display prefix is constructed at
-//! render time only.
+//! DaemonId minting + persistence. First boot mints an 8-hex id and writes it
+//! atomically to `~/.grimoire/daemon.id` (override `GRIMOIRE_DAEMON_ID_PATH`);
+//! later boots load and validate. The file holds the bare hex; the `grimd-`
+//! display prefix is render-time only.
 
 use anyhow::{Result, anyhow};
 use std::fs;

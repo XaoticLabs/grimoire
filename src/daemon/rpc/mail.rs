@@ -18,9 +18,7 @@ const PREVIEW_CHARS: usize = 200;
 
 const PEER_OUTBOX_MAX_DEPTH_DEFAULT: u64 = 10_000;
 
-/// Decide the initial `MailState` for a piece of outbound mail given the
-/// looked-up recipient agent. Returns `(state, fail_reason)`; the reason is
-/// `Some` iff the state is `Failed`.
+/// Initial `MailState` for outbound mail. `fail_reason` is `Some` iff `Failed`.
 fn compute_mail_state(
     agent: Option<&crate::shared::types::Agent>,
 ) -> (MailState, Option<&'static str>) {
@@ -33,10 +31,8 @@ fn compute_mail_state(
     }
 }
 
-/// Operator-facing fields of a freshly-built outbound mail row, before the
-/// daemon mints the `id` and `created_at`. Replaces what used to be ten
-/// positional arguments to `new_outbound_mail`. Every call site now reads
-/// like prose and a new field doesn't ripple through every caller.
+/// Operator-facing fields of an outbound mail row, before the daemon mints
+/// `id` and `created_at`.
 struct MailDraft {
     recipient_id: String,
     sender: Option<String>,
@@ -49,8 +45,7 @@ struct MailDraft {
 }
 
 /// Stamp a [`MailDraft`] with `mail_id` and `now`, deriving `delivered_at`
-/// from `state` so every send path agrees on the invariants. `seq` is set
-/// by the insert path.
+/// from `state`. `seq` is set by the insert path.
 fn new_outbound_mail(draft: MailDraft, mail_id: String, now: i64) -> Mail {
     let delivered_at = if draft.state == MailState::Pending {
         None
@@ -73,9 +68,9 @@ fn new_outbound_mail(draft: MailDraft, mail_id: String, now: i64) -> Mail {
     }
 }
 
-/// Per-state event emission for a freshly-inserted local mail row.
-/// `Pending` → `MailSent` + `MailReceived`; `Failed` → `MailFailed`;
-/// `Delivered` should never occur at send time but is handled defensively.
+/// Per-state event emission for a local mail row: `Pending` → `MailSent` +
+/// `MailReceived`; `Failed` → `MailFailed`. `Delivered` can't occur at send
+/// time but is handled defensively.
 fn emit_mail_events(bus: &EventBus, mail: &Mail, body_preview: &str) {
     match mail.state {
         MailState::Pending => {
@@ -126,9 +121,8 @@ pub async fn handle_mail_send(
         return rpc_err(req.id, "body_too_large");
     }
 
-    // Reserved-prefix guard: user-supplied senders cannot forge system
-    // identities. Internal callers (wake registry, supervisor) bypass
-    // mail.send entirely and write rows directly.
+    // User-supplied senders can't forge system identities; internal callers
+    // (wake registry, supervisor) write rows directly, bypassing mail.send.
     if let Some(s) = &params.sender
         && (s.starts_with("supervisor://")
             || s.starts_with("wake://")
@@ -156,8 +150,7 @@ pub async fn handle_mail_send(
             daemon_id: target_daemon,
             agent_id,
         } => {
-            // Self via federated form: rewrite to local before reaching
-            // federation routing.
+            // Self via federated form: rewrite to local, skip federation.
             if target_daemon == daemon_id {
                 handle_direct_send(db, bus, &req, &params, agent_id, wake_eligible).await
             } else {
@@ -177,16 +170,10 @@ pub async fn handle_mail_send(
     }
 }
 
-/// Synchronous request/reply over the mailbox. Sends `params.body` to
-/// `params.to`, then blocks until either:
-///   * an inbound `MailReceived` event names a mail whose `in_reply_to`
-///     equals the sent mail's id, in which case the full reply row is
-///     returned, or
-///   * `timeout_ms` elapses (default 30 000), returning `ask_timeout`.
-///
-/// Repliers acknowledge the request by sending an ordinary mail with
-/// `in_reply_to` set to the original mail id. There is no separate "reply"
-/// verb: ordinary `mail.send` carries the correlation.
+/// Synchronous request/reply: send `params.body` to `params.to`, block until a
+/// reply mail's `in_reply_to` matches the sent id or `timeout_ms` (default
+/// 30 000) elapses (`ask_timeout`). There's no separate "reply" verb: ordinary
+/// `mail.send` with `in_reply_to` set carries the correlation.
 pub async fn handle_mail_ask(
     db: &Arc<Database>,
     bus: &EventBus,
@@ -226,9 +213,9 @@ pub async fn handle_mail_ask(
     }
 }
 
-/// Subscribe to the bus, send the request mail, and return the
-/// subscription handle + posted mail ids. Holding the subscriber *before*
-/// the send is the load-bearing detail: a fast reply must not race past us.
+/// Subscribe, send the request mail, return the subscription + posted ids.
+/// Subscribing *before* the send is load-bearing: a fast reply must not race
+/// past us.
 struct PostedRequest {
     events: tokio::sync::broadcast::Receiver<StreamEvent>,
     request_ids: std::collections::HashSet<String>,
@@ -276,10 +263,8 @@ async fn post_request_for_reply(
     })
 }
 
-/// Drain `events` until `stop_after_n` distinct replies have arrived whose
-/// `in_reply_to` matches one of `request_ids`, or `timeout` elapses. The
-/// caller decides whether zero matches is a failure (`mail.ask`) or a
-/// legitimate empty result (`mail.tender`).
+/// Drain `events` until `stop_after_n` distinct replies match `request_ids` or
+/// `timeout` elapses. Caller decides whether zero matches is a failure.
 async fn collect_mail_replies(
     db: &Database,
     mut events: tokio::sync::broadcast::Receiver<StreamEvent>,
@@ -297,9 +282,7 @@ async fn collect_mail_replies(
         }
         let recv = match tokio::time::timeout(remaining, events.recv()).await {
             Ok(Ok(ev)) => ev,
-            // Lagged subscribers can still catch later events; closed bus
-            // means no more replies will ever arrive. Both are treated the
-            // same here, with the deadline as the real exit condition.
+            // Lagged or closed bus: keep looping; the deadline is the real exit.
             Ok(Err(_)) => continue,
             Err(_) => break,
         };
@@ -323,11 +306,9 @@ async fn collect_mail_replies(
     out
 }
 
-/// Multi-bid auction over the mailbox. Posts `params.body` to `params.to`
-/// (typically a `topic://...`), then collects every reply mail whose
-/// `in_reply_to` matches one of the posted ids until `deadline_ms` elapses.
-/// Unlike [`handle_mail_ask`], this returns *all* bids. Picking the winner
-/// is the caller's job, and zero bids is not an error.
+/// Multi-bid auction: post `params.body` to `params.to` (typically a
+/// `topic://`), collect *all* reply mails until `deadline_ms` elapses. Unlike
+/// [`handle_mail_ask`], zero bids is not an error and the caller picks a winner.
 pub async fn handle_mail_tender(
     db: &Arc<Database>,
     bus: &EventBus,
@@ -383,8 +364,7 @@ async fn handle_direct_send(
     let body = params.body.clone();
     let in_reply_to = params.in_reply_to.clone();
     let mail_id_for_db = mail_id.clone();
-    // One trip: lookup recipient, build mail row, insert it. Returns the
-    // finished `Mail` (with computed state/fail_reason) for downstream events.
+    // One blocking-pool trip: lookup recipient, build row, insert.
     let outcome: Result<Result<Mail, anyhow::Error>, anyhow::Error> = db
         .run(move |db| {
             let agent = db.get_agent(&recipient_for_db)?;
@@ -424,10 +404,9 @@ async fn handle_direct_send(
     )
 }
 
-/// Output of the single blocking-pool trip [`handle_topic_send`] uses to do
-/// per-subscriber state lookup + mail batch insert + federation fanout in
-/// one shot, returning data the async tail needs for bus emission and
-/// peer notification.
+/// Result of [`handle_topic_send`]'s single blocking-pool trip (subscriber
+/// lookup + batch insert + federation fanout), carrying what the async tail
+/// needs for bus emission and peer notification.
 struct TopicSendOut {
     mails: Vec<Mail>,
     delivered: u32,
@@ -481,10 +460,6 @@ async fn handle_topic_send(
     let mail_id_for_peer = crate::shared::constants::generate_short_id();
     let mail_id_for_peer_for_db = mail_id_for_peer.clone();
 
-    // Single trip to the blocking pool: per-subscriber state lookup, mail
-    // batch insert, federation enumeration, per-peer cap check, and outbox
-    // fanout insert. Returns rich data the async tail needs (events, peer
-    // notifications).
     let out: TopicSendOut = db
         .run(move |db| {
             let mut mails: Vec<Mail> = Vec::with_capacity(subs_for_db.len());
@@ -608,8 +583,7 @@ async fn handle_topic_send(
         peer_registry.notify_outbox(peer_id).await;
     }
 
-    // Emit one MailSent + MailReceived per Pending row (and MailFailed per
-    // Failed row); event stream is "one event per recipient".
+    // Event-stream contract: one event per recipient.
     for mail in &mails {
         emit_mail_events(bus, mail, &preview);
     }
@@ -662,8 +636,8 @@ async fn handle_federated_direct_send(
         now,
     );
 
-    // Pre-check depth + insert in one trip so we don't bounce between
-    // workers and the blocking pool.
+    // Depth pre-check + insert in one trip to avoid bouncing between the
+    // async worker and the blocking pool.
     let peer_id = peer.id.clone();
     let mail_for_db = mail.clone();
     let outbox_id_for_db = outbox_id.clone();
@@ -735,7 +709,6 @@ pub(super) async fn handle_mail_ack(
     let params: MailAckParams = try_params!(req);
 
     let mail_id = params.mail_id.clone();
-    // Lookup + state mutation in one trip; tail handles event emission.
     // Accepts short prefixes; ambiguous prefix surfaces as `ambiguous_mail_prefix`.
     let outcome: Result<Result<Option<Mail>, anyhow::Error>, anyhow::Error> = db
         .run(
@@ -752,8 +725,7 @@ pub(super) async fn handle_mail_ack(
                             Err(e) => Ok(Err(e)),
                         }
                     }
-                    // Delivered/Failed: return the mail unchanged so the tail can
-                    // distinguish via its `state`.
+                    // Delivered/Failed: return unchanged; the tail reads `state`.
                     _ => Ok(Ok(Some(mail))),
                 }
             },
@@ -802,7 +774,6 @@ pub(super) async fn handle_mail_subscribe(db: &Arc<Database>, req: RpcRequest) -
     };
     let agent_id_for_db = params.agent_id;
     let sub_for_db = sub.clone();
-    // Validate-then-insert in one trip.
     let outcome: Result<Result<Option<anyhow::Result<String>>, anyhow::Error>, anyhow::Error> = db
         .run(
             move |db| -> Result<

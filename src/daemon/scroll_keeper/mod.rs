@@ -28,9 +28,7 @@ const DEFAULT_VERIFY_THRESHOLD: f64 = 0.7;
 pub struct ScrollKeeper {
     db: Arc<Database>,
     manager: Arc<AgentManager>,
-    /// Late-bound: set after `peer_registry` is created in
-    /// `daemon::start`. Required only for peer-dispatched tasks; local
-    /// scrolls work without it.
+    /// Late-bound in `daemon::start`. Required only for peer-dispatched tasks.
     peer_registry: Mutex<Option<Arc<PeerRegistry>>>,
 }
 
@@ -72,10 +70,7 @@ impl ScrollKeeper {
         }
     }
 
-    /// Late-bind the peer registry so scrolls can dispatch tasks with
-    /// `peer:` directives. Called from `daemon::start` after
-    /// `PeerRegistry::new`. Idempotent for repeated calls (the latest
-    /// wins).
+    /// Late-bind the peer registry so scrolls can dispatch `peer:` tasks.
     pub async fn set_peer_registry(&self, registry: Arc<PeerRegistry>) {
         *self.peer_registry.lock().await = Some(registry);
     }
@@ -113,10 +108,6 @@ impl ScrollKeeper {
                         ref new_state,
                         ..
                     }) => {
-                        // A federated peer is reporting that one of our
-                        // dispatched tasks just transitioned. Resolve
-                        // `(sender_daemon_id, remote_agent_id)` to the local
-                        // dispatch row and update the task state to match.
                         self.handle_remote_state_change(sender_daemon_id, agent_id, new_state)
                             .await;
                     }

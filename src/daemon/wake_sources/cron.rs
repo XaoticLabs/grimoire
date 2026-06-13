@@ -1,18 +1,12 @@
-//! Cron wake source: fires when the configured 5-field cron expression's
-//! next scheduled tick passes the registry's clock.
+//! Cron wake source: fires when the 5-field cron expression's next tick passes
+//! the registry clock.
 //!
-//! ## Format
+//! Format: standard 5-field cron `minute hour day-of-month month day-of-week`
+//! (UTC). Each field supports `*`, `N`, `N-M`, `*/K`, `N-M/K`, and
+//! comma-separated lists. Day-of-week is `0-6` with `0 = Sunday`.
 //!
-//! Standard 5-field cron: `minute hour day-of-month month day-of-week` (UTC).
-//! Each field supports `*`, `N`, `N-M`, `*/K`, `N-M/K`, and comma-separated
-//! lists of any of those. Day-of-week is `0-6` with `0 = Sunday`.
-//!
-//! ## Why not the `cron` crate
-//!
-//! The `cron` crate pulls in `phf`, `phf_macros`, `phf_generator`, `rand` and
-//! `winnow`, none of which would otherwise be in this tree. Our needs are a
-//! parser and "next fire time after T", and this hand-rolled implementation is
-//! ~150 lines with no transitive deps.
+//! Hand-rolled rather than the `cron` crate, which would pull in `phf`/`rand`/
+//! `winnow` for what amounts to a parser plus "next fire time after T".
 
 use anyhow::{Result, anyhow};
 use chrono::{DateTime, Datelike, Duration, Timelike, Utc};
@@ -37,12 +31,9 @@ impl CronSource {
         })
     }
 
-    /// Returns `Some(now)` if the source should fire, i.e. at least one
-    /// scheduled time exists in the half-open interval `(since, now]`
-    /// where `since` is `last_fired_at` if known else the source's
-    /// `registered_at`.
-    /// At most one fire per evaluation; missed fires beyond one are not
-    /// replayed (the catch-up rule).
+    /// `Some(now)` if a scheduled time exists in `(since, now]`, where `since`
+    /// is `last_fired_at` else `registered_at`. At most one fire per
+    /// evaluation; missed fires beyond one are not replayed (no catch-up).
     pub fn evaluate(
         &self,
         now: DateTime<Utc>,
@@ -110,7 +101,6 @@ impl Schedule {
     /// schedule. Returns `None` if no match within ~5 years (a safety cap; in
     /// practice every valid cron fires far sooner).
     fn next_after(&self, since: DateTime<Utc>) -> Option<DateTime<Utc>> {
-        // Walk minute by minute from `since + 1min`, truncating sub-minute.
         let start = since
             .with_second(0)?
             .with_nanosecond(0)?
@@ -121,8 +111,7 @@ impl Schedule {
             if self.matches(t) {
                 return Some(t);
             }
-            // Skip ahead: if the date is out of range, jump to the next day at
-            // 00:00 to avoid 1440 wasted minute-checks.
+            // Date out of range: jump to next day 00:00, skipping 1440 checks.
             if !self.date_matches(t) {
                 let next_day = (t.date_naive() + chrono::Duration::days(1))
                     .and_hms_opt(0, 0, 0)?
@@ -144,11 +133,10 @@ impl Schedule {
             return false;
         }
         let day_match = self.dom.contains(t.day());
-        // chrono weekday: Monday=0..Sunday=6. Cron weekday: Sunday=0..Saturday=6.
+        // num_days_from_sunday maps chrono's Mon=0 to cron's Sun=0 weekday.
         let weekday_match = self.dow.contains(t.weekday().num_days_from_sunday());
-        // Per POSIX cron, when BOTH dom and dow are restricted, the match is
-        // an OR. When only one is restricted, it's the active filter. When
-        // neither is restricted, both are "*" and trivially match.
+        // POSIX cron: when BOTH dom and dow are restricted the match is an OR;
+        // otherwise it's the active filter (or trivially true if both are "*").
         match (self.dom_restricted, self.dow_restricted) {
             (true, true) => day_match || weekday_match,
             _ => day_match && weekday_match,

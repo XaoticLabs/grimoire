@@ -20,10 +20,8 @@ pub(super) async fn handle_summon(
 ) -> RpcResponse {
     let params: SummonParams = try_params!(req);
 
-    // Idempotency: a repeat summon with a key that already minted an agent
-    // returns that agent untouched, so callers can safely retry on a flaky
-    // connection. A stale key whose agent was deleted falls through to a
-    // fresh summon.
+    // Idempotency: a key that already minted an agent returns it untouched
+    // (safe retry). A stale key whose agent was deleted falls through.
     if let Some(key) = params.idempotency_key.clone() {
         let key2 = key.clone();
         let existing = db
@@ -49,7 +47,6 @@ pub(super) async fn handle_summon(
         }
     }
 
-    // Supervision validation.
     let policy_str = params.restart_policy.as_deref().unwrap_or("never");
     let policy: crate::shared::types::RestartPolicy = match policy_str.parse() {
         Ok(p) => p,
@@ -96,8 +93,7 @@ pub(super) async fn handle_summon(
         None
     };
 
-    // Workspace short-circuit on cwd: mutually exclusive with --cwd, looks
-    // up the workspace path, and triggers assignment after agent insert.
+    // --workspace and --cwd are mutually exclusive.
     if params.workspace.is_some() && params.cwd.is_some() {
         return rpc_err(req.id, "conflicting_options");
     }
@@ -116,10 +112,9 @@ pub(super) async fn handle_summon(
         .clone()
         .unwrap_or_else(|| manager.resolve_cwd(params.cwd.clone()));
 
-    // Policy gate. Deny wins on conflict; an empty allow list means "any."
-    // Resolves cwd through `canonicalize` when possible so prefix matches
-    // survive symlinks; falls back to the unresolved path if the cwd
-    // doesn't yet exist (the agent's process will fail later, not here).
+    // Policy gate: deny wins, empty allow list means "any". Canonicalize cwd so
+    // prefix matches survive symlinks; fall back to the raw path if it doesn't
+    // exist yet (the agent process fails later, not here).
     if let Some(policy) = manager.policy() {
         let provider_for_check = params
             .provider
@@ -165,8 +160,8 @@ pub(super) async fn handle_summon(
         Err(e) => return rpc_fail(req.id, "summon", e),
     };
 
-    // Bind the idempotency key to the freshly minted agent (first writer
-    // wins, so a concurrent racing summon collapses onto one agent).
+    // Bind the idempotency key to the agent; first writer wins, so racing
+    // summons collapse onto one agent.
     if let Some(key) = params.idempotency_key.clone() {
         let agent_id = result.id.clone();
         let _ = db
@@ -180,7 +175,7 @@ pub(super) async fn handle_summon(
         tracing::warn!(workspace = %name, agent = %result.id, error = %e, "workspace assign after summon failed");
     }
 
-    // Wire the supervision-tree edge so a subsequent parent banish cascades.
+    // Wire the supervision-tree edge so a parent banish cascades.
     if let Some(parent) = &params.parent_agent_id {
         if parent == &result.id {
             let _ = manager.banish(&result.id).await;
@@ -214,8 +209,8 @@ pub(super) async fn handle_summon(
         }
     }
 
-    // Tree budget: this agent becomes the budgeted root of its (future)
-    // subtree. Children summoned with `--parent <this>` count against it.
+    // This agent is the budgeted root of its subtree; children summoned with
+    // `--parent <this>` count against it.
     if let Some(cap) = params.tree_budget_usd {
         if !cap.is_finite() || cap <= 0.0 {
             let _ = manager.banish(&result.id).await;
@@ -227,13 +222,11 @@ pub(super) async fn handle_summon(
         }
     }
 
-    // Self-escalation check, post-id-generation, before any further state.
     if let Some(addr) = &params.escalate_to {
         let self_addr = format!("agent://{}", result.id);
         if addr == &self_addr {
-            // Roll back the insert. Banish on Queued cleans queue + agent; the
-            // row remains (state=Banished). Spec asks for "no agent row" but
-            // the rollback path is best-effort.
+            // Best-effort rollback: banish leaves the row at state=Banished
+            // rather than removing it.
             let _ = manager.banish(&result.id).await;
             return rpc_err(req.id, "self_escalation");
         }
@@ -311,15 +304,13 @@ pub(super) async fn handle_queue_list(db: &Arc<Database>, req: RpcRequest) -> Rp
     )
 }
 
-/// Return an agent's full durable event timeline for `grim chronicle`. The
-/// agent must exist (so an unknown id is a clean error, not an empty reel);
-/// beyond that this is a straight read of the `events` table. All filtering
-/// and state reconstruction is the client's job.
+/// Return an agent's full event timeline for `grim chronicle`. Unknown id is a
+/// clean error (not an empty reel); filtering/reconstruction is the client's job.
 pub(super) async fn handle_replay(db: &Arc<Database>, req: RpcRequest) -> RpcResponse {
     let params: ReplayParams = try_params!(req);
 
     let id = params.id.clone();
-    // One trip to the blocking pool: agent existence check + event log read.
+    // One trip: agent existence check + event log read.
     let outcome: Result<Option<Vec<crate::daemon::persistence::StoredEvent>>, anyhow::Error> = db
         .run(move |db| match db.get_agent(&id) {
             Ok(Some(_)) => db.read_stream_events(&id).map(Some),
@@ -354,10 +345,8 @@ pub(super) async fn handle_replay(db: &Arc<Database>, req: RpcRequest) -> RpcRes
     }
 }
 
-/// Return the provider-extracted final result text for an agent. Mirrors
-/// `manager.agent_result()` (the in-process accessor used by pact
-/// `{output}` injection) over the RPC, so the CLI can read an evaluator's
-/// score JSON without scraping the chronicle.
+/// Return an agent's provider-extracted final result text over RPC, mirroring
+/// the in-process `manager.agent_result()` used by pact `{output}` injection.
 pub(super) async fn handle_agent_result(
     manager: &Arc<AgentManager>,
     db: &Arc<Database>,

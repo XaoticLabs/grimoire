@@ -1,15 +1,8 @@
-//! `WakeRegistry`: a daemon-internal actor that owns wake-source lifecycle.
-//!
-//! Responsibilities:
-//! - Persist wake_sources rows in SQLite.
-//! - Arm in-memory evaluators (cron timers, file watchers, parent-completion
-//!   subscriptions) and tear them down on remove/banish.
-//! - Periodically evaluate cron sources; respond to event-driven sources via
-//!   their fire channel.
-//! - Send wake mail through a `WakeMailSender` seam (default impl writes a
-//!   wake-eligible mail row directly so the existing mail-wake path picks it
-//!   up).
-//! - Apply per-agent rate limiting on the common fire path.
+//! `WakeRegistry`: daemon-internal actor owning wake-source lifecycle —
+//! persists `wake_sources` rows, arms in-memory evaluators (cron timers, file
+//! watchers, completion subscriptions), evaluates cron on a tick / event-driven
+//! sources via the fire channel, and fires wake mail through a `WakeMailSender`
+//! seam under a per-agent rate limit.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -36,9 +29,8 @@ use crate::daemon::wake_sources::remote_file_watch::{
 };
 use crate::shared::constants;
 
-/// Wake-source tick: how often the registry sweeps cron sources whose
-/// next-fire time has elapsed. Lower bound is the smallest cron resolution
-/// (1 minute) but we sample at 30s so a freshly-armed cron fires promptly.
+/// Cron sweep interval. Sampled at 30s (below the 1-minute cron resolution) so
+/// a freshly-armed cron fires promptly.
 const WAKE_TICK_INTERVAL: Duration = Duration::from_secs(30);
 use crate::shared::protocol::StreamEvent;
 use crate::shared::types::{Mail, MailState, WakeSource, WakeSourceKind, WakeSourceState};
@@ -49,9 +41,8 @@ pub trait WakeMailSender: Send + Sync {
     async fn send_wake_mail(&self, wake_id: &str, agent_id: &str, body: &str) -> Result<String>;
 }
 
-/// Default `WakeMailSender`: writes a wake-eligible mail row with
-/// `sender_id = wake://<wake_id>` so the scheduler's mail-wake path can pick
-/// it up unchanged.
+/// Default sender: writes a wake-eligible mail row with
+/// `sender_id = wake://<wake_id>` for the scheduler's mail-wake path.
 pub struct DbWakeMailSender {
     db: Arc<Database>,
     bus: EventBus,
@@ -77,7 +68,7 @@ impl WakeMailSender for DbWakeMailSender {
             wake_eligible: true,
         };
         self.db.insert_mail(&mail)?;
-        // Publish MailReceived so the scheduler's reactor wakes immediately.
+        // MailReceived wakes the scheduler's reactor immediately.
         self.bus.publish(StreamEvent::MailReceived {
             mail_id: mail_id.clone(),
             recipient_id: agent_id.to_string(),
@@ -91,13 +82,10 @@ impl WakeMailSender for DbWakeMailSender {
     }
 }
 
-/// Handle to an armed source. Dropping the handle tears down its watchers /
-/// subscriptions.
+/// Handle to an armed source; dropping it tears down watchers/subscriptions.
 //
-// `Cron` is boxed because `CronSource` is ~270 bytes (parsed schedule plus
-// state) while the other variants are tens of bytes; storing it inline
-// would force every armed handle in the registry's HashMap to allocate the
-// `Cron` footprint, regardless of which variant they actually are.
+// `Cron` is boxed because `CronSource` (~270 bytes) would otherwise bloat
+// every variant of this enum.
 pub enum ArmedHandle {
     Cron(Box<CronSource>),
     FileWatch {
@@ -169,9 +157,8 @@ impl WakeRegistry {
         self.fire_tx.clone()
     }
 
-    /// Spawn the registry's background tasks: a cron tick loop and a fire
-    /// drain loop. Idempotent: repeated calls after the first no-op (the
-    /// second call sees `fire_rx == None`).
+    /// Spawn the cron-tick and fire-drain loops. Idempotent: later calls no-op
+    /// (they see `fire_rx == None`).
     pub fn spawn(self: &Arc<Self>) -> Option<tokio::task::JoinHandle<()>> {
         let mut guard = self.fire_rx.try_lock().ok()?;
         let mut rx = guard.take()?;
@@ -185,7 +172,6 @@ impl WakeRegistry {
             }
         });
 
-        // Cron tick loop: every 30s evaluate all cron sources.
         let me2 = self.clone();
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(WAKE_TICK_INTERVAL);
@@ -241,8 +227,8 @@ impl WakeRegistry {
         kind: WakeSourceKind,
         config_json: &str,
     ) -> Result<String> {
-        // Validate / parse config eagerly so bad input fails before persisting
-        // an `armed` row that will never fire.
+        // Validate eagerly so bad config fails before persisting an `armed` row
+        // that would never fire.
         validate_config(kind, config_json)?;
 
         let wake_id = format!("wake_{}", &constants::generate_short_id()[..8]);
@@ -260,7 +246,6 @@ impl WakeRegistry {
         };
         self.db.insert_wake_source(&row)?;
 
-        // Arm in-memory plumbing.
         match self.arm_one(&row).await {
             Ok(handle) => {
                 self.handles.lock().await.insert(wake_id.clone(), handle);
@@ -352,7 +337,7 @@ impl WakeRegistry {
 
         let allow = self.consume_token(&src.agent_id).await?;
         if !allow {
-            // Bump fire_count for observability of denied fires.
+            // Count denied fires too, for observability.
             let _ = self
                 .db
                 .bump_wake_source_fire(&src.id, self.clock.now().timestamp());
@@ -395,8 +380,7 @@ impl WakeRegistry {
     async fn consume_token(&self, agent_id: &str) -> Result<bool> {
         let now = self.clock.now().timestamp();
         let (tokens, last, capacity, refill) = self.db.get_or_init_rate_limit(agent_id, now)?;
-        // Clamp negative elapsed (clock skew) at 0 so backwards jumps don't
-        // mint tokens.
+        // Clamp at 0 so a backwards clock jump can't mint tokens.
         let elapsed = (now - last).max(0) as f64;
         let new_tokens = (tokens + elapsed * refill).min(capacity as f64);
         if new_tokens >= 1.0 {
@@ -474,8 +458,8 @@ impl WakeRegistry {
                 >(256);
                 let watcher = source.arm(notify_tx)?;
 
-                // Debounce drain task: collect changes during a 200ms window
-                // after the first event, then send one FireMsg.
+                // Debounce: coalesce changes in a window after the first event
+                // into a single FireMsg.
                 let fire_tx = self.fire_tx.clone();
                 let wake_id = src.id.clone();
                 let drain_task = tokio::spawn(async move {
@@ -553,11 +537,8 @@ impl WakeRegistry {
                 let mut rx = self.bus.subscribe();
                 let fire_tx = self.fire_tx.clone();
                 let wake_id = src.id.clone();
-                // No notify watcher to debounce — the upstream
-                // `WorkspaceWatcher::emit_batch` already debounced before
-                // the home daemon shipped the event, and we re-emit one
-                // bus event per delivered batch. So each matching batch
-                // becomes one fire.
+                // No local debounce: the home daemon's `emit_batch` already
+                // debounced, so each delivered batch becomes one fire.
                 let task = tokio::spawn(async move {
                     while let Ok(ev) = rx.recv().await {
                         if let StreamEvent::WorkspaceFileChanged {
@@ -642,7 +623,6 @@ fn validate_config(kind: WakeSourceKind, config_json: &str) -> Result<()> {
         WakeSourceKind::FileWatch => {
             let cfg: FileWatchConfig = serde_json::from_str(config_json)
                 .map_err(|e| anyhow!("invalid_file_watch_config_json: {e}"))?;
-            // Validate root + globs eagerly.
             FileWatchSource::new(cfg)?;
         }
         WakeSourceKind::ParentCompletion => {

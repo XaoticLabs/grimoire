@@ -4,8 +4,7 @@ use colored::Colorize;
 
 use crate::shared::protocol::StreamEvent;
 
-/// Truncate a string to `max` chars, appending `…` if it was cut. Used to keep
-/// timeline detail lines (tasks, mail previews) to a single readable row.
+/// Truncate to `max` chars (newlines flattened), appending `…` if cut.
 fn truncate(s: &str, max: usize) -> String {
     let s = s.replace('\n', " ");
     if s.chars().count() <= max {
@@ -16,11 +15,9 @@ fn truncate(s: &str, max: usize) -> String {
     }
 }
 
-/// Format a non-`Output` lifecycle event as one compact, colored detail line
-/// (no seq/timestamp columns, the caller prepends those). Returns `None` for
-/// events that carry no agent-scoped signal worth a row (e.g. `MailDelivered`,
-/// which is implied by the preceding `MailReceived`). The catch-all renders
-/// the bare kind tag so a newly added variant is never silently invisible.
+/// Format a lifecycle event as one compact colored detail line (caller
+/// prepends seq/timestamp). `None` suppresses the row. The catch-all renders
+/// the bare kind tag so a new variant is never silently invisible.
 pub fn format_lifecycle(event: &StreamEvent) -> Option<String> {
     let line = match event {
         StreamEvent::StateChange {
@@ -155,23 +152,18 @@ pub fn format_lifecycle(event: &StreamEvent) -> Option<String> {
         ),
         // MailDelivered is implied by MailReceived; suppress to cut noise.
         StreamEvent::MailDelivered { .. } => return None,
-        // Everything else (scroll/workspace/peer events that don't ride an
-        // agent stream, plus any future variant): show the bare kind tag so
-        // it is visible but unobtrusive.
         other => other.kind().dimmed().to_string(),
     };
     Some(line)
 }
 
-/// Parse and format a Claude Code stream-json line into human-readable output.
-/// Returns None if the event should be suppressed (e.g. rate_limit_event).
+/// Format a Claude Code stream-json line; `None` if suppressed.
 pub fn format_stream_json(line: &str) -> Option<String> {
     let v: serde_json::Value = serde_json::from_str(line).ok()?;
 
     let event_type = v.get("type")?.as_str()?;
 
-    // `rate_limit_event` is split from the catch-all `_` so the explicit
-    // suppression of that known event type stays self-documenting.
+    // `rate_limit_event` is split from `_` to document its explicit suppression.
     #[allow(clippy::match_same_arms)]
     match event_type {
         "system" => Some(format_system(&v)),
@@ -254,7 +246,6 @@ fn format_tool_call(name: &str, input: &serde_json::Value) -> String {
             }
         }
         _ => {
-            // For unknown tools, show a compact summary of the input
             if let Some(obj) = input.as_object() {
                 let keys: Vec<&str> = obj.keys().map(std::string::String::as_str).collect();
                 if !keys.is_empty() {
@@ -289,7 +280,6 @@ fn format_tool_result(v: &serde_json::Value) -> String {
             .unwrap_or("(error)");
         format!("  {} {} {}\n", "✗".red(), name.dimmed(), error_text.red())
     } else {
-        // Show a brief summary for successful tool results
         let output = v
             .get("content")
             .and_then(|c| c.as_str())
@@ -423,8 +413,6 @@ mod tests {
 
     #[test]
     fn lifecycle_mail_delivered_suppressed() {
-        // MailDelivered is implied by the preceding MailReceived; it must
-        // not produce a row so timelines aren't doubled up.
         let ev = StreamEvent::MailDelivered {
             mail_id: "m1".into(),
             recipient_id: "abc".into(),

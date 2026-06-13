@@ -16,13 +16,11 @@ pub enum AgentState {
     Complete,
     Failed,
     Banished,
-    /// Parked: the agent's last run finished, but it has a session_id and
-    /// at least one wake source (or was opted in via `--keep-alive`). Slot
-    /// is free; lifecycle is not final. Wakes back to `Active`.
+    /// Parked: last run finished but the agent has a session_id and a wake
+    /// source (or `--keep-alive`). Slot free, lifecycle not final; wakes → `Active`.
     Dormant,
-    /// Transient: the supervisor has decided to restart this agent and a
-    /// `PendingRestart` is queued. Slot is free (no live process), lifecycle
-    /// is not final. Transitions back to `Active` via `restart_dispatch`.
+    /// Restart queued by the supervisor. Slot free (no live process), lifecycle
+    /// not final; → `Active` via `restart_dispatch`.
     Restarting,
 }
 
@@ -38,9 +36,8 @@ impl_state_enum!(AgentState {
 });
 
 impl AgentState {
-    /// Slot accounting predicate: `true` when the agent is not consuming a
-    /// scheduler slot. Includes `Dormant` (parked, no live process) and
-    /// `Restarting` (mid-lifecycle, no live process).
+    /// Slot-accounting predicate: `true` when not consuming a scheduler slot.
+    /// Includes `Dormant` and `Restarting` (neither has a live process).
     pub const fn is_terminal(&self) -> bool {
         matches!(
             self,
@@ -48,15 +45,13 @@ impl AgentState {
         )
     }
 
-    /// Lifecycle predicate: `true` only when the agent is truly finished
-    /// and will not transition again. Excludes `Dormant` and `Restarting`,
-    /// which can still transition back to `Active`.
+    /// Lifecycle predicate: `true` only when finished for good. Excludes
+    /// `Dormant`/`Restarting`, which can still transition back to `Active`.
     pub const fn is_final(&self) -> bool {
         matches!(self, Self::Complete | Self::Failed | Self::Banished)
     }
 
-    /// Whether the supervisor should evaluate restart policy when an agent
-    /// reaches this state. Only `Failed` is considered supervisable.
+    /// Whether the supervisor evaluates restart policy at this state. Only `Failed`.
     pub const fn is_supervisable(&self) -> bool {
         matches!(self, Self::Failed)
     }
@@ -136,9 +131,9 @@ pub struct Agent {
     pub workspace_id: Option<WorkspaceId>,
 }
 
-/// One file an agent touched, as reported by git. `status` is the
-/// porcelain code (`M`, `A`, `D`, `??`, …) or `"M"` when derived from a
-/// numstat row. Line counts are git's; binary/untracked files report 0.
+/// One file an agent touched, per git. `status` is the porcelain code
+/// (`M`, `A`, `D`, `??`, …) or `"M"` from a numstat row. Line counts are
+/// git's; binary/untracked files report 0.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct FileChange {
     pub path: String,
@@ -147,20 +142,17 @@ pub struct FileChange {
     pub deletions: u64,
 }
 
-/// The orchestrator's structured record of one agent run: what it changed
-/// on disk (relative to the commit recorded at dispatch) and what it cost.
-/// A first-class object so review/merge workflows don't reconstruct the
-/// diff from stdout. Captured best-effort at completion; a non-git cwd
-/// yields a cost-only record (empty `files_changed`, `diff = None`).
+/// Structured record of one agent run: what it changed on disk (vs the commit
+/// at dispatch) and what it cost. Captured best-effort at completion; a non-git
+/// cwd yields a cost-only record (empty `files_changed`, `diff = None`).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentArtifact {
     pub agent_id: AgentId,
-    /// The `HEAD` commit at dispatch the diff is taken against, if the
-    /// cwd was a git work tree then.
+    /// `HEAD` at dispatch the diff is taken against, if cwd was a git tree then.
     pub base_commit: Option<String>,
     pub files_changed: Vec<FileChange>,
-    /// Unified diff text (tail-truncated past the cap), or `None` when
-    /// there were no tracked changes / no git.
+    /// Unified diff (tail-truncated past the cap), or `None` when no tracked
+    /// changes / no git.
     pub diff: Option<String>,
     pub insertions: u64,
     pub deletions: u64,

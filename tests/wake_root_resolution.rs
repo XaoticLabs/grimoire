@@ -1,7 +1,6 @@
-//! Contract test: `wake.add` file-watch roots resolve to the *agent's* cwd,
-//! regardless of what root the client sends. (Older CLIs sent their own
-//! current_dir, which silently watched the wrong directory whenever the
-//! operator's shell wasn't sitting in the agent's cwd.)
+//! Contract test: `wake.add` file-watch roots resolve to the agent's cwd,
+//! not whatever root the client sends (older CLIs sent their own current_dir
+//! and silently watched the wrong directory).
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -65,7 +64,7 @@ async fn wake_add_file_watch_root_is_agent_cwd_not_client_root() {
             "config": {
                 "globs": ["**"],
                 "ignore": [],
-                // A stale/foreign root, as an old CLI would send.
+                // foreign root, as an old CLI would send
                 "root": client_cwd.path(),
             },
         }),

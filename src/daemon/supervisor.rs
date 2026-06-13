@@ -1,15 +1,10 @@
-//! `Supervisor`: daemon-internal actor that owns restart-policy evaluation,
-//! a windowed budget per agent, a global rate counter, and a tree-depth cap.
+//! `Supervisor`: daemon-internal actor owning restart-policy evaluation with a
+//! per-agent windowed budget, global rate counter, and tree-depth cap.
 //!
-//! Responsibilities:
-//! - Subscribe to `StateChange { new_state: Failed }` events on the bus.
-//! - For agents with an active restart policy, decide whether to schedule a
-//!   restart, escalate (when budget is exhausted and `escalate_to` is set),
-//!   or no-op.
-//! - Maintain a min-heap of `PendingRestart { agent_id, attempt, fire_at }`
-//!   so the scheduler's `tick_supervision()` can drain due entries.
-//! - Persist every decision to `restart_history` for windowed budget
-//!   evaluation and audit.
+//! On `Failed` state changes it decides to schedule a restart, escalate (budget
+//! exhausted + `escalate_to` set), or no-op, maintaining a min-heap that the
+//! scheduler's `tick_supervision()` drains. Every decision is persisted to
+//! `restart_history` for windowed budget evaluation and audit.
 
 use std::cmp::Reverse;
 use std::collections::BinaryHeap;
@@ -61,11 +56,9 @@ pub enum RestartDecision {
     NotSupervised,
 }
 
-/// Result of an operator-initiated `manual_restart`. Mutually exclusive
-/// — either the restart was queued (with the attempt number) or it was
-/// declined with a stable reason code that the RPC layer surfaces
-/// verbatim. Reason codes: `not_supervised`, `tree_depth_exceeded`,
-/// `already_pending`, `bad_state`.
+/// Result of an operator-initiated `manual_restart`. Reason codes are stable
+/// and surfaced verbatim by the RPC layer: `not_supervised`,
+/// `tree_depth_exceeded`, `already_pending`, `bad_state`.
 #[derive(Debug, Clone)]
 pub enum ManualRestartOutcome {
     Scheduled { attempt: u32 },
@@ -108,8 +101,8 @@ impl RateCounter {
 /// Sender seam for escalation mail. Default impl writes mail rows directly.
 #[async_trait]
 pub trait EscalationMailSender: Send + Sync {
-    /// Returns the number of mail rows written (`fanout_count`) and a vector
-    /// of recipient agent IDs whose `escalation_depth` should be propagated.
+    /// Returns rows written and recipient IDs whose `escalation_depth` must be
+    /// propagated.
     async fn send_escalation(
         &self,
         sender_id: &str,
@@ -220,8 +213,7 @@ impl EscalationMailSender for DbEscalationMailSender {
                 })
             }
             Address::FederatedAgent { .. } => {
-                // Supervisor escalation does not yet cross daemons. Surface
-                // a clear error so operators can re-target locally.
+                // Escalation can't cross daemons yet; surface a clear error.
                 anyhow::bail!("escalate_to_federated_unsupported")
             }
         }
@@ -318,7 +310,7 @@ impl Supervisor {
         if !new_state.is_supervisable() {
             return Ok(());
         }
-        // Idempotency: if the agent is already pending, drop.
+        // Idempotency: drop if already pending.
         {
             let pending = self.pending.lock().await;
             if pending.iter().any(|p| p.0.agent_id == agent_id) {
@@ -357,7 +349,7 @@ impl Supervisor {
             return Ok(RestartDecision::NotSupervised);
         }
 
-        // Tree-depth check FIRST: it overrides budget.
+        // Tree-depth check first: it overrides budget.
         let depth = self.db.get_escalation_depth(agent_id).unwrap_or(0);
         if depth + 1 > self.tree_depth_cap {
             return Ok(RestartDecision::BudgetExhausted {
@@ -399,8 +391,7 @@ impl Supervisor {
         })
     }
 
-    /// Persist scheduling, flip state to Restarting, push onto the heap,
-    /// publish RestartScheduled.
+    /// Persist scheduling, flip to Restarting, push onto the heap, publish.
     pub async fn schedule_restart(
         self: &Arc<Self>,
         agent_id: &str,
@@ -420,8 +411,7 @@ impl Supervisor {
             error_summary.as_deref(),
         )?;
 
-        // Precondition: prior state is Failed. The shared core handles
-        // state flip + heap push + RestartScheduled publish.
+        // Precondition: prior state is Failed.
         self.enqueue_restart_core(
             agent_id,
             attempt,
@@ -433,12 +423,10 @@ impl Supervisor {
         .await
     }
 
-    /// Shared core for `schedule_restart` and `manual_restart`. Flips
-    /// `old_state` → `Restarting`, pushes onto the pending heap,
-    /// publishes `StateChange` + `RestartScheduled`. Callers own the
-    /// `restart_history` row write — this path is purely the dispatch
-    /// half, so the two history shapes (policy vs manual) stay distinct
-    /// in the audit trail.
+    /// Dispatch half shared by `schedule_restart` and `manual_restart`: flips
+    /// `old_state` → `Restarting`, pushes the heap, publishes `StateChange` +
+    /// `RestartScheduled`. Callers own the `restart_history` write so the
+    /// policy-vs-manual shapes stay distinct in the audit trail.
     async fn enqueue_restart_core(
         self: &Arc<Self>,
         agent_id: &str,
@@ -473,14 +461,10 @@ impl Supervisor {
         Ok(())
     }
 
-    /// Operator-initiated restart. Bypasses the windowed budget (the
-    /// whole point of a manual override) but still respects the tree-
-    /// depth cap. Writes a `Scheduled` history row tagged `manual:` in
-    /// the error_summary so the audit trail distinguishes it from a
-    /// policy-driven restart, then dispatches via the shared
-    /// `enqueue_restart_core` path.
+    /// Operator-initiated restart: bypasses the windowed budget but still
+    /// respects the tree-depth cap. Writes a `Scheduled` history row tagged
+    /// `manual:` so the audit trail distinguishes it from a policy restart.
     pub async fn manual_restart(self: &Arc<Self>, agent_id: &str) -> Result<ManualRestartOutcome> {
-        // Refuse if there's already a pending restart for this agent.
         {
             let pending = self.pending.lock().await;
             if pending.iter().any(|p| p.0.agent_id == agent_id) {
@@ -501,8 +485,7 @@ impl Supervisor {
             });
         }
 
-        // Tree-depth check stays — manual restart still can't violate the
-        // structural invariant.
+        // Tree-depth cap still applies to manual restarts.
         let depth = self.db.get_escalation_depth(agent_id).unwrap_or(0);
         if depth + 1 > self.tree_depth_cap {
             return Ok(ManualRestartOutcome::Rejected {
@@ -510,8 +493,7 @@ impl Supervisor {
             });
         }
 
-        // Manual restart only makes sense from a non-terminal-ish state.
-        // Specifically: Failed, Dormant, Complete.
+        // Only valid from Failed, Dormant, or Complete.
         let state = match self.db.get_agent(agent_id) {
             Ok(Some(a)) => a.state,
             _ => {
@@ -529,8 +511,8 @@ impl Supervisor {
             });
         }
 
-        // Reuse the budget counter to compute the attempt number so
-        // history stays a contiguous monotonic sequence.
+        // Reuse the budget counter for the attempt number so history stays a
+        // contiguous monotonic sequence.
         let max_restarts = cfg.max_restarts.unwrap_or(0);
         let window_secs = i64::from(cfg.window_secs.unwrap_or(0));
         let now = self.clock.now();
@@ -541,7 +523,6 @@ impl Supervisor {
             .unwrap_or(0);
         let attempt = count + 1;
 
-        // Annotate the history row so the audit trail is honest.
         let summary = format!("manual: operator override (budget was {count}/{max_restarts})");
         self.db.insert_restart_history_row(
             agent_id,
@@ -555,9 +536,7 @@ impl Supervisor {
         Ok(ManualRestartOutcome::Scheduled { attempt })
     }
 
-    /// Operator-initiated escalation reset. Sets `escalation_depth` to 0
-    /// and returns the previous value so the caller can confirm the
-    /// override actually did something.
+    /// Reset `escalation_depth` to 0; returns the previous value.
     pub fn clear_escalation(&self, agent_id: &str) -> Result<u32> {
         let prev = self.db.get_escalation_depth(agent_id).unwrap_or(0);
         self.db.set_escalation_depth(agent_id, 0)?;
@@ -616,8 +595,8 @@ impl Supervisor {
 
         let candidates = self.db.list_failed_with_active_policy().unwrap_or_default();
         for id in candidates {
-            // Skip if there's an Escalated event newer than the latest
-            // restart_history row (meaning we already escalated this agent).
+            // Skip if already escalated (Escalated event newer than the latest
+            // restart_history row).
             if self
                 .db
                 .has_escalated_event_after_latest_history(&id)
@@ -629,7 +608,7 @@ impl Supervisor {
             let decision = self.evaluate(&id).await?;
             match decision {
                 RestartDecision::Restart { attempt, .. } => {
-                    // Use now (immediate); the original window has elapsed.
+                    // Fire immediately; the original window has elapsed.
                     let now = self.clock.now();
                     self.schedule_restart(&id, attempt, now, false).await?;
                 }
@@ -660,12 +639,11 @@ impl Supervisor {
             reason: reason.to_string(),
         });
 
-        // Tree-depth-exceeded does NOT escalate (point is to stop).
+        // Tree-depth-exceeded does NOT escalate (the point is to stop).
         if reason == "tree_depth_exceeded" {
             return Ok(());
         }
 
-        // Try to escalate if configured.
         #[allow(clippy::collapsible_if)]
         if let Some(cfg) = self.db.get_supervision(agent_id)? {
             if let Some(target) = cfg.escalate_to {
@@ -705,12 +683,8 @@ impl Supervisor {
         Ok(())
     }
 
-    /// Best-effort summary of the agent's last error: read recent
-    /// agent_events looking for a stderr-style entry, fall back to None.
+    /// Best-effort: newest stderr event payload (truncated), else None.
     fn last_error_summary(&self, agent_id: &str) -> Option<String> {
-        // Cheap heuristic. Get the agent's last few events and grep for any
-        // stderr line. If none, return None and callers fall back to
-        // "unknown".
         let evts = self.db.get_events(agent_id, Some(20)).ok()?;
         for e in evts.iter().rev() {
             if e.event_type == "stderr" && !e.payload.is_empty() {

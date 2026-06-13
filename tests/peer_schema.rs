@@ -1,9 +1,4 @@
 //! Contract tests for federation schema, dedupe, and cascade.
-//!
-//! Boots a fresh `Database` against a tempdir and asserts the four
-//! federation tables exist and behave correctly (UNIQUE on
-//! `(peer_id, sender_seq)`, PK dedupe on `peer_inbox`, FK cascade from
-//! `peers` to `peer_outbox`).
 
 use grimoire::daemon::persistence::{Database, unix_now};
 use grimoire::shared::types::{Peer, PeerState};
@@ -12,8 +7,7 @@ use std::sync::Arc;
 fn fresh_db() -> Arc<Database> {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("grimoire.db");
-    // Leak the tempdir so the file outlives this fn.
-    std::mem::forget(dir);
+    std::mem::forget(dir); // leak tempdir so the db file outlives this fn
     Arc::new(Database::open(&path).unwrap())
 }
 
@@ -61,7 +55,6 @@ fn peers_cascade_deletes_outbox() {
     let db = fresh_db();
     let peer = fake_peer("beta", "0123456789abcdef0123456789abcdef");
     db.insert_peer(&peer).unwrap();
-    // Insert a pending mail+outbox row.
     let mail = grimoire::shared::types::Mail {
         id: "m1".into(),
         recipient_id: "agent://grimd-12345678/abcd1234".into(),
@@ -118,9 +111,8 @@ fn topic_federation_direction_merge_idempotent() {
     assert_eq!(dir2, FederationDirection::Both);
 }
 
-/// `workspace_federations` mirrors `topic_federations`: Outbound + Inbound
-/// merges to Both, and the row is keyed UNIQUE on (peer_id, workspace_id)
-/// so a re-federate is an upsert, not a duplicate.
+/// UNIQUE(peer_id, workspace_id) means re-federate is an upsert, and
+/// Outbound + Inbound merges to Both.
 #[test]
 fn workspace_federation_merges_and_lists() {
     use chrono::Utc;
@@ -129,7 +121,6 @@ fn workspace_federation_merges_and_lists() {
     let peer = fake_peer("delta", "abcdef0123456789abcdef0123456789");
     db.insert_peer(&peer).unwrap();
 
-    // Home-side: a local workspace gets opted into outbound federation.
     let ws = grimoire::shared::types::Workspace {
         id: "frontend".into(),
         path: "/tmp/frontend".into(),
@@ -168,16 +159,14 @@ fn workspace_federation_merges_and_lists() {
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0].direction, FederationDirection::Both);
 
-    // Outbound-peers query honors direction.
     let peers = db.workspace_outbound_peers("frontend").unwrap();
     assert_eq!(peers, vec![peer.id.clone()]);
-    // Inbound-authz mirror.
     assert!(
         db.workspace_federation_inbound_authorized(&peer.id, "frontend")
             .unwrap()
     );
 
-    // Unfederate is idempotent.
+    // unfederate is idempotent
     assert_eq!(
         db.delete_workspace_federation(&peer.id, "frontend")
             .unwrap(),
@@ -190,10 +179,8 @@ fn workspace_federation_merges_and_lists() {
     );
 }
 
-/// A Shadow workspace row carries `home_daemon_id` + `home_workspace_id`,
-/// lives at the `shadow://…` sentinel path, and roundtrips through
-/// `get_workspace`. `kind=Local` is the default for every pre-existing row
-/// per the migration.
+/// Shadow rows carry home ids and live at the `shadow://…` sentinel path,
+/// which preserves UNIQUE(path) against the real local workspace.
 #[test]
 fn shadow_workspace_roundtrips() {
     use chrono::Utc;
@@ -217,9 +204,6 @@ fn shadow_workspace_roundtrips() {
     );
 }
 
-/// `find_shadow_workspace` resolves a `(home_daemon_id,
-/// home_workspace_id)` pair back to the local shadow row, and returns
-/// `None` when there is no matching shadow.
 #[test]
 fn find_shadow_workspace_resolves() {
     use chrono::Utc;
@@ -245,27 +229,20 @@ fn find_shadow_workspace_resolves() {
     );
 }
 
-/// Scroll dispatch wire layer round-trips.
-///
-/// - `peers.accept_scroll_dispatch` defaults to off; `set_*` toggles it.
-/// - `scroll_dispatch_insert` + `set_remote_agent_id` updates the
-///   durable row.
-/// - `scroll_dispatch_inbox_record` is idempotent; replays yield the
-///   stored `local_agent_id` instead of spawning a duplicate.
+/// Scroll dispatch wire layer round-trips; inbox replay yields the stored
+/// `local_agent_id` instead of spawning a duplicate.
 #[test]
 fn scroll_dispatch_schema_and_inbox() {
     let db = fresh_db();
     let peer = fake_peer("zeta", "0123456789abcdef0123456789abcdef");
     db.insert_peer(&peer).unwrap();
 
-    // accept flag defaults off, toggle on, then back off.
     assert!(!db.peer_accept_scroll_dispatch(&peer.id).unwrap());
     db.set_peer_accept_scroll_dispatch(&peer.id, true).unwrap();
     assert!(db.peer_accept_scroll_dispatch(&peer.id).unwrap());
     db.set_peer_accept_scroll_dispatch(&peer.id, false).unwrap();
     assert!(!db.peer_accept_scroll_dispatch(&peer.id).unwrap());
 
-    // Dispatch row insert + remote agent assignment.
     db.scroll_dispatch_insert("disp1", "scr1", "task1", &peer.id)
         .unwrap();
     db.scroll_dispatch_set_remote_agent("scr1", "task1", &peer.id, "remote-agent-a")
@@ -277,8 +254,6 @@ fn scroll_dispatch_schema_and_inbox() {
     assert_eq!(row.task_id, "task1");
     assert_eq!(row.state, "dispatched");
 
-    // Inbox dedupe: first sighting returns Ok(None), replay returns
-    // the recorded local agent id.
     assert!(
         db.scroll_dispatch_inbox_lookup("homeA", 7)
             .unwrap()
@@ -290,7 +265,7 @@ fn scroll_dispatch_schema_and_inbox() {
         db.scroll_dispatch_inbox_lookup("homeA", 7).unwrap(),
         Some("local-agent-x".to_string())
     );
-    // Replay record is a no-op (INSERT OR IGNORE).
+    // replay record is a no-op (INSERT OR IGNORE)
     db.scroll_dispatch_inbox_record("homeA", 7, "ghost-agent")
         .unwrap();
     assert_eq!(
@@ -299,10 +274,6 @@ fn scroll_dispatch_schema_and_inbox() {
     );
 }
 
-/// Agent-lifecycle federation rows merge direction the same way
-/// workspace/namespace federations do; `outbound_peers` honors
-/// direction; inbox dedupe is `INSERT OR IGNORE` on
-/// `(sender_daemon_id, sender_seq)`.
 #[test]
 fn agent_lifecycle_federation_and_inbox() {
     use grimoire::shared::types::FederationDirection;
@@ -326,7 +297,6 @@ fn agent_lifecycle_federation_and_inbox() {
         "Both direction includes inbound"
     );
 
-    // Inbox dedupe.
     assert!(db.agent_lifecycle_inbox_record("homeA", 1).unwrap());
     assert!(
         !db.agent_lifecycle_inbox_record("homeA", 1).unwrap(),
@@ -338,15 +308,11 @@ fn agent_lifecycle_federation_and_inbox() {
         "different sender is independent"
     );
 
-    // Unfederate is idempotent.
+    // unfederate is idempotent
     assert_eq!(db.delete_agent_lifecycle_federation(&peer.id).unwrap(), 1);
     assert_eq!(db.delete_agent_lifecycle_federation(&peer.id).unwrap(), 0);
 }
 
-/// The inbox dedupe table is INSERT-OR-IGNORE keyed on
-/// `(sender_daemon_id, sender_seq)` — a replayed event returns `false`
-/// so the receiver knows to drop without republishing. Different
-/// senders sharing the same seq are independent rows.
 #[test]
 fn workspace_event_inbox_dedupes() {
     let db = fresh_db();

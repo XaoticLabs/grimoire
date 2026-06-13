@@ -177,12 +177,9 @@ pub(super) async fn handle_scroll_reject(
     )
 }
 
-/// Dispatch one scroll task to a peer.
-///
-/// The coordinator looks up the task, serializes the payload, writes
-/// the durable `scroll_task_dispatches` row, and enqueues the wire
-/// outbox row. The receiver's local agent id flows back via the
-/// `ScrollTaskDispatchAck` ack handler, which patches the row.
+/// Dispatch one scroll task to a peer: write the durable
+/// `scroll_task_dispatches` row and enqueue the wire outbox row. The receiver's
+/// local agent id flows back via the `ScrollTaskDispatchAck` handler.
 pub(super) async fn handle_scroll_dispatch_task(
     peer_registry: &Arc<PeerRegistry>,
     req: RpcRequest,

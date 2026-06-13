@@ -1,24 +1,7 @@
-//! Live two-daemon end-to-end federation tests.
-//!
-//! Boots two in-process daemons (tempdir DB + EventBus + PeerRegistry +
-//! mTLS Tonic server each, same harness shape as `peer_e2e.rs`) and
-//! exercises the federation flows over real gRPC:
-//!
-//! - Workspace file-event federation (`WorkspaceEventDeliver`): a
-//!   simulated watcher batch on daemon A crosses the wire and is
-//!   republished on daemon B's shadow workspace (bus event + topic mail).
-//! - `RemoteFileWatch` wake: an agent on B armed against the
-//!   shadow workspace wakes when A's federated file event arrives.
-//! - `RemoteAgentCompletion` wake: agent lifecycle federates via
-//!   `AgentLifecycleDeliver`; an agent on B wakes when its remote
-//!   parent on A completes.
-//! - `ScrollTaskDispatch`: A dispatches a scroll task to B
-//!   (opt-in), B queues a local agent and acks; B's completion ships
-//!   back to A as a `RemoteAgentStateChanged`.
-//!
-//! The file events are simulated at the outbox/db level on the producer
-//! (no real notify watcher), but every assertion below the enqueue is
-//! driven by real gRPC traffic between the two daemons.
+//! Live two-daemon federation tests: two in-process mTLS daemons exercise
+//! workspace-event, remote-file-watch, remote-agent-completion, and
+//! scroll-dispatch flows over real gRPC. File events are simulated at the
+//! outbox level (no notify watcher); everything past the enqueue is real wire traffic.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -44,13 +27,11 @@ use grimoire::shared::types::{
     Workspace, WorkspaceKind, WorkspaceState,
 };
 
-/// Single bearer token shared by both directions of a link: each side's
-/// row for the other carries the same token, so whichever side dials,
-/// the receiver's token-hash lookup resolves to its row for the caller.
+/// Shared by both link directions: each side's row for the other carries the
+/// same token, so the receiver's token-hash lookup resolves regardless of dialer.
 const TOKEN: &str = "0123456789abcdef0123456789abcdef0123456789abcdef";
 
-/// Deadline for any cross-daemon observation. Generous for CI; the
-/// polling loops below return as soon as the condition holds.
+/// Deadline for cross-daemon observations; poll loops return early once satisfied.
 const WAIT: Duration = Duration::from_secs(10);
 const POLL: Duration = Duration::from_millis(25);
 
@@ -69,9 +50,8 @@ impl TestDaemon {
     }
 }
 
-/// Boot one in-process daemon: tempdir DB, EventBus, PeerRegistry, and
-/// an mTLS peer listener presenting `identity` and trusting
-/// `trusted_client_certs` as the client-CA bundle.
+/// Boot one in-process daemon with an mTLS peer listener presenting `identity`
+/// and trusting `trusted_client_certs` as the client-CA bundle.
 async fn boot_daemon(
     daemon_id: &str,
     identity: Identity,
@@ -111,8 +91,7 @@ async fn boot_daemon(
             .serve(addr)
             .await;
     });
-    // Warm-up only; the outbound client retries with backoff if the
-    // listener isn't accepting yet, so this is not load-bearing.
+    // Warm-up only; the client retries with backoff, so this is not load-bearing.
     tokio::time::sleep(Duration::from_millis(100)).await;
 
     TestDaemon {
@@ -135,9 +114,8 @@ async fn boot_pair() -> (TestDaemon, TestDaemon) {
     (a, b)
 }
 
-/// Seed `on`'s peer row representing `from` (the inbound side of a
-/// link): token hash for handshake auth, plus `from`'s url + pinned
-/// cert so `on` can also dial out over the same row (reverse link).
+/// Seed `on`'s peer row for `from`: token hash for handshake auth, plus `from`'s
+/// url + pinned cert so `on` can also dial out over the same row (reverse link).
 fn seed_peer_row(on: &TestDaemon, id: &str, from: &TestDaemon, daemon_id: &str) {
     let token_hash = blake3::hash(TOKEN.as_bytes()).as_bytes().to_vec();
     let peer = Peer {
@@ -155,9 +133,8 @@ fn seed_peer_row(on: &TestDaemon, id: &str, from: &TestDaemon, daemon_id: &str) 
     on.db.insert_peer(&peer).unwrap();
 }
 
-/// Establish the A -> B link: seed B's row for A (id `a_on_b_id`), then
-/// register B as a peer on A and wait for the handshake. Returns A's
-/// peer row for B (daemon_id already resolved to B's).
+/// Establish the A -> B link: seed B's row for A, register B as a peer on A,
+/// and wait for the handshake. Returns A's peer row for B (daemon_id resolved).
 async fn link_a_to_b(a: &TestDaemon, b: &TestDaemon, a_on_b_id: &str) -> Peer {
     seed_peer_row(b, a_on_b_id, a, &a.daemon_id);
     let peer_b = a
@@ -184,9 +161,8 @@ async fn wait_for<T, F: FnMut() -> Option<T>>(what: &str, mut f: F) -> T {
     }
 }
 
-/// Drain a bus subscription until `pred` extracts a value. Lagged
-/// receivers resubscribe-free: missed events only matter if the awaited
-/// one is dropped, in which case the deadline fails the test loudly.
+/// Drain a bus subscription until `pred` extracts a value. Lag is tolerated; a
+/// dropped awaited event surfaces as a deadline failure.
 async fn expect_event<T, F: FnMut(&StreamEvent) -> Option<T>>(
     rx: &mut tokio::sync::broadcast::Receiver<StreamEvent>,
     what: &str,
@@ -269,10 +245,9 @@ fn federate_workspace(a: &TestDaemon, peer_b_id: &str, b: &TestDaemon, a_on_b_id
     shadow_id
 }
 
-/// Simulate the producer side of a `WorkspaceWatcher` batch on `d`: one
-/// outbox row per outbound-federated peer plus a drainer wake — the
-/// exact steps `workspace_watcher::fanout_to_federated_peers` performs
-/// after a notify event, minus the real filesystem watcher.
+/// Simulate a `WorkspaceWatcher` batch on `d`: one outbox row per outbound peer
+/// plus a drainer wake — the steps `workspace_watcher::fanout_to_federated_peers`
+/// runs after a notify event, minus the real filesystem watcher.
 async fn fanout_workspace_event(
     d: &TestDaemon,
     workspace_id: &str,
@@ -294,17 +269,16 @@ async fn fanout_workspace_event(
     }
 }
 
-/// A file-change batch on A's federated workspace crosses the wire
-/// and is republished on B's shadow workspace — both as a
-/// `WorkspaceFileChanged` bus event and as `workspace/<id>/files` topic
-/// mail to local subscribers.
+/// A file-change batch on A's federated workspace crosses the wire and is
+/// republished on B's shadow workspace as both a `WorkspaceFileChanged` bus
+/// event and `workspace/<id>/files` topic mail to local subscribers.
 #[tokio::test]
 async fn workspace_file_event_federates_to_shadow_workspace() {
     let (a, b) = boot_pair().await;
     let peer_b = link_a_to_b(&a, &b, "a-on-b").await;
     let shadow_id = federate_workspace(&a, &peer_b.id, &b, "a-on-b");
 
-    // A local subscriber on B's shadow files topic.
+    // Local subscriber on B's shadow files topic.
     seed_agent(&b.db, "subB1", AgentState::Dormant);
     b.db.insert_subscription(&Subscription {
         id: "sub1".into(),
@@ -323,7 +297,7 @@ async fn workspace_file_event_federates_to_shadow_workspace() {
     )
     .await;
 
-    // The shadow republish carries B's local workspace id and A's paths.
+    // Republish carries B's local workspace id and A's paths.
     let paths = expect_event(&mut rx_b, "WorkspaceFileChanged on B's shadow", |ev| {
         if let StreamEvent::WorkspaceFileChanged {
             workspace_id,
@@ -339,7 +313,6 @@ async fn workspace_file_event_federates_to_shadow_workspace() {
     .await;
     assert_eq!(paths, vec!["src/main.rs".to_string(), "README.md".into()]);
 
-    // Topic mail landed for the local subscriber.
     let mail = wait_for("topic mail for subB1", || {
         b.db.list_pending_wake_eligible("subB1")
             .unwrap()
@@ -354,7 +327,7 @@ async fn workspace_file_event_federates_to_shadow_workspace() {
         mail.body
     );
 
-    // The ack drained A's outbox row (delivered rows are deleted).
+    // The ack deletes A's delivered outbox row.
     wait_for("A's workspace outbox to drain", || {
         let pending =
             a.db.workspace_event_next_outbox(&peer_b.id, unix_now() + 120)
@@ -364,9 +337,8 @@ async fn workspace_file_event_federates_to_shadow_workspace() {
     .await;
 }
 
-/// An agent on B with a `remote_file_watch` wake source against
-/// the shadow workspace wakes (wake mail row) when A's federated file
-/// event arrives over the wire. Ignore globs are honored.
+/// An agent on B with a `remote_file_watch` wake source against the shadow
+/// workspace wakes when A's federated file event arrives. Ignore globs are honored.
 #[tokio::test]
 async fn remote_file_watch_wake_fires_across_daemons() {
     let (a, b) = boot_pair().await;
@@ -426,9 +398,8 @@ async fn remote_file_watch_wake_fires_across_daemons() {
 }
 
 /// Agent lifecycle on A federates to B; an agent on B with a
-/// `remote_agent_completion` wake source on A's parent wakes when the
-/// parent completes. This is the wire path behind
-/// `grim summon --on-remote-parent <id> --sender-daemon <daemon-id>`.
+/// `remote_agent_completion` wake source on A's parent wakes when the parent
+/// completes — the wire path behind `grim summon --on-remote-parent`.
 #[tokio::test]
 async fn remote_agent_completion_wake_fires_across_daemons() {
     let (a, b) = boot_pair().await;
@@ -479,7 +450,7 @@ async fn remote_agent_completion_wake_fires_across_daemons() {
         new_state: AgentState::Complete,
     });
 
-    // B republishes the federated transition...
+    // B republishes the federated transition, then fires the wake mail.
     expect_event(&mut rx_b, "RemoteAgentStateChanged on B", |ev| {
         if let StreamEvent::RemoteAgentStateChanged {
             sender_daemon_id,
@@ -498,7 +469,6 @@ async fn remote_agent_completion_wake_fires_across_daemons() {
     })
     .await;
 
-    // ...and the wake source fires a wake mail at the child.
     let mail = wait_for("wake mail for childB1", || {
         b.db.list_pending_wake_eligible("childB1")
             .unwrap()
@@ -518,16 +488,13 @@ async fn remote_agent_completion_wake_fires_across_daemons() {
     );
 }
 
-/// A dispatches a scroll task to B over the wire; B (opted in via
-/// `accept_scroll_dispatch`) queues a local agent and acks with its id,
-/// which patches A's durable dispatch row. B's agent completing then
-/// federates back to A as a `RemoteAgentStateChanged` (the signal the
-/// ScrollKeeper's subscriber consumes to settle the task).
+/// A dispatches a scroll task to B; B (opted in via `accept_scroll_dispatch`)
+/// queues a local agent and acks with its id, patching A's dispatch row. B's
+/// completion federates back as a `RemoteAgentStateChanged`.
 ///
-/// Covered slice: outbox -> wire -> receiver agent+queue rows -> ack ->
-/// coordinator row patch -> lifecycle return leg. Not covered here:
-/// actually *running* B's queued agent (needs a provider/scheduler) and
-/// the ScrollKeeper DAG bookkeeping on A (unit-tested in scroll_keeper).
+/// Covers outbox -> wire -> receiver agent+queue rows -> ack -> row patch ->
+/// lifecycle return leg. Not covered: running B's queued agent (needs a
+/// scheduler) and A's ScrollKeeper DAG bookkeeping (unit-tested in scroll_keeper).
 #[tokio::test]
 async fn scroll_dispatch_round_trip_with_lifecycle_return() {
     let (a, b) = boot_pair().await;
@@ -537,8 +504,7 @@ async fn scroll_dispatch_round_trip_with_lifecycle_return() {
     b.db.set_peer_accept_scroll_dispatch("a-on-b", true)
         .unwrap();
 
-    // Reverse link B -> A over B's seeded row (url + pinned cert are
-    // already on it), so B's lifecycle outbox has a drainer to A.
+    // Reverse link B -> A over B's seeded row, so B's lifecycle outbox can drain to A.
     let a_on_b = b.db.get_peer("a-on-b").unwrap().unwrap();
     b.registry.ensure_connected(&a_on_b).await.unwrap();
 
@@ -561,9 +527,8 @@ async fn scroll_dispatch_round_trip_with_lifecycle_return() {
 
     let mut rx_a = a.bus.subscribe();
 
-    // Coordinator side: durable dispatch row + wire outbox row, the
-    // same steps `handle_scroll_dispatch_task` performs after task
-    // lookup (the RPC handler itself is daemon-internal).
+    // Coordinator side: durable dispatch row + wire outbox row, as
+    // `handle_scroll_dispatch_task` does after task lookup.
     let payload = ScrollDispatchPayload {
         scroll_id: "scr1".into(),
         task_id: "task1".into(),
@@ -647,8 +612,7 @@ async fn scroll_dispatch_round_trip_with_lifecycle_return() {
 #[tokio::test]
 async fn first_inbound_session_uses_handshake_daemon_id() {
     let (a, b) = boot_pair().await;
-    // Seed B's row for A with an UNRESOLVED daemon_id, exactly the
-    // state `peer add` leaves it in before any outbound handshake.
+    // Seed B's row for A with an UNRESOLVED daemon_id, as `peer add` leaves it.
     seed_peer_row(&b, "a-on-b", &a, "");
     let peer_b = a
         .registry

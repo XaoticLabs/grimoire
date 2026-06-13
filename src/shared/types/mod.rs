@@ -4,9 +4,8 @@
 
 pub type AgentId = String;
 
-/// Stable 8-hex identifier minted on first `grimd` boot. Two daemons in a
-/// federation use distinct DaemonIds to disambiguate agent addresses.
-/// Display form prefixes `grimd-`; storage is the bare 8-hex string.
+/// Stable 8-hex id minted on first `grimd` boot; disambiguates agent addresses
+/// across a federation. Display form prefixes `grimd-`; storage is bare 8-hex.
 pub type DaemonId = String;
 
 /// `^[0-9a-f]{8}$`.

@@ -1,9 +1,5 @@
-//! Workspace + memory KV database methods, kept separate from the main
-//! `persistence.rs` to keep this v1 feature self-contained.
-//!
-//! Uses the same `Database` connection pool via `with_test_conn` is not the
-//! pattern, these are plain methods on `Database` added via an `impl` block
-//! in this module.
+//! Workspace + memory KV `Database` methods, kept separate from
+//! `persistence.rs` to keep this feature self-contained.
 
 use anyhow::{Result, anyhow};
 use chrono::{DateTime, TimeZone, Utc};
@@ -17,13 +13,12 @@ use crate::shared::types::{
 
 use super::persistence::Database;
 
-/// Outcome of a memory CAS write, surfaces the prior version on conflict so
-/// the caller can retry trivially (1 RTT).
+/// Outcome of a memory CAS write; surfaces the prior version on conflict so the
+/// caller can retry in one round trip.
 #[derive(Debug)]
 pub enum MemoryWriteOutcome {
-    /// Success; row now lives at `version`.
     Written { version: u64 },
-    /// CAS conflict; the row's current version (0 = not present).
+    /// CAS conflict; current version (0 = not present).
     Conflict { current_version: u64 },
 }
 
@@ -131,10 +126,9 @@ impl Database {
         Ok(())
     }
 
-    /// Workspaces with an on-disk worktree. Shadow workspaces are
-    /// excluded — their `path` is the `shadow://…` sentinel, not a
-    /// real directory, so the boot reconciler would otherwise treat
-    /// them as orphan rows and delete them.
+    /// Workspaces with an on-disk worktree. Excludes shadows, whose `path` is
+    /// the `shadow://…` sentinel — else the boot reconciler deletes them as
+    /// orphans.
     pub fn list_workspace_paths(&self) -> Result<Vec<(String, PathBuf, WorkspaceState)>> {
         let conn = self.workspace_conn_lock();
         let mut stmt =
@@ -157,13 +151,12 @@ impl Database {
 
     pub fn insert_workspace_assignment(&self, workspace_id: &str, agent_id: &str) -> Result<()> {
         let conn = self.workspace_conn_lock();
-        // ON CONFLICT DO NOTHING to make assignment idempotent.
+        // INSERT OR IGNORE keeps assignment idempotent.
         conn.execute(
             "INSERT OR IGNORE INTO workspace_assignments (workspace_id, agent_id, assigned_at)
              VALUES (?1, ?2, ?3)",
             params![workspace_id, agent_id, Utc::now().timestamp()],
         )?;
-        // Also stamp agents.workspace_id.
         conn.execute(
             "UPDATE agents SET workspace_id = ?1 WHERE id = ?2",
             params![workspace_id, agent_id],
@@ -226,8 +219,7 @@ impl Database {
         }
     }
 
-    /// Returns: previous version (0 if absent), and the size of the existing
-    /// value. Used by put/delete CAS pre-check.
+    /// (version, value size); version 0 if absent. CAS pre-check for put/delete.
     pub fn memory_current_version_and_size(
         &self,
         workspace_id: &str,
@@ -261,9 +253,8 @@ impl Database {
         Ok(total.unwrap_or(0).max(0) as u64)
     }
 
-    /// Optimistic-CAS put: writes only if `expected_version` matches the
-    /// current version (or `None` for unconditional). Returns the new version
-    /// or a `Conflict` outcome with the current version.
+    /// Optimistic-CAS put: writes only if `expected_version` matches current
+    /// (`None` = unconditional).
     pub fn memory_put_cas(
         &self,
         workspace_id: &str,
@@ -317,10 +308,8 @@ impl Database {
         })
     }
 
-    /// Optimistic-CAS delete. If the key doesn't exist, this is a no-op
-    /// (idempotent) and returns `Written { version: 0 }` to signal nothing
-    /// happened. The caller knows by querying first whether to emit a
-    /// `MemoryDeleted` event.
+    /// Optimistic-CAS delete. Missing key is an idempotent no-op returning
+    /// `Written { version: 0 }`, signalling the caller to skip the event.
     pub fn memory_delete_cas(
         &self,
         workspace_id: &str,
@@ -357,9 +346,8 @@ impl Database {
         })
     }
 
-    /// Bulk-copy every `workspace_memory` row from `from_workspace` into
-    /// `to_workspace`. Skips keys that already exist in the destination
-    /// (idempotent re-copy). Returns the number of rows inserted.
+    /// Bulk-copy `workspace_memory` rows into `to_workspace`, skipping keys
+    /// that already exist (idempotent re-copy). Returns rows inserted.
     pub fn memory_copy_workspace(&self, from_workspace: &str, to_workspace: &str) -> Result<usize> {
         let conn = self.workspace_conn_lock();
         let now = Utc::now().timestamp();
@@ -428,10 +416,9 @@ impl Database {
 
     // --- Workspace federation ---
 
-    /// Upsert a `workspace_federations` row, merging the existing
-    /// direction with the requested one the same way `topic_federations`
-    /// does (Inbound + Outbound → Both). Returns the post-merge direction
-    /// so the caller can echo the effective state back.
+    /// Upsert a `workspace_federations` row, merging direction like
+    /// `topic_federations` (Inbound + Outbound → Both). Returns the merged
+    /// direction.
     pub fn upsert_workspace_federation(
         &self,
         id: &str,
@@ -465,9 +452,8 @@ impl Database {
         Ok(final_dir)
     }
 
-    /// Delete a `workspace_federations` row. Returns the row count so the
-    /// caller can distinguish "removed" from "no-op". Symmetric to
-    /// `delete_topic_federation`.
+    /// Delete a `workspace_federations` row; returns the row count so the
+    /// caller can distinguish removed from no-op.
     pub fn delete_workspace_federation(&self, peer_id: &str, workspace_id: &str) -> Result<usize> {
         let conn = self.workspace_conn_lock();
         Ok(conn.execute(
@@ -476,9 +462,7 @@ impl Database {
         )?)
     }
 
-    /// All federation rows for `workspace_id` regardless of direction,
-    /// used by `workspace show` and by the producer-side fanout.
-    /// Every workspace_federations row across all workspaces.
+    /// Every `workspace_federations` row across all workspaces.
     pub fn list_workspace_federations(&self) -> Result<Vec<WorkspaceFederation>> {
         let conn = self.workspace_conn_lock();
         let mut stmt = conn.prepare(
@@ -535,9 +519,8 @@ impl Database {
         Ok(out)
     }
 
-    /// Peer ids on the home daemon whose subscription includes outbound
-    /// fanout for this workspace. The producer reads this to decide who
-    /// gets a `workspace_event_outbox` row on each `WorkspaceWatcher` emit.
+    /// Peers subscribed to outbound fanout for this workspace; the producer
+    /// reads this to decide who gets an outbox row on each emit.
     pub fn workspace_outbound_peers(&self, workspace_id: &str) -> Result<Vec<String>> {
         let conn = self.workspace_conn_lock();
         let mut stmt = conn.prepare(
@@ -548,9 +531,7 @@ impl Database {
         Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
     }
 
-    /// True iff `peer_id` is allowed to push workspace events at us for
-    /// the local shadow `workspace_id`. Mirrors
-    /// `topic_federation_inbound_authorized`.
+    /// True iff `peer_id` may push events at our local shadow `workspace_id`.
     pub fn workspace_federation_inbound_authorized(
         &self,
         peer_id: &str,
@@ -573,15 +554,10 @@ impl Database {
         ))
     }
 
-    /// Enqueue a serialized `WorkspaceFileChanged` payload for one
-    /// outbound peer. `sender_seq` is allocated atomically as
-    /// `MAX(sender_seq) + 1` per (peer, workspace) — strictly monotonic
-    /// so the receiver can detect gaps even though we don't currently
-    /// surface them.
-    ///
-    /// The seq allocation and INSERT run inside a single `IMMEDIATE`
-    /// transaction so two concurrent emits can't pick the same seq and
-    /// trip the `UNIQUE(peer_id, sender_seq)` index.
+    /// Enqueue a `WorkspaceFileChanged` payload for one outbound peer.
+    /// `sender_seq = MAX+1` per (peer, workspace), strictly monotonic. Seq
+    /// allocation + INSERT run in one IMMEDIATE txn so concurrent emits can't
+    /// collide on the same seq and trip `UNIQUE(peer_id, sender_seq)`.
     pub fn workspace_event_enqueue(
         &self,
         peer_id: &str,
@@ -651,9 +627,8 @@ impl Database {
         Ok(())
     }
 
-    /// Successful ack → drop the row. Workspace events are
-    /// fire-and-acknowledge; replay-on-resubscribe is a separate concern
-    /// handled by snapshotting, not by keeping outbox history.
+    /// Ack → drop the row. Workspace events are fire-and-ack; replay is handled
+    /// by snapshotting, not by retaining outbox history.
     pub fn workspace_event_mark_delivered(&self, id: &str) -> Result<()> {
         let conn = self.workspace_conn_lock();
         conn.execute(
@@ -674,9 +649,8 @@ impl Database {
         Ok(())
     }
 
-    /// Boot recovery: revert `in_flight` to `pending` so the drainer
-    /// reships. Receiver-side dedupe by `(sender_daemon_id, sender_seq)`
-    /// is what makes the resend idempotent.
+    /// Boot recovery: revert `in_flight` → `pending` so the drainer reships.
+    /// Receiver dedupe by `(sender_daemon_id, sender_seq)` makes resend safe.
     pub fn workspace_event_reset_in_flight(&self) -> Result<usize> {
         let conn = self.workspace_conn_lock();
         Ok(conn.execute(
@@ -685,11 +659,9 @@ impl Database {
         )?)
     }
 
-    /// Try to record an inbound workspace event from
-    /// `sender_daemon_id` at `sender_seq` targeting local shadow
-    /// `workspace_id`. Returns `true` if this is a first sighting
-    /// (caller should republish), `false` if it was already recorded
-    /// (caller should still ack `ok: true` so the sender drops the row).
+    /// Record an inbound event at `(sender_daemon_id, sender_seq)`. Returns
+    /// `true` on first sighting (caller republishes); `false` if already seen
+    /// (caller still acks `ok: true` so the sender drops its row).
     pub fn workspace_event_inbox_record(
         &self,
         sender_daemon_id: &str,
@@ -712,13 +684,9 @@ impl Database {
         Ok(n > 0)
     }
 
-    /// Resolve the local shadow workspace id that mirrors a
-    /// `(home_daemon_id, home_workspace_id)` pair. The sender ships its
-    /// own (home) workspace id on the wire; the receiver looks up which
-    /// of its local shadows is pointing at that pair to find the
-    /// republish target. Returns `None` if no shadow is configured —
-    /// the caller treats that as "drop with positive ack" so the sender
-    /// stops retrying.
+    /// Resolve the local shadow mirroring a `(home_daemon_id,
+    /// home_workspace_id)` pair (the republish target). `None` if no shadow
+    /// exists; caller treats that as "drop with positive ack".
     pub fn find_shadow_workspace(
         &self,
         home_daemon_id: &str,
@@ -737,11 +705,9 @@ impl Database {
         Ok(id)
     }
 
-    /// Insert a shadow workspace row pointing at a remote home. The
-    /// shadow has no on-disk worktree; `path` is filled with the sentinel
-    /// `shadow://<home-daemon>/<home-ws>` so the existing `UNIQUE(path)`
-    /// constraint still holds and accidental `list_workspace_paths`
-    /// callers don't confuse it for a real directory.
+    /// Insert a shadow workspace row pointing at a remote home. No on-disk
+    /// worktree; `path` is the sentinel `shadow://<home-daemon>/<home-ws>` to
+    /// satisfy `UNIQUE(path)` without looking like a real directory.
     pub fn insert_shadow_workspace(
         &self,
         local_id: &str,

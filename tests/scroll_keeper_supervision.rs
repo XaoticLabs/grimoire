@@ -74,8 +74,6 @@ fn seed_scroll_with_task(db: &Database, scroll_id: &str, task_id: &str, agent_id
 
 #[tokio::test]
 async fn restarting_state_does_not_fire_handlers() {
-    // Subscribe ScrollKeeper to bus, publish StateChange{Active→Restarting},
-    // assert task state stays Active.
     let db = Arc::new(Database::open_in_memory().unwrap());
     let bus = EventBus::new(db.clone());
     let manager = AgentManager::new(db.clone(), bus.clone(), Config::default()).await;
@@ -106,7 +104,6 @@ async fn restart_success_fires_completion_handler_once() {
     seed_agent(&db, "skp00002", AgentState::Active);
     seed_scroll_with_task(&db, "sk000002", "tk000002", "skp00002");
 
-    // Sequence
     bus.publish(StreamEvent::StateChange {
         agent_id: "skp00002".into(),
         old_state: AgentState::Active,
@@ -218,7 +215,7 @@ async fn budget_exhausted_fires_failure_handler_once() {
     sk.clone().start(&bus);
 
     seed_agent(&db, "skp00004", AgentState::Failed);
-    // Make sure no supervision so handle_agent_failure isn't deferred.
+    // policy Never so handle_agent_failure isn't deferred to the supervisor
     db.set_supervision(
         "skp00004",
         &SupervisionConfig {

@@ -33,8 +33,7 @@ impl ParentCompletionSource {
         Ok(Self { config })
     }
 
-    /// Determines whether a `StateChange` event should fire this source.
-    /// The registry's bus listener uses this to filter incoming events.
+    /// Whether a `StateChange` event should fire this source.
     pub fn should_fire(&self, agent_id: &str, new_state: &AgentState) -> bool {
         if agent_id != self.config.parent_id {
             return false;

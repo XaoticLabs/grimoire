@@ -1,11 +1,7 @@
 //! Per-agent confinement: rewrites a spawn command to enforce a
-//! [`SandboxConfig`] when host tooling is available.
-//!
-//! Today this layer handles cgroup-style resource caps via
-//! `systemd-run --user --scope`. Filesystem isolation via `bwrap` is
-//! layered on top in a follow-up. When the required binary isn't on
-//! `PATH` the helpers degrade gracefully: they log once and return
-//! the original command, never failing the spawn.
+//! [`SandboxConfig`] via `systemd-run` (resource caps) and `bwrap` (fs/net
+//! jail). When a required binary isn't on `PATH` the helpers log once and
+//! return the command unchanged, never failing the spawn.
 
 use std::sync::OnceLock;
 
@@ -42,22 +38,16 @@ const fn has_cgroup_limits(s: &SandboxConfig) -> bool {
     s.memory_max.is_some() || s.cpu_quota_percent.is_some()
 }
 
-/// Apply every layer of the sandbox config to `cmd`:
-///   1. Filesystem / network jail via `bwrap` (when `fs_jail` is set).
-///   2. Resource caps (memory, CPU) via `systemd-run --user --scope`.
-///
-/// Layers compose inside-out: bwrap rewrites first (so the resource scope
-/// wraps the jailed binary), then systemd-run is layered on the outside.
-/// Each layer no-ops cleanly when its host tool is missing.
+/// Apply both sandbox layers, composing inside-out: `bwrap` (fs/net jail)
+/// rewrites first so the `systemd-run` resource scope wraps the jailed binary.
+/// Each layer no-ops when its host tool is missing.
 pub fn apply(cmd: Command, sandbox: Option<&SandboxConfig>) -> Command {
     let cmd = apply_fs_jail(cmd, sandbox);
     apply_resource_limits(cmd, sandbox)
 }
 
-/// Wrap `cmd` so the underlying binary runs inside a transient systemd
-/// user scope with the requested resource caps. Returns the original
-/// command unchanged when there is nothing to enforce or when
-/// `systemd-run` isn't installed.
+/// Wrap `cmd` in a transient systemd user scope with the requested resource
+/// caps. Unchanged when nothing to enforce or `systemd-run` isn't installed.
 pub fn apply_resource_limits(cmd: Command, sandbox: Option<&SandboxConfig>) -> Command {
     let Some(s) = sandbox else { return cmd };
     if !has_cgroup_limits(s) {
@@ -120,10 +110,8 @@ fn wrap_with_systemd_run(cmd: Command, s: &SandboxConfig) -> Command {
         }
     }
 
-    // Inherit stdio config from the original by re-applying piped streams.
-    // tokio::process::Command doesn't expose stdio readers, but providers
-    // always set null/piped before spawn; re-applying the same here keeps
-    // the contract identical regardless of wrapping.
+    // tokio::Command can't read back stdio, but providers always use
+    // null/piped; re-apply so wrapping doesn't change the contract.
     wrapped
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::piped())
@@ -132,21 +120,14 @@ fn wrap_with_systemd_run(cmd: Command, s: &SandboxConfig) -> Command {
     wrapped
 }
 
-/// Wrap `cmd` in `bwrap` so the binary sees only an allow-listed view of the
-/// filesystem and (optionally) no network. Off unless `sandbox.fs_jail` is set;
-/// no-ops with a one-shot warning if `bwrap` isn't on `PATH`.
+/// Wrap `cmd` in `bwrap` so it sees only an allow-listed filesystem and
+/// (optionally) no network. Off unless `sandbox.fs_jail`; one-shot warning +
+/// no-op if `bwrap` is missing.
 ///
-/// The jail mounts:
-///   * `/usr`, `/etc`, `/lib`, `/lib64`, `/bin`, `/sbin` read-only (when they
-///     exist on the host); enough to exec a typical CLI and read system certs.
-///   * `/proc` and `/dev` from fresh kernel filesystems.
-///   * `tmpfs` at `/tmp` and `/run`.
-///   * The agent's `current_dir` read-write.
-///   * Each `sandbox.ro_paths` entry read-only and each `sandbox.rw_paths`
-///     entry read-write.
-///
-/// `--die-with-parent` ties the jailed process to the daemon lifetime so a
-/// crashed supervisor doesn't leak running children.
+/// Mounts: system dirs (`/usr`, `/etc`, `/lib`, …) read-only when present;
+/// fresh `/proc` + `/dev`; tmpfs `/tmp` + `/run`; agent CWD read-write; plus
+/// each `ro_paths`/`rw_paths` entry. `--die-with-parent` ties the jailed
+/// process to the daemon so a crashed supervisor can't leak children.
 pub fn apply_fs_jail(cmd: Command, sandbox: Option<&SandboxConfig>) -> Command {
     let Some(s) = sandbox else { return cmd };
     if !s.fs_jail {
@@ -181,14 +162,13 @@ fn wrap_with_bwrap(cmd: Command, s: &SandboxConfig) -> Command {
     let mut wrapped = Command::new("bwrap");
     wrapped.arg("--die-with-parent").arg("--new-session");
 
-    // Network namespace: deny by default, share-net opts in.
+    // Network: deny by default; `allow_network` opts in.
     if s.allow_network {
         wrapped.arg("--share-net");
     } else {
         wrapped.arg("--unshare-net");
     }
 
-    // System libs / config: bind read-only when present on host.
     for sys in ["/usr", "/etc", "/lib", "/lib64", "/bin", "/sbin"] {
         if std::path::Path::new(sys).exists() {
             wrapped.arg("--ro-bind").arg(sys).arg(sys);
@@ -204,7 +184,7 @@ fn wrap_with_bwrap(cmd: Command, s: &SandboxConfig) -> Command {
         .arg("--tmpfs")
         .arg("/run");
 
-    // Agent CWD is always read-write; the agent has to be able to do work.
+    // Agent CWD must be read-write so it can do work.
     if let Some(dir) = &cwd {
         wrapped.arg("--bind").arg(dir).arg(dir);
         wrapped.arg("--chdir").arg(dir);
@@ -217,7 +197,7 @@ fn wrap_with_bwrap(cmd: Command, s: &SandboxConfig) -> Command {
         wrapped.arg("--bind").arg(p).arg(p);
     }
 
-    // Pass env vars through with --setenv so they survive bwrap's env clear.
+    // --setenv so vars survive bwrap's env clear.
     for (k, v) in &envs {
         if let Some(val) = v {
             wrapped.arg("--setenv").arg(k).arg(val);
@@ -226,8 +206,8 @@ fn wrap_with_bwrap(cmd: Command, s: &SandboxConfig) -> Command {
 
     wrapped.arg("--").arg(program).args(args);
 
-    // Re-apply env on the outer Command too so any downstream wrapper
-    // (systemd-run) inherits the same set.
+    // Re-apply env on the outer Command so a downstream wrapper (systemd-run)
+    // inherits the same set.
     for (k, v) in envs {
         match v {
             Some(val) => {

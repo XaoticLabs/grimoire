@@ -1,9 +1,5 @@
-//! Inbox dedupe + local mail insert.
-//!
-//! Drives `InboxHandler::handle_mail_deliver` with synthetic
-//! `MailDeliver` messages and asserts that replays are no-ops at the
-//! `peer_inbox` level and that the local `mail` row is created exactly
-//! once.
+//! Inbox dedupe: replayed `MailDeliver` messages are no-ops at the
+//! `peer_inbox` level and the local `mail` row is created exactly once.
 
 use grimoire::daemon::event_bus::EventBus;
 use grimoire::daemon::peer_inbox::InboxHandler;
@@ -102,7 +98,6 @@ async fn replay_is_idempotent() {
     let ack2 = inbox.handle_mail_deliver(&peer, &msg).await.unwrap();
     assert!(ack2.ok, "replayed delivery must ack ok");
 
-    // Should still be one mail row only.
     let mail = db.get_mail("m2").unwrap().unwrap();
     assert_eq!(mail.body, "hi");
 }

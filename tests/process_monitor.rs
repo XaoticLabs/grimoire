@@ -226,8 +226,7 @@ async fn consume_lines_captures_session_id_from_provider() {
 
 #[tokio::test]
 async fn persist_event_and_publish_output_are_callable_from_outside_consume_lines() {
-    // These helpers are public-in-crate so RemoteExecutor can write events
-    // with the same shape as the local path.
+    // public-in-crate so RemoteExecutor writes events with the local shape
     let db = fresh_db();
     let bus = fresh_bus(db.clone());
     let mut rx = bus.subscribe();
@@ -253,8 +252,7 @@ async fn persist_event_and_publish_output_are_callable_from_outside_consume_line
 
 #[tokio::test]
 async fn monitor_agent_local_path_matches_pre_refactor_fixture() {
-    // Drive the real monitor_agent against `printf` so the refactor cannot
-    // change the durable shape. Snapshot the events table contents.
+    // run the real monitor_agent against `printf` to pin the durable event shape
     use tokio::process::Command;
 
     let db = fresh_db();

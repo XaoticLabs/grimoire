@@ -9,9 +9,8 @@ use crate::shared::types::Task;
 use super::{DEFAULT_VERIFY_THRESHOLD, ScrollKeeper};
 
 impl ScrollKeeper {
-    /// The worker for a rubric-bearing task just completed: summon an
-    /// evaluator agent to score the worker's transcript. The task stays
-    /// in its current (non-terminal) state until the verdict arrives.
+    /// Summon an evaluator to score the worker's transcript. The task stays in
+    /// its current (non-terminal) state until the verdict arrives.
     pub(super) async fn start_verification(&self, task: &Task, worker_agent_id: &str) {
         let rubric = task.verify_rubric.clone().unwrap_or_default();
 
@@ -70,9 +69,8 @@ impl ScrollKeeper {
         }
     }
 
-    /// An evaluator agent finished: parse its verdict and settle the
-    /// task it was verifying. A missing or unparsable verdict counts
-    /// as a failed verification — the gate must never silently pass.
+    /// Parse the evaluator's verdict and settle the task. A missing or
+    /// unparsable verdict fails verification — the gate must never silently pass.
     pub(super) async fn finish_verification(&self, task: &Task, evaluator_id: &str) {
         let threshold = task.verify_threshold.unwrap_or(DEFAULT_VERIFY_THRESHOLD);
 
@@ -96,8 +94,7 @@ impl ScrollKeeper {
             }
         };
 
-        // Record the verdict so `grim eval <worker> --list` shows scroll
-        // verifications alongside manual evals.
+        // Record so `grim eval <worker> --list` shows scroll verifications too.
         let target_id = task.agent_id.clone().unwrap_or_else(|| task.id.clone());
         if let Err(e) = self.db.insert_eval_result(
             &target_id,

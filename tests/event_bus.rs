@@ -1,7 +1,4 @@
-//! Integration tests for the event bus.
-//!
-//! Verifies publish/subscribe behavior across multiple subscribers,
-//! event filtering by agent ID, and behavior when no subscribers exist.
+//! Integration tests for the event bus: pub/sub, ordering, and durable persistence.
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -34,10 +31,6 @@ async fn poll_until(target: i64, timeout: Duration, mut probe: impl FnMut() -> i
     }
 }
 
-// ---------------------------------------------------------------------------
-// Basic pub/sub: single subscriber receives published events
-// ---------------------------------------------------------------------------
-
 #[tokio::test]
 async fn single_subscriber_receives_events() {
     let bus = fresh_bus();
@@ -54,10 +47,6 @@ async fn single_subscriber_receives_events() {
     let received = rx.recv().await.unwrap();
     assert_eq!(received.agent_id(), Some("agent-1"));
 }
-
-// ---------------------------------------------------------------------------
-// Multiple subscribers each receive a copy
-// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn multiple_subscribers_receive_copies() {
@@ -81,10 +70,6 @@ async fn multiple_subscribers_receive_copies() {
     assert_eq!(e3.agent_id(), Some("a1"));
 }
 
-// ---------------------------------------------------------------------------
-// Publishing without subscribers doesn't panic
-// ---------------------------------------------------------------------------
-
 #[tokio::test]
 async fn publish_without_subscribers() {
     let bus = fresh_bus();
@@ -95,10 +80,6 @@ async fn publish_without_subscribers() {
         line: "nobody listening".to_string(),
     });
 }
-
-// ---------------------------------------------------------------------------
-// Events arrive in order
-// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn events_arrive_in_order() {
@@ -122,10 +103,6 @@ async fn events_arrive_in_order() {
         }
     }
 }
-
-// ---------------------------------------------------------------------------
-// Mixed event types flow through correctly
-// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn mixed_event_types() {
@@ -165,15 +142,10 @@ async fn mixed_event_types() {
     assert_eq!(e3.agent_id(), None); // scroll events have no agent_id
 }
 
-// ---------------------------------------------------------------------------
-// Late subscriber doesn't receive earlier events
-// ---------------------------------------------------------------------------
-
 #[tokio::test]
 async fn late_subscriber_misses_earlier_events() {
     let bus = fresh_bus();
 
-    // Publish before subscribing
     bus.publish(StreamEvent::Output {
         agent_id: "early".to_string(),
         stream: "stdout".to_string(),
@@ -182,7 +154,6 @@ async fn late_subscriber_misses_earlier_events() {
 
     let mut rx = bus.subscribe();
 
-    // Publish after subscribing
     bus.publish(StreamEvent::Output {
         agent_id: "late".to_string(),
         stream: "stdout".to_string(),
@@ -192,10 +163,6 @@ async fn late_subscriber_misses_earlier_events() {
     let event = rx.recv().await.unwrap();
     assert_eq!(event.agent_id(), Some("late"));
 }
-
-// ---------------------------------------------------------------------------
-// Durable event log: writer task wired into EventBus
-// ---------------------------------------------------------------------------
 
 fn count_events(db: &Database) -> i64 {
     db.with_test_conn(|c| {
@@ -323,10 +290,6 @@ async fn mixed_variants_all_persisted() {
         ]
     );
 }
-
-// ---------------------------------------------------------------------------
-// Restart recovery publishes a StateChange event per failed agent
-// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn restart_recovery_publishes_state_change_for_each_failure() {

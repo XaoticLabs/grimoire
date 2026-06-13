@@ -4,16 +4,13 @@ use colored::Colorize;
 use crate::cli::client::DaemonClient;
 use crate::shared::protocol::{ReplayEntry, ReplayResponse, StreamEvent, SummonResult};
 
-/// Maximum bytes of folded parent output we'll prepend to a fork's prompt.
-/// Set to be friendly to context windows: long enough to capture a meaningful
-/// session, short enough to leave room for the actual task and the new
-/// agent's working memory. Mirrors the wake-on-mail fold cap.
+/// Max bytes of folded parent output prepended to a fork's prompt: enough for a
+/// meaningful session while leaving context-window room. Mirrors the wake-on-mail cap.
 const MAX_FOLDED_OUTPUT: usize = 16 * 1024;
 
-/// Build the fork's seed prompt from the parent's chronicle, truncated to
-/// `MAX_FOLDED_OUTPUT` from the tail (the most recent events are the most
-/// relevant). The header is intentionally explicit so a smart agent can
-/// reason about its own provenance and decide what to keep / discard.
+/// Build the fork's seed prompt from the parent's chronicle, tail-truncated to
+/// `MAX_FOLDED_OUTPUT`. The provenance header is explicit so the agent can
+/// reason about what to keep / discard.
 fn build_fork_prompt(
     parent_id: &str,
     cut_seq: i64,
@@ -32,8 +29,7 @@ fn build_fork_prompt(
         }
     }
 
-    // Tail-truncate: the latest output is usually the most relevant context
-    // for "what was the agent thinking right before the cut?"
+    // Tail-truncate: latest output is the most relevant context at the cut.
     if buf.len() > MAX_FOLDED_OUTPUT {
         let start = buf.len() - MAX_FOLDED_OUTPUT;
         buf = format!("[…truncated {} bytes]\n{}", start, &buf[start..]);
@@ -52,10 +48,8 @@ fn build_fork_prompt(
     )
 }
 
-/// Walk the replay to find the cut index for `--at`. Integer = inclusive seq;
-/// any other string = a kind name, stop after its first match. None = end of
-/// life. Mirrors `chronicle`'s `--until` semantics so the two commands feel
-/// like one tool.
+/// Cut index for `--at`: integer = inclusive seq; other string = kind name,
+/// stop after first match; None = end of life. Mirrors `chronicle`'s `--until`.
 fn resolve_cut(entries: &[ReplayEntry], at: Option<&str>) -> usize {
     match at {
         None => entries.len(),
@@ -82,7 +76,6 @@ pub async fn run(
 ) -> Result<()> {
     let mut client = DaemonClient::connect().await?;
 
-    // 1) Read the parent's full chronicle.
     let replay: ReplayResponse = client
         .call_typed("agent.replay", serde_json::json!({ "id": parent_id }))
         .await?;
@@ -90,14 +83,12 @@ pub async fn run(
         return Err(anyhow!("parent agent {parent_id} has no recorded events"));
     }
 
-    // 2) Resolve the cut point.
     let cut = resolve_cut(&replay.entries, at.as_deref());
     let considered = &replay.entries[..cut];
     let cut_seq = considered.last().map_or(0, |e| e.seq);
 
-    // 3) Extract parent metadata from the AgentCreated event, the first entry,
-    // by construction. We need its task/provider/model so the fork inherits
-    // them unless the caller overrides.
+    // Inherit task/provider/model from the parent's AgentCreated event (the
+    // first entry by construction) unless the caller overrides.
     let (parent_task, parent_provider, parent_model) = considered
         .iter()
         .find_map(|e| match &e.event {
@@ -114,7 +105,6 @@ pub async fn run(
     let provider = provider_override.or(parent_provider);
     let model = model_override.or(parent_model);
 
-    // 4) Compose the fork prompt and summon.
     let prompt = build_fork_prompt(parent_id, cut_seq, &task, considered);
 
     let params = serde_json::json!({
@@ -201,7 +191,6 @@ mod tests {
             output_entry("p0000001", 2, "b"),
             output_entry("p0000001", 3, "c"),
         ];
-        // seq=2 ⇒ keep [0, 1, 2]
         assert_eq!(resolve_cut(&entries, Some("2")), 3);
     }
 
@@ -212,7 +201,6 @@ mod tests {
             output_entry("p0000001", 1, "a"),
             output_entry("p0000001", 2, "b"),
         ];
-        // First Output is at index 1; stop after it ⇒ keep [0, 1]
         assert_eq!(resolve_cut(&entries, Some("output")), 2);
     }
 
@@ -246,7 +234,7 @@ mod tests {
         ];
         let prompt = build_fork_prompt("p0000001", 1, "t", &entries);
         assert!(prompt.contains("…truncated"));
-        // The original task still survives below the transcript.
+        // Original task survives below the transcript.
         assert!(prompt.contains("\nt"));
     }
 }

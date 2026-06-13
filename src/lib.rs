@@ -4,31 +4,11 @@
 #![warn(missing_docs)]
 //! # Grimoire: agent orchestration daemon
 //!
-//! A daemon-based orchestrator for AI coding agents. Agents are modeled as
-//! supervised processes, not function calls: they survive the death of any
-//! controlling shell, wake on schedules and file changes, message each
-//! other over a typed mail bus, and self-heal under a restart policy.
+//! A daemon-based orchestrator for AI coding agents, modeled as supervised
+//! processes: they survive their controlling shell, wake on schedules and
+//! file changes, message over a typed mail bus, and self-heal.
 //!
-//! ## Crate layout
-//!
-//! * [`daemon`]: the long-running supervisor process (`grim daemon`).
-//!   Owns the SQLite event log, the scheduler, the wake-source registry,
-//!   and the gRPC servers exposed over UDS, HTTP, and federated peer
-//!   links.
-//! * [`cli`]: the `grim` command-line client. Speaks the daemon's
-//!   protocol over the UDS socket; everything the dashboard does is
-//!   reachable here too.
-//! * [`grimw`]: the worker-side process (`grimw`). Connects outbound
-//!   to a daemon and executes work the daemon assigns it.
-//! * [`shared`]: wire-format types ([`shared::protocol`]), auth tokens
-//!   ([`shared::auth`]), config schema ([`shared::config`]), and other
-//!   types reused across the three binaries above.
-//!
-//! ## Stability
-//!
-//! Pre-1.0. Public items are subject to change between minor versions.
-//! The library is published primarily so the binaries can share a
-//! protocol vocabulary; embed at your own risk.
+//! Pre-1.0; public items may change between minor versions.
 
 /// `grim` command-line client.
 pub mod cli;

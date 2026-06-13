@@ -1,24 +1,16 @@
 //! Tracing subscriber init with optional OTel/OTLP export.
 //!
-//! Default build: stdout `fmt` layer only, gated by the existing
-//! `RUST_LOG`/`grimoire=info` filter — byte-equivalent to the original
-//! `tracing_subscriber::fmt().init()` call that lived inline in `main.rs`.
-//!
-//! With `--features otel` + the `OTEL_EXPORTER_OTLP_ENDPOINT` environment
-//! variable set: also installs a `tracing_opentelemetry` layer that ships
-//! spans over OTLP/HTTP to the configured Collector. Tunables follow the
-//! OTel convention so existing collector docs apply:
+//! Default: stdout `fmt` only, gated by `RUST_LOG`/`grimoire=info`. With
+//! `--features otel` and `OTEL_EXPORTER_OTLP_ENDPOINT` set, also installs a
+//! `tracing_opentelemetry` layer shipping spans over OTLP/HTTP. Standard OTel
+//! env vars apply:
 //!
 //! - `OTEL_EXPORTER_OTLP_ENDPOINT` — base URL (e.g. `http://localhost:4318`).
-//!   When unset (the common case), this module behaves exactly like the
-//!   inline init it replaced.
-//! - `OTEL_SERVICE_NAME` — resource attribute. Defaults to `grimoire`.
-//! - `OTEL_TRACES_SAMPLER_ARG` — TraceIdRatio fraction in `[0.0, 1.0]`.
-//!   Defaults to `1.0` (sample everything; the daemon's volume is low).
+//! - `OTEL_SERVICE_NAME` — resource attribute; defaults to `grimoire`.
+//! - `OTEL_TRACES_SAMPLER_ARG` — TraceIdRatio fraction `[0.0, 1.0]`; default 1.0.
 //!
-//! Errors during exporter construction are logged and fall back to the
-//! fmt-only subscriber rather than aborting daemon startup — observability
-//! must never take the system down.
+//! Exporter-construction errors fall back to fmt-only rather than aborting
+//! boot — observability must never take the system down.
 
 use tracing_subscriber::EnvFilter;
 
@@ -27,8 +19,8 @@ fn default_env_filter() -> EnvFilter {
         .unwrap_or_else(|_| "grimoire=info".parse().expect("valid static env filter"))
 }
 
-/// Initialise the global subscriber. Call exactly once, early in
-/// `main()` before any tracing macros fire.
+/// Initialise the global subscriber. Call exactly once before any tracing
+/// macros fire.
 pub fn init() {
     #[cfg(feature = "otel")]
     {
@@ -36,9 +28,7 @@ pub fn init() {
             match init_with_otel() {
                 Ok(()) => return,
                 Err(e) => {
-                    // Can't use `tracing::warn!` here — the subscriber
-                    // doesn't exist yet. Fall through to fmt-only and
-                    // emit the warning once it does.
+                    // No subscriber yet, so `eprintln!` not `tracing::warn!`.
                     #[allow(clippy::print_stderr)]
                     {
                         eprintln!("otel init failed, falling back to fmt-only: {e}");
@@ -56,10 +46,9 @@ fn init_fmt_only() {
         .init();
 }
 
-/// Holds the active provider so [`shutdown`] can flush it. As of
-/// opentelemetry 0.30 the global `shutdown_tracer_provider()` free
-/// function is gone; the owner must keep the provider and call
-/// `.shutdown()` on it explicitly.
+/// Holds the active provider so [`shutdown`] can flush it. opentelemetry 0.30
+/// dropped the global `shutdown_tracer_provider()`, so the owner must keep the
+/// provider and call `.shutdown()` explicitly.
 #[cfg(feature = "otel")]
 static TRACER_PROVIDER: std::sync::OnceLock<opentelemetry_sdk::trace::SdkTracerProvider> =
     std::sync::OnceLock::new();
@@ -92,8 +81,7 @@ fn init_with_otel() -> anyhow::Result<()> {
         .with_attribute(KeyValue::new("service.version", env!("CARGO_PKG_VERSION")))
         .build();
 
-    // 0.30+ batch processor runs on a dedicated background thread, so
-    // `with_batch_exporter` no longer takes a runtime argument.
+    // 0.30+ batch processor has its own thread, so no runtime arg.
     let provider = SdkTracerProvider::builder()
         .with_batch_exporter(exporter)
         .with_sampler(Sampler::TraceIdRatioBased(sampler_arg.clamp(0.0, 1.0)))
@@ -102,8 +90,6 @@ fn init_with_otel() -> anyhow::Result<()> {
 
     let tracer = provider.tracer("grimoire");
     opentelemetry::global::set_tracer_provider(provider.clone());
-    // Best-effort: a second init within one process keeps the first
-    // provider for shutdown; init() only runs once at boot regardless.
     let _ = TRACER_PROVIDER.set(provider);
 
     let otel_layer = tracing_opentelemetry::layer().with_tracer(tracer);

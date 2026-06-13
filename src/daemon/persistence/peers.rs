@@ -5,7 +5,7 @@ use crate::shared::types::Mail;
 
 use super::{row_to_outbox, row_to_peer, row_to_topic_federation};
 
-/// Column list for `SELECT … FROM peers`. Matches `row_to_peer`.
+/// `SELECT … FROM peers` column list; order must match `row_to_peer`.
 const PEER_COLS: &str = "id, daemon_id, name, url, bearer_token_hash, bearer_token, public_key, state, last_seen, registered_at";
 
 impl super::Database {
@@ -117,9 +117,8 @@ impl super::Database {
         Ok(n as u64)
     }
 
-    /// Atomic: insert a `mail` row + `peer_outbox` row in a single
-    /// IMMEDIATE transaction. `mail.seq` is computed per recipient as
-    /// usual; `peer_outbox.sender_seq` is computed per `peer_id`.
+    /// Insert a `mail` row + `peer_outbox` row in one IMMEDIATE transaction.
+    /// `mail.seq` is per recipient; `peer_outbox.sender_seq` is per peer.
     pub fn insert_mail_with_outbox(
         &self,
         mail: &Mail,
@@ -162,7 +161,7 @@ impl super::Database {
         Ok(sender_seq as u64)
     }
 
-    /// Pop the next `Pending` outbox row whose `next_attempt_at <= now`.
+    /// The next `pending` outbox row due (`next_attempt_at <= now`).
     pub fn next_outbox_row(
         &self,
         peer_id: &str,
@@ -201,9 +200,8 @@ impl super::Database {
         Ok(())
     }
 
-    /// On boot, flip any `in_flight` outbox rows back to `pending` so the
-    /// drainer re-sends them. Idempotency on the receiver dedupes any
-    /// already-delivered messages.
+    /// On boot, flip `in_flight` outbox rows back to `pending` for reship;
+    /// receiver dedupe drops any already-delivered messages.
     pub fn reset_outbox_in_flight(&self) -> Result<u32> {
         let conn = self.conn_lock();
         let n = conn.execute(
@@ -213,9 +211,8 @@ impl super::Database {
         Ok(n as u32)
     }
 
-    /// Idempotency-keyed inbox insert. Returns `true` if this is a new
-    /// delivery (insertion happened); `false` if the (daemon, seq) pair
-    /// already existed (replay).
+    /// Dedupe insert keyed on `(sender_daemon_id, sender_seq)`: `true` on a
+    /// new delivery, `false` on replay.
     pub fn insert_peer_inbox_if_absent(
         &self,
         sender_daemon_id: &str,

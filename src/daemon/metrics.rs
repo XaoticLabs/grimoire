@@ -1,14 +1,10 @@
 //! Prometheus-format metrics renderer.
 //!
-//! Hand-rolls the text exposition format rather than pulling in a `prometheus`
-//! crate dep. The surface is small (a dozen series) and the rendering is one
-//! function; a dependency would cost more than it saves and a slow drift away
-//! from the project's hand-rolled style.
+//! Hand-rolls the text exposition format — a dozen series in one function isn't
+//! worth a `prometheus` crate dep.
 //!
-//! Scrape semantics: `render` runs a handful of `COUNT(*)` queries against
-//! the live SQLite db (cheap; agents/events tables are indexed). It is safe to
-//! call at any cadence Prometheus is configured for. There is no caching,
-//! every scrape sees fresh data.
+//! `render` runs a few indexed `COUNT(*)` queries against the live db; no
+//! caching, so every scrape sees fresh data and any cadence is safe.
 
 use std::fmt::Write as _;
 use std::time::Instant;
@@ -16,9 +12,8 @@ use std::time::Instant;
 use crate::daemon::persistence::Database;
 use crate::shared::types::AgentState;
 
-/// Agent states we always emit, in a stable order, so dashboards don't see
-/// a series appear and disappear when the count rolls to zero. New variants
-/// added later still show up via the `count_agents_by_state` union below.
+/// States always emitted, in stable order, so a series doesn't vanish when its
+/// count hits zero. New variants still surface via the union below.
 const STANDARD_STATES: &[AgentState] = &[
     AgentState::Summoning,
     AgentState::Queued,
@@ -29,9 +24,8 @@ const STANDARD_STATES: &[AgentState] = &[
     AgentState::Banished,
 ];
 
-/// Event kinds surfaced as their own counter series. Chosen for operator
-/// signal: things that page you or that you'd want a graph of over time.
-/// Other kinds are still aggregated into `grimoire_events_total`.
+/// Event kinds with their own counter series (operator-signal subset). Other
+/// kinds still roll into `grimoire_events_total`.
 const COUNTER_KINDS: &[(&str, &str, &str)] = &[
     // (event-kind, metric-name, help)
     (
@@ -61,9 +55,8 @@ const COUNTER_KINDS: &[(&str, &str, &str)] = &[
     ),
 ];
 
-/// Render the full Prometheus exposition snapshot. Errors from individual
-/// queries are surfaced as a `# ERROR` comment line for that metric rather
-/// than failing the whole scrape, since a partial snapshot beats none.
+/// Render the Prometheus exposition snapshot. A failing query emits a
+/// `# ERROR` line for that metric instead of failing the whole scrape.
 pub fn render(db: &Database, started_at: Instant, version: &str) -> String {
     let mut out = String::with_capacity(2048);
 
@@ -71,8 +64,8 @@ pub fn render(db: &Database, started_at: Instant, version: &str) -> String {
     let _ = writeln!(out, "# TYPE grimoire_build_info gauge");
     let _ = writeln!(out, "grimoire_build_info{{version=\"{version}\"}} 1");
 
-    // Uptime: a gauge so a daemon restart is visible as a drop to zero,
-    // not as a counter reset that confuses rate() queries.
+    // Gauge, not counter: a restart should read as a drop to zero rather than
+    // a counter reset that confuses rate().
     let uptime_secs = started_at.elapsed().as_secs();
     let _ = writeln!(
         out,
@@ -81,7 +74,6 @@ pub fn render(db: &Database, started_at: Instant, version: &str) -> String {
     let _ = writeln!(out, "# TYPE grimoire_uptime_seconds gauge");
     let _ = writeln!(out, "grimoire_uptime_seconds {uptime_secs}");
 
-    // Agents by state: always emit every standard state so series stay stable.
     let _ = writeln!(out, "# HELP grimoire_agents Agents grouped by state.");
     let _ = writeln!(out, "# TYPE grimoire_agents gauge");
     match db.count_agents_by_state() {
@@ -91,7 +83,7 @@ pub fn render(db: &Database, started_at: Instant, version: &str) -> String {
                 let value = rows.iter().find(|(k, _)| k == label).map_or(0, |(_, v)| *v);
                 let _ = writeln!(out, "grimoire_agents{{state=\"{label}\"}} {value}");
             }
-            // Surface unexpected states (future variants) so they don't vanish.
+            // Emit non-standard (future) states too so they don't vanish.
             for (label, value) in &rows {
                 if !STANDARD_STATES.iter().any(|s| s.as_str() == label) {
                     let _ = writeln!(out, "grimoire_agents{{state=\"{label}\"}} {value}");
@@ -103,7 +95,6 @@ pub fn render(db: &Database, started_at: Instant, version: &str) -> String {
         }
     }
 
-    // Queue depth: Queued-state agents waiting for the scheduler to promote.
     let _ = writeln!(
         out,
         "# HELP grimoire_queue_depth Agents in Queued state awaiting dispatch."
@@ -118,7 +109,6 @@ pub fn render(db: &Database, started_at: Instant, version: &str) -> String {
         }
     }
 
-    // Events total: one number for the whole durable log.
     let _ = writeln!(
         out,
         "# HELP grimoire_events_total Total durable stream-log events recorded."
@@ -133,7 +123,6 @@ pub fn render(db: &Database, started_at: Instant, version: &str) -> String {
         }
     }
 
-    // Per-kind event counters: the operator-signal subset.
     for (kind, metric, help) in COUNTER_KINDS {
         let _ = writeln!(out, "# HELP {metric} {help}");
         let _ = writeln!(out, "# TYPE {metric} counter");
@@ -147,7 +136,6 @@ pub fn render(db: &Database, started_at: Instant, version: &str) -> String {
         }
     }
 
-    // Notifications by level: distinct series so warn/error rates are graphable.
     let _ = writeln!(
         out,
         "# HELP grimoire_notifications_total Operator-facing notifications by level."

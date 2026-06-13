@@ -101,11 +101,10 @@ async fn cron_fires_when_clock_crosses_schedule() {
     let (reg, sender) = make_registry(db.clone(), bus, clock);
 
     let _wake_id = reg.register_cron("agent01", "* * * * *").await.unwrap();
-    // Initially no fire.
     reg.tick_cron().await.unwrap();
     assert!(sender.calls.lock().await.is_empty());
 
-    // Advance 90 seconds, crosses at least one minute boundary.
+    // advance past a minute boundary
     test_clock.advance(Duration::seconds(90));
     reg.tick_cron().await.unwrap();
     let calls = sender.calls.lock().await;
@@ -189,8 +188,7 @@ async fn replay_on_boot_rearms_armed_sources_with_catchup() {
     let clock: Arc<dyn Clock> = Arc::new(TestClock::new(t0));
     seed_agent(&db, "agent01");
 
-    // Pre-seed a row whose last_fired_at is well in the past. After replay
-    // it should fire exactly once (catch-up rule).
+    // last_fired_at well in the past → replay fires exactly once (catch-up rule)
     let row = grimoire::shared::types::WakeSource {
         id: "wake_replay".into(),
         agent_id: "agent01".into(),

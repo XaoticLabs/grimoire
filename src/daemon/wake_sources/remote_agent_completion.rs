@@ -1,11 +1,7 @@
-//! Remote agent-completion wake source. Sister to
-//! `parent_completion` for federated parents — fires on a
-//! `RemoteAgentStateChanged` bus event whose `(sender_daemon_id,
-//! agent_id)` match this source's config and whose `new_state` is in
-//! the target set.
-//!
-//! `states` empty ⇒ defaults to `[Complete]`, matching the local
-//! `ParentCompletionSource` ergonomics.
+//! Remote agent-completion wake source: the federated sibling of
+//! `parent_completion`. Fires on a `RemoteAgentStateChanged` matching the
+//! configured `(sender_daemon_id, agent_id)` and target state set. Empty
+//! `states` defaults to `[Complete]`.
 
 use serde::{Deserialize, Serialize};
 

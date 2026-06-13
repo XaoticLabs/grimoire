@@ -1,13 +1,7 @@
-//! End-to-end two-daemon harness over mTLS.
-//!
-//! Spawns two in-process `PeerRegistry` instances (each backed by its
-//! own tempdir database + EventBus + DaemonId + self-signed identity),
-//! wires daemon-A to daemon-B's TLS Tonic server, and exercises the
-//! handshake + cert-pinning paths.
-//!
-//! Goes a layer below the full AppState harness: it exercises the
-//! federation transport directly without dragging in the agent manager
-//! or scheduler.
+//! End-to-end two-daemon mTLS harness. Spawns two in-process `PeerRegistry`
+//! instances (each with its own tempdir DB + self-signed identity) and wires
+//! A to B's TLS Tonic server to exercise handshake + cert-pinning paths.
+//! Exercises the federation transport directly, below the AppState harness.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -46,7 +40,6 @@ async fn boot_daemon(daemon_id: &str, trusted_client_certs: &[String]) -> TestDa
         identity.clone(),
     );
 
-    // Bind on a random port.
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let addr = listener.local_addr().unwrap();
     drop(listener);
@@ -66,8 +59,7 @@ async fn boot_daemon(daemon_id: &str, trusted_client_certs: &[String]) -> TestDa
             .serve(addr)
             .await;
     });
-    // Give the listener a moment to come up.
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    tokio::time::sleep(Duration::from_millis(100)).await; // let the listener come up
 
     TestDaemon {
         registry,
@@ -79,8 +71,7 @@ async fn boot_daemon(daemon_id: &str, trusted_client_certs: &[String]) -> TestDa
 
 #[tokio::test]
 async fn handshake_and_invalid_token_rejected() {
-    // A is the client; B trusts A's client cert so the TLS layer passes and
-    // the bearer-token check is what rejects.
+    // B trusts A's client cert, so TLS passes and the bearer-token check rejects.
     let a_id = grimoire::shared::tls::generate("daemon").unwrap();
     let b = boot_daemon("bbbbbbbb", &[a_id.cert_pem().to_string()]).await;
     let a = boot_daemon_with("aaaaaaaa", a_id, &[]).await;
@@ -109,7 +100,7 @@ async fn registered_token_handshake_succeeds() {
     let b = boot_daemon("bbbbbbbb", &[a_id.cert_pem().to_string()]).await;
     let a = boot_daemon_with("aaaaaaaa", a_id, &[]).await;
 
-    // Pre-seed B with a peer row whose token-hash matches what A will send.
+    // pre-seed B with a peer row whose token-hash matches what A will send
     let token = "0123456789abcdef0123456789abcdef0123456789abcdef".to_string();
     let token_hash = blake3::hash(token.as_bytes()).as_bytes().to_vec();
     let peer = grimoire::shared::types::Peer {
@@ -142,8 +133,7 @@ async fn registered_token_handshake_succeeds() {
 
 #[tokio::test]
 async fn wrong_pinned_server_cert_rejected() {
-    // A pins the *wrong* server cert for B: TLS verification of B's cert must
-    // fail before any handshake, so register_peer errors out (timeout/failure).
+    // A pins the wrong server cert for B, so TLS verification fails before any handshake.
     let a_id = grimoire::shared::tls::generate("daemon").unwrap();
     let b = boot_daemon("bbbbbbbb", &[a_id.cert_pem().to_string()]).await;
     let a = boot_daemon_with("aaaaaaaa", a_id, &[]).await;
@@ -165,13 +155,12 @@ async fn wrong_pinned_server_cert_rejected() {
 async fn namespace_replicates_a_to_b() {
     use grimoire::shared::types::FederationDirection;
 
-    // B trusts A's client cert; A is the connecting client.
     let a_id = grimoire::shared::tls::generate("daemon").unwrap();
     let b = boot_daemon("bbbbbbbb", &[a_id.cert_pem().to_string()]).await;
     let a = boot_daemon_with("aaaaaaaa", a_id, &[]).await;
 
-    // B side: a peer row for A (so the bearer token is accepted) + an inbound
-    // federation authorizing the "shared" namespace from that peer.
+    // B side: peer row for A (accepts the token) + inbound federation
+    // authorizing the "shared" namespace from that peer.
     let token = "0123456789abcdef0123456789abcdef0123456789abcdef".to_string();
     let token_hash = blake3::hash(token.as_bytes()).as_bytes().to_vec();
     let peer_a_on_b = grimoire::shared::types::Peer {
@@ -196,8 +185,7 @@ async fn namespace_replicates_a_to_b() {
     )
     .unwrap();
 
-    // A side: register B as a peer (opens the mTLS client stream) + an
-    // outbound federation for "shared".
+    // A side: register B (opens the mTLS client stream) + outbound federation for "shared".
     let url = format!("https://{}", b.addr);
     let peer_b = a
         .registry
@@ -213,8 +201,7 @@ async fn namespace_replicates_a_to_b() {
     )
     .unwrap();
 
-    // A writes, then fans the write out to federated peers (the same steps the
-    // ns.put RPC handler performs).
+    // A writes, then fans out to federated peers (as the ns.put RPC handler does).
     let write =
         a.db.namespace_put("shared", "k", b"hello", "aaaaaaaa", "u")
             .unwrap();
@@ -223,7 +210,6 @@ async fn namespace_replicates_a_to_b() {
         a.registry.notify_outbox(&pid).await;
     }
 
-    // B should converge on the value.
     let deadline = std::time::Instant::now() + Duration::from_secs(5);
     loop {
         if let Some(e) = b.db.namespace_get("shared", "k").unwrap() {
@@ -238,7 +224,7 @@ async fn namespace_replicates_a_to_b() {
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
 
-    // A delete propagates as a tombstone → B hides the key.
+    // delete propagates as a tombstone → B hides the key
     let del =
         a.db.namespace_delete("shared", "k", "aaaaaaaa", "u")
             .unwrap();
@@ -258,8 +244,7 @@ async fn namespace_replicates_a_to_b() {
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
 
-    // An inbound write into a namespace B hasn't federated must be rejected
-    // (no silent acceptance).
+    // inbound write into a namespace B hasn't federated must be rejected
     assert!(
         !b.db
             .namespace_inbound_authorized("a-on-b", "not-federated")
@@ -270,13 +255,12 @@ async fn namespace_replicates_a_to_b() {
 #[tokio::test]
 async fn unfederated_address_rejected_with_clear_error() {
     use grimoire::shared::mail::{Address, parse_address};
-    // Sanity: parse_address accepts the federated form.
     let parsed = parse_address("agent://grimd-aaaaaaaa/abcd1234").unwrap();
     matches!(parsed, Address::FederatedAgent { .. });
 }
 
-/// Variant of [`boot_daemon`] that uses a caller-supplied identity (so the
-/// client cert A presents matches what B pinned).
+/// Like [`boot_daemon`] but with a caller-supplied identity, so A's client
+/// cert matches what B pinned.
 async fn boot_daemon_with(
     daemon_id: &str,
     identity: Identity,

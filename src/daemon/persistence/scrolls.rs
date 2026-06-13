@@ -114,9 +114,7 @@ impl super::Database {
         )
     }
 
-    /// Find the task whose in-flight verification is being performed by
-    /// `agent_id`. Mirrors `get_task_by_agent_id`, but resolves the
-    /// *evaluator* side of a verification-gated task.
+    /// Like `get_task_by_agent_id`, but resolves the verifier (evaluator) side.
     pub fn get_task_by_verifier_agent_id(&self, agent_id: &str) -> Result<Option<Task>> {
         self.query_opt(
             "SELECT id, scroll_id, name, prompt, state, agent_id, provider, model, cwd, file_patterns, order_index, created_at, updated_at, peer_name, verify_rubric, verify_threshold, verifier_agent_id
@@ -126,9 +124,8 @@ impl super::Database {
         )
     }
 
-    /// Record the evaluator agent summoned to verify `task_id`'s worker
-    /// transcript. The task itself stays in its current state; the keeper
-    /// settles it when the evaluator finishes.
+    /// Link the evaluator agent verifying `task_id`. The task keeps its current
+    /// state; the keeper settles it when the evaluator finishes.
     pub fn set_task_verifier(&self, task_id: &str, agent_id: &str) -> Result<()> {
         let now = Utc::now().to_rfc3339();
         self.exec(
@@ -138,8 +135,7 @@ impl super::Database {
         Ok(())
     }
 
-    /// Clear a task's verifier link so a re-run's completion re-triggers
-    /// verification from scratch. Used by the retry path.
+    /// Clear the verifier link so a retry's completion re-triggers verification.
     pub fn clear_task_verifier(&self, task_id: &str) -> Result<()> {
         self.exec(
             "UPDATE tasks SET verifier_agent_id = NULL WHERE id = ?1",
@@ -183,12 +179,8 @@ impl super::Database {
     }
 
     pub fn find_ready_tasks(&self, scroll_id: &str) -> Result<Vec<Task>> {
-        // Runnable tasks: those whose dependencies are all complete and that
-        // are not yet in flight. A no-dependency task is created `ready`; a
-        // dependency-bearing task sits `blocked` until its deps complete and
-        // an approved gate flips it back to `ready`. Both states are
-        // schedulable here; `awaiting_approval`, `active`, and terminal
-        // states are deliberately excluded.
+        // Schedulable = `blocked`/`ready` with all deps complete.
+        // `awaiting_approval`, `active`, and terminal states are excluded.
         self.query_vec(
             "SELECT r.id, r.scroll_id, r.name, r.prompt, r.state, r.agent_id, r.provider, r.model, r.cwd, r.file_patterns, r.order_index, r.created_at, r.updated_at
              FROM tasks r
@@ -205,8 +197,7 @@ impl super::Database {
 
     // --- HITL approval + retry directives (DB-only task columns) ----------
 
-    /// Stamp the approval/retry directives parsed from the spec onto a task
-    /// row at inscribe time. Called right after `insert_task`.
+    /// Stamp approval/retry directives onto a task row at inscribe time.
     pub fn set_task_directives(
         &self,
         task_id: &str,
@@ -224,8 +215,7 @@ impl super::Database {
         Ok(())
     }
 
-    /// `(requires_approval, approval_state)` for a task. Defaults to
-    /// `(false, None)` for rows that predate the columns.
+    /// `(requires_approval, approval_state)`, defaulting to `(false, None)`.
     pub fn get_task_approval(
         &self,
         task_id: &str,
@@ -246,7 +236,6 @@ impl super::Database {
         }
     }
 
-    /// Set a task's approval state (the human decision or the pending hold).
     pub fn set_task_approval_state(
         &self,
         task_id: &str,
@@ -259,7 +248,7 @@ impl super::Database {
         Ok(())
     }
 
-    /// `(max_retries, retry_count)` for a task. Defaults to `(0, 0)`.
+    /// `(max_retries, retry_count)`, defaulting to `(0, 0)`.
     pub fn get_task_retry(&self, task_id: &str) -> Result<(u32, u32)> {
         let row = self.query_opt(
             "SELECT max_retries, retry_count FROM tasks WHERE id = ?1",
@@ -284,7 +273,6 @@ impl super::Database {
         Ok(n.max(0) as u32)
     }
 
-    /// Count active tasks in a scroll
     pub fn count_active_tasks(&self, scroll_id: &str) -> Result<usize> {
         let conn = self.conn_lock();
         let count: i64 = conn.query_row(
@@ -295,7 +283,7 @@ impl super::Database {
         Ok(count as usize)
     }
 
-    /// Get all dependency edges for a scroll (for cycle detection)
+    /// All dependency edges for a scroll (for cycle detection).
     pub fn get_all_dependencies_for_scroll(
         &self,
         scroll_id: &str,
@@ -310,8 +298,7 @@ impl super::Database {
         )
     }
 
-    /// Insert a new row into `task_queue`. The corresponding `agents` row must
-    /// already exist (foreign-key constraint).
+    /// Insert a `task_queue` row; the matching `agents` row must already exist (FK).
     pub fn enqueue_task(&self, row: &QueueRow) -> Result<()> {
         self.exec(
             "INSERT INTO task_queue
@@ -332,8 +319,7 @@ impl super::Database {
         Ok(())
     }
 
-    /// List every queued row in dispatch order (ad-hoc lane first, then by
-    /// priority DESC, then FIFO by `enqueued_at`, then by id).
+    /// All queued rows in dispatch order: ad-hoc lane first, then priority, then FIFO.
     pub fn list_queue(&self) -> Result<Vec<QueueRow>> {
         self.query_vec(
             "SELECT id, lane, priority, enqueued_at, provider_name, cwd, model, task_text, block_reason
@@ -345,7 +331,7 @@ impl super::Database {
         )
     }
 
-    /// List queued rows restricted to a single lane, in dispatch order.
+    /// Queued rows for a single lane, in dispatch order.
     pub fn list_queue_by_lane(&self, lane: &str) -> Result<Vec<QueueRow>> {
         self.query_vec(
             "SELECT id, lane, priority, enqueued_at, provider_name, cwd, model, task_text, block_reason
@@ -357,8 +343,7 @@ impl super::Database {
         )
     }
 
-    /// Return the next row that should be dispatched, honoring lane order
-    /// (ad-hoc first), then priority, then FIFO. Does not mutate state.
+    /// The next row to dispatch (same ordering as `list_queue`), without mutating.
     pub fn peek_next_dispatch(&self) -> Result<Option<QueueRow>> {
         self.query_opt(
             "SELECT id, lane, priority, enqueued_at, provider_name, cwd, model, task_text, block_reason
@@ -371,10 +356,8 @@ impl super::Database {
         )
     }
 
-    /// Atomically remove the queue row for `id` and flip the matching agent
-    /// to `summoning`. Returns `true` if the queue row existed and was
-    /// claimed; `false` if it was already gone (raced with another claim or
-    /// a `banish`).
+    /// Atomically delete the queue row for `id` and flip its agent to
+    /// `summoning`. `false` if the row was already gone (lost the race).
     pub fn claim_for_dispatch(&self, id: &AgentId) -> Result<bool> {
         let mut conn = self.conn_lock();
         let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
@@ -392,9 +375,8 @@ impl super::Database {
         Ok(true)
     }
 
-    /// Re-insert a previously claimed row, preserving its original
-    /// `enqueued_at` so fairness ordering is not lost. Sets the matching
-    /// agent's state back to `queued`.
+    /// Re-insert a claimed row, preserving its original `enqueued_at` so lane
+    /// fairness is kept, and reset the agent to `queued`.
     pub fn requeue(&self, row: &QueueRow) -> Result<()> {
         let mut conn = self.conn_lock();
         let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
@@ -423,15 +405,13 @@ impl super::Database {
         Ok(())
     }
 
-    /// Remove the queue row for `id`, if it exists. Returns `true` when a
-    /// row was actually deleted, `false` when it was already gone (idempotent).
+    /// Remove the queue row for `id`; `false` if already gone (idempotent).
     pub fn delete_from_queue(&self, id: &AgentId) -> Result<bool> {
         let conn = self.conn_lock();
         let n = conn.execute("DELETE FROM task_queue WHERE id = ?1", params![id])?;
         Ok(n > 0)
     }
 
-    /// Update or clear the `block_reason` for a queued row.
     pub fn set_block_reason(&self, id: &AgentId, reason: Option<&str>) -> Result<()> {
         self.exec(
             "UPDATE task_queue SET block_reason = ?1 WHERE id = ?2",
@@ -440,15 +420,13 @@ impl super::Database {
         Ok(())
     }
 
-    /// Number of rows currently in `task_queue`.
     pub fn count_queued(&self) -> Result<usize> {
         let conn = self.conn_lock();
         let n: i64 = conn.query_row("SELECT COUNT(*) FROM task_queue", [], |r| r.get(0))?;
         Ok(n as usize)
     }
 
-    /// Number of agents currently mid-flight (Active or Summoning), the
-    /// scheduler's `in_flight` count for capacity decisions.
+    /// Mid-flight agents (Active or Summoning); the scheduler's capacity count.
     pub fn count_in_flight_agents(&self) -> Result<usize> {
         let conn = self.conn_lock();
         let n: i64 = conn.query_row(
@@ -459,7 +437,7 @@ impl super::Database {
         Ok(n as usize)
     }
 
-    /// Insert one rubric-scored evaluation row, returning its id.
+    /// Insert a rubric-scored evaluation row, returning its id.
     pub fn insert_eval_result(
         &self,
         target_id: &str,
@@ -503,8 +481,7 @@ impl super::Database {
         Ok(rows)
     }
 
-    /// Latest score per target across all evaluated agents. Lets `grim circle
-    /// --eval-score-lt` filter in one trip without an N+1 fanout.
+    /// Latest score per target, in one query (no N+1) for `grim circle --eval-score-lt`.
     pub fn latest_eval_scores_all(&self) -> Result<Vec<(String, f64)>> {
         let conn = self.conn_lock();
         let mut stmt = conn.prepare(
@@ -517,8 +494,7 @@ impl super::Database {
         Ok(rows)
     }
 
-    /// Highest score recorded for `target_id`, used by `grim circle --eval`
-    /// to surface a single representative number per agent.
+    /// Most recent score for `target_id`, for `grim circle --eval`.
     pub fn latest_eval_score(&self, target_id: &str) -> Result<Option<f64>> {
         let conn = self.conn_lock();
         let row: Option<f64> = conn
@@ -532,9 +508,7 @@ impl super::Database {
         Ok(row)
     }
 
-    /// Increment `budget_spend.usd` for `(budget_name, day)` by `usd`,
-    /// inserting the row on first write. Returns the new running total
-    /// for that day.
+    /// Upsert `+usd` onto `(budget_name, day)`, returning the new daily total.
     pub fn add_budget_spend(&self, budget_name: &str, day: &str, usd: f64) -> Result<f64> {
         if usd <= 0.0 {
             return self.get_budget_spend(budget_name, day);

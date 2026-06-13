@@ -69,7 +69,7 @@ fn pending_to_delivered_on_ack_ok() {
     assert_eq!(row.state, PeerOutboxState::Pending);
     db.mark_outbox_in_flight(&row.id).unwrap();
     db.mark_outbox_delivered(&row.id).unwrap();
-    // Depth is "pending+in_flight"; delivered rows fall out of the count.
+    // depth counts pending+in_flight only; delivered rows drop out
     assert_eq!(db.outbox_depth(&peer.id).unwrap(), 0);
 }
 
@@ -88,7 +88,7 @@ fn failure_retries_with_backoff() {
     db.mark_outbox_failed_retry(&row.id, unix_now() + 100)
         .unwrap();
 
-    // Not eligible yet (next_attempt_at is in the future).
+    // next_attempt_at is in the future, so the row is not yet eligible
     let later = db.next_outbox_row(&peer.id, unix_now()).unwrap();
     assert!(later.is_none(), "row should be hidden until retry deadline");
 

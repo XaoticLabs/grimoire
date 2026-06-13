@@ -5,9 +5,8 @@ use crate::cli::client::DaemonClient;
 use crate::shared::eval::{EvalVerdict, build_eval_prompt, fold_stdout_output, parse_verdict};
 use crate::shared::protocol::{EvalListResult, EvalRecordResult, ReplayResponse, SummonResult};
 
-/// Fold the target agent's `Output` stdout events into a single transcript
-/// string. Same shape as `fork::build_fork_prompt` uses. Keep the two in
-/// sync if one changes how it extracts output.
+/// Fold the target's stdout `Output` events into one transcript. Shares the
+/// extraction shape with `fork::build_fork_prompt`; keep the two in sync.
 fn fold_transcript(entries: &[crate::shared::protocol::ReplayEntry]) -> String {
     fold_stdout_output(entries.iter().map(|e| &e.event))
 }
@@ -39,9 +38,8 @@ pub async fn run(
     let transcript = fold_transcript(&replay.entries);
     let prompt = build_eval_prompt(target_id, max_seq, &rubric, &transcript);
 
-    // Deterministic name encodes the link target→evaluator so `grim circle`
-    // can find them without a new schema. The short id is enough since this
-    // is just operator UX, not a foreign key.
+    // Deterministic name encodes target→evaluator so `grim circle` can link
+    // them without a new schema; short id suffices (operator UX, not a FK).
     let short = &target_id[..8.min(target_id.len())];
     let evaluator_name = name.unwrap_or_else(|| format!("eval:{short}"));
 
@@ -84,10 +82,8 @@ pub async fn run(
         return Ok(());
     }
 
-    // Block until the evaluator reaches a terminal state, then parse its
-    // last-result JSON. Polling, not subscribing, keeps the CLI hops
-    // identical to the rest of `grim`; eval runs are short-lived enough
-    // that a 1 s tick is fine.
+    // Poll (not subscribe) until terminal: keeps CLI hops uniform and eval
+    // runs are short enough that a 1s tick is fine.
     let parsed = wait_for_verdict(&mut client, &result.id, timeout_secs).await?;
     let record_id = record_verdict(&mut client, target_id, &result.id, &parsed).await?;
     print_verdict(&result.id, &parsed);
@@ -95,9 +91,7 @@ pub async fn run(
     Ok(())
 }
 
-/// `grim eval <id> --list`: print every recorded evaluation for the
-/// target, newest first. Mirrors `grim mail list` in shape so operators
-/// can scan an agent's full review history at a glance.
+/// `grim eval <id> --list`: print every recorded evaluation, newest first.
 pub async fn run_list(target_id: &str) -> Result<()> {
     let mut client = DaemonClient::connect().await?;
     let result: EvalListResult = client
@@ -243,7 +237,6 @@ mod tests {
         let s = fold_transcript(&entries);
         assert!(s.contains("first"));
         assert!(s.contains("second"));
-        // The state-change line shouldn't appear in the folded transcript.
         assert!(!s.contains("state_change"));
     }
 }

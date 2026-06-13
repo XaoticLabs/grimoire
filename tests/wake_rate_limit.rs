@@ -84,7 +84,7 @@ async fn first_fire_for_new_agent_allowed() {
 
 #[tokio::test]
 async fn bucket_exhaustion_denies_with_rate_limited() {
-    // capacity=2, refill 0 (no recovery during the test). Third fire denied.
+    // capacity=2, refill=0 (no recovery), so the third fire is denied
     let (_db, _clock, reg, sender, wake_id) = setup_with_capacity(2, 0.0).await;
     reg.fire(&wake_id, "1", None).await.unwrap();
     reg.fire(&wake_id, "2", None).await.unwrap();
@@ -99,7 +99,7 @@ async fn refill_restores_capacity_over_time() {
     let (_db, clock, reg, sender, wake_id) = setup_with_capacity(2, 1.0).await; // 1 token/sec
     reg.fire(&wake_id, "1", None).await.unwrap();
     reg.fire(&wake_id, "2", None).await.unwrap();
-    // Bucket empty.
+    // bucket now empty; refill restores one token
     clock.advance(Duration::seconds(2));
     reg.fire(&wake_id, "3", None).await.unwrap();
     assert_eq!(sender.calls.lock().await.len(), 3);
@@ -108,7 +108,6 @@ async fn refill_restores_capacity_over_time() {
 #[tokio::test]
 async fn test_fire_bypasses_rate_limit() {
     let (_db, _clock, reg, sender, wake_id) = setup_with_capacity(0, 0.0).await;
-    // Regular fire would deny; test_fire bypasses.
     let res = reg.test_fire(&wake_id).await;
     assert!(res.is_ok(), "test_fire must bypass rate limit: {res:?}");
     assert_eq!(sender.calls.lock().await.len(), 1);
@@ -127,8 +126,7 @@ async fn clock_skew_does_not_add_tokens() {
     let (_db, clock, reg, sender, wake_id) = setup_with_capacity(2, 1.0).await;
     reg.fire(&wake_id, "1", None).await.unwrap();
     reg.fire(&wake_id, "2", None).await.unwrap();
-    // Move clock backward.
-    clock.advance(Duration::seconds(-3600));
+    clock.advance(Duration::seconds(-3600)); // clock skew backward
     let res = reg.fire(&wake_id, "3", None).await;
     assert!(res.is_err(), "clock skew must not mint tokens");
     assert_eq!(sender.calls.lock().await.len(), 2);

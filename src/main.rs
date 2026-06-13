@@ -1,18 +1,13 @@
 #![cfg_attr(not(test), forbid(unsafe_code))]
 #![cfg_attr(not(test), warn(clippy::unwrap_used))]
-// `grim` is the CLI entry point, printing diagnostics/usage hints to the
-// user's terminal is its job. Library/daemon code is still gated by the
-// global `print_stdout`/`print_stderr` lints.
+// `grim` is the CLI entry point; printing to the user's terminal is its job.
 #![allow(clippy::print_stdout, clippy::print_stderr)]
 
 use std::time::Duration;
 
 use clap::{Parser, Subcommand};
 
-/// How long the CLI waits after auto-spawning the daemon before retrying
-/// the socket connection. Tuned so a healthy daemon is usually up by the
-/// first retry without making CLI startup feel laggy when the daemon is
-/// already running.
+/// Delay after auto-spawning the daemon before retrying the socket connection.
 const DAEMON_AUTOSTART_POLL: Duration = Duration::from_millis(500);
 
 pub mod cli;
@@ -48,14 +43,12 @@ enum Commands {
         #[arg(short, long)]
         provider: Option<String>,
 
-        /// Working directory for the agent (defaults to the daemon's
-        /// `agent.default_cwd`, then the daemon's own cwd). Mutually
-        /// exclusive with --workspace.
+        /// Working directory (defaults to `agent.default_cwd`, then daemon cwd).
+        /// Mutually exclusive with --workspace.
         #[arg(long, conflicts_with = "workspace")]
         cwd: Option<std::path::PathBuf>,
 
-        /// Park the agent in Dormant after it finishes its first run, so
-        /// future wake sources or `grim invoke` can resume it.
+        /// Park in Dormant after the first run so wakes or `grim invoke` can resume it.
         #[arg(short = 'k', long)]
         keep_alive: bool,
 
@@ -81,14 +74,13 @@ enum Commands {
         #[arg(long)]
         parent: Option<String>,
 
-        /// USD ceiling for the supervision tree rooted at this agent.
-        /// When the tree's summed spend reaches the cap, dispatches and
-        /// wakes anywhere in the tree are blocked and you're notified once.
+        /// USD ceiling for the supervision tree rooted here. When summed spend
+        /// reaches the cap, dispatches and wakes across the tree are blocked.
         #[arg(long, value_name = "USD")]
         tree_budget_usd: Option<f64>,
 
-        /// Idempotency key. A repeat summon with the same key returns the
-        /// agent the first call minted instead of spawning a duplicate.
+        /// Idempotency key: a repeat summon with the same key returns the
+        /// first agent instead of spawning a duplicate.
         #[arg(long)]
         idempotency_key: Option<String>,
     },
@@ -144,8 +136,7 @@ enum Commands {
         #[arg(short, long)]
         name: Option<String>,
 
-        /// Return immediately after summoning the evaluator. Default is to
-        /// block until the evaluator finishes and print its parsed score.
+        /// Return immediately instead of blocking until the evaluator finishes.
         #[arg(long)]
         no_wait: bool,
 
@@ -153,20 +144,18 @@ enum Commands {
         #[arg(long, default_value_t = 300)]
         timeout: u64,
 
-        /// List recorded evaluations for the target instead of running a
-        /// new one. Mutually exclusive with `--rubric` in practice.
+        /// List recorded evaluations for the target instead of running a new one.
         #[arg(long)]
         list: bool,
     },
 
-    /// Fork an agent at a point in its history: spawn a new agent seeded
-    /// with the parent's output up to the cut.
+    /// Fork an agent: spawn a new one seeded with the parent's output up to a cut.
     Fork {
         /// Parent agent ID (or prefix)
         id: String,
 
-        /// Cut point. An event seq (inclusive) or kind name (stop after
-        /// the first occurrence). Defaults to the parent's full life.
+        /// Cut point: an event seq (inclusive) or kind name (stops after its
+        /// first occurrence). Defaults to the parent's full life.
         #[arg(long)]
         at: Option<String>,
 
@@ -190,8 +179,8 @@ enum Commands {
     /// Fork a task into competing variants, run each in an isolated git
     /// worktree, score them against a rubric, and merge the winner.
     Race {
-        /// The task prompt. A `{variant}` placeholder is replaced per
-        /// variant; otherwise the variant is appended as an instruction.
+        /// Task prompt. A `{variant}` placeholder is substituted per variant;
+        /// otherwise the variant is appended as an instruction.
         task: String,
 
         /// Comma-separated variant labels, e.g. "redis,postgres,sqlite".
@@ -251,8 +240,7 @@ enum Commands {
         /// Agent ID (or prefix)
         id: String,
 
-        /// Stop at a point: an event seq (inclusive) or a kind name
-        /// (stops after its first occurrence), e.g. `--until escalated`.
+        /// Stop at an event seq (inclusive) or kind name, e.g. `--until escalated`.
         #[arg(long)]
         until: Option<String>,
 
@@ -273,13 +261,13 @@ enum Commands {
         #[arg(long)]
         json: bool,
 
-        /// After the history, keep streaming live events until the agent
-        /// reaches a terminal state. Mutually exclusive with `--scroll`.
+        /// After history, stream live events until the agent reaches a terminal
+        /// state. Mutually exclusive with `--scroll`.
         #[arg(long, conflicts_with = "scroll")]
         follow: bool,
 
-        /// Replay the merged timelines of every agent in the named scroll.
-        /// When set, `id` is interpreted as a scroll id.
+        /// Replay the merged timelines of every agent in the named scroll;
+        /// `id` is then interpreted as a scroll id.
         #[arg(long)]
         scroll: bool,
     },
@@ -338,25 +326,22 @@ enum Commands {
         #[arg(long)]
         abandon: bool,
 
-        /// Dispatch one task of this scroll to a peer instead of
-        /// running it locally. Pair with `--to <peer>`. The receiver
-        /// must have `peer set-accept-dispatch` enabled for the
-        /// coordinator.
+        /// Dispatch one task of this scroll to a peer instead of running it
+        /// locally; pair with `--to <peer>`. The receiver must have
+        /// `peer set-accept-dispatch` enabled for the coordinator.
         #[arg(long = "dispatch-task", requires_all = ["id", "to"])]
         dispatch_task: Option<String>,
 
-        /// Peer name to dispatch the task to. Used with
-        /// `--dispatch-task`.
+        /// Peer to dispatch the task to. Used with `--dispatch-task`.
         #[arg(long)]
         to: Option<String>,
 
-        /// HITL: approve a held task (by name or id) so the DAG schedules
-        /// it. Requires the scroll `id`.
+        /// Approve a held task (by name or id) so the DAG schedules it. Requires `id`.
         #[arg(long, value_name = "TASK", requires = "id")]
         approve: Option<String>,
 
-        /// HITL: reject a held task (by name or id), failing it and
-        /// skipping everything downstream. Requires the scroll `id`.
+        /// Reject a held task (by name or id), failing it and skipping
+        /// everything downstream. Requires `id`.
         #[arg(long, value_name = "TASK", requires = "id")]
         reject: Option<String>,
     },
@@ -407,9 +392,8 @@ enum Commands {
         cmd: cli::commands::mail::MailCommand,
     },
 
-    /// Send a mail and block until a reply arrives (or the timeout fires).
-    /// The reply is any subsequent mail whose `in_reply_to` matches the id
-    /// of the mail sent here. Pairs with `grim mail send --in-reply-to <id>`.
+    /// Send a mail and block until a reply (mail with matching `in_reply_to`)
+    /// arrives or the timeout fires. Pairs with `grim mail send --in-reply-to`.
     Ask {
         /// Recipient address (`agent://<id>` or `topic://<name>`).
         addr: String,
@@ -421,10 +405,9 @@ enum Commands {
         timeout: u64,
     },
 
-    /// Post a tender (auction) to a topic or agent and collect every bid
-    /// received within the deadline. Subscribers reply with
-    /// `grim mail send --in-reply-to <id>`; this command lists the bids in
-    /// arrival order so the caller can pick a winner.
+    /// Post a tender (auction) and collect every bid received within the
+    /// deadline, listed in arrival order. Subscribers reply with
+    /// `grim mail send --in-reply-to <id>`.
     Tender {
         /// Recipient address (`agent://<id>` or `topic://<name>`).
         addr: String,
@@ -473,8 +456,7 @@ enum Commands {
     },
 
     /// Emit an operator-facing notification (forwarded to the configured
-    /// webhook). Agents call this to surface something worth a human's
-    /// attention; the agent id is read from `GRIMOIRE_AGENT_ID`.
+    /// webhook). The agent id is read from `GRIMOIRE_AGENT_ID`.
     Notify {
         /// The notification message
         message: String,
@@ -484,8 +466,8 @@ enum Commands {
         level: Option<String>,
     },
 
-    /// Scaffold a working standing-agent flow in one command. Prints each
-    /// underlying `grim` action it runs. Demos: `standing-review`.
+    /// Scaffold a standing-agent flow, printing each `grim` action it runs.
+    /// Demos: `standing-review`.
     Demo {
         /// Which demo to set up (e.g. standing-review).
         name: String,
@@ -499,8 +481,8 @@ enum Commands {
         provider: Option<String>,
     },
 
-    /// Serve the daemon to MCP clients over stdio (tools + the Tasks
-    /// primitive). Add to an MCP host as: command `grim`, args `["mcp"]`.
+    /// Serve the daemon to MCP clients over stdio (tools + Tasks primitive).
+    /// Add to an MCP host as: command `grim`, args `["mcp"]`.
     Mcp,
 
     /// Print shell completions to stdout (bash, zsh, fish, elvish, powershell)
@@ -775,8 +757,7 @@ async fn main() {
                     repo,
                     provider,
                 } => cli::commands::demo::run(&name, repo, provider).await,
-                // `Daemon`, `Completions`, and `Mangen` are dispatched by the
-                // outer match arms above and never reach this client dispatch.
+                // Dispatched by the outer match arms; never reach here.
                 Commands::Daemon | Commands::Completions { .. } | Commands::Mangen { .. } => {
                     unreachable!("handled by outer match arm")
                 }

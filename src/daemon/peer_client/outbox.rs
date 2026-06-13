@@ -45,10 +45,8 @@ impl OutboxBackend for MailOutbox<'_> {
     }
 }
 
-/// Workspace-file-event federation backend. Drives
-/// `workspace_event_outbox` rows over the workspace channel. The
-/// payload is already JSON-serialized at enqueue time, so the backend
-/// is just a passthrough.
+/// Workspace-file-event backend. Drives `workspace_event_outbox` rows over the
+/// workspace channel; payload is JSON-serialized at enqueue time (passthrough).
 pub(super) struct WorkspaceEventOutbox<'a> {
     pub(super) db: &'a Database,
 }
@@ -122,9 +120,8 @@ impl OutboxBackend for ScrollDispatchOutbox<'_> {
         row.sender_seq.to_string()
     }
     fn row_to_outbound(row: &Self::Row) -> PeerOutbound {
-        // Payload was serialized at enqueue time as a JSON envelope
-        // carrying the same fields the proto message holds. Decode
-        // here so the over-the-wire proto stays the source of truth.
+        // Decode the JSON envelope into the proto so the wire proto stays the
+        // source of truth.
         let parsed: ScrollDispatchPayload =
             serde_json::from_slice(&row.payload).unwrap_or_default();
         PeerOutbound {
@@ -160,8 +157,8 @@ pub struct ScrollDispatchPayload {
     pub file_patterns: Vec<String>,
 }
 
-/// Agent-lifecycle federation backend. Drives
-/// `agent_lifecycle_outbox` rows over the lifecycle channel.
+/// Agent-lifecycle backend. Drives `agent_lifecycle_outbox` rows over the
+/// lifecycle channel.
 pub(super) struct AgentLifecycleOutbox<'a> {
     pub(super) db: &'a Database,
 }

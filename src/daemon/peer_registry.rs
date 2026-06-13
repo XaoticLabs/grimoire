@@ -1,8 +1,8 @@
-//! Federation peer registry (Tasks 6, 11). Owns the per-peer outbound
-//! client task + outbox drainer + inbox handler dispatch.
+//! Federation peer registry: owns the per-peer outbound client task, outbox
+//! drainer, and inbox-handler dispatch.
 //!
 //! State machine:
-//!   `Pending` (handshake not yet completed) →
+//!   `Pending` (handshake pending) →
 //!   `Active` (stream up) ↔ `Down` (stream lost, retry pending) →
 //!   `Removing` (cascade in progress) → row deleted.
 
@@ -24,8 +24,7 @@ use super::peer_client::PeerClientHandle;
 use super::peer_inbox::InboxHandler;
 use super::persistence::{Database, unix_now};
 
-/// Tight-loop yield while waiting for a spawned peer-client task to
-/// register itself with the registry before observing its initial state.
+/// Poll interval while awaiting a spawned peer-client's handshake.
 const PEER_SPAWN_SETTLE_YIELD: Duration = Duration::from_millis(50);
 
 pub struct PeerHandle {
@@ -144,15 +143,13 @@ impl PeerRegistry {
         cert_pem: &str,
         timeout_secs: u64,
     ) -> Result<Peer> {
-        // Validate name + token shapes.
         if !is_valid_peer_name(name) {
             return Err(anyhow!("invalid_peer_name"));
         }
         if !is_valid_bearer_token(bearer_token) {
             return Err(anyhow!("invalid_bearer_token"));
         }
-        // mTLS is mandatory: peers speak gRPC-over-TLS and we pin the remote
-        // cert. Reject plaintext URLs and missing/garbage certs up front.
+        // mTLS is mandatory: reject plaintext URLs and missing/garbage certs.
         if !url.starts_with("https://") {
             return Err(anyhow!("peer_url_must_be_https"));
         }
@@ -184,8 +181,8 @@ impl PeerRegistry {
             match self.db.get_peer_by_name(name)? {
                 Some(p) if p.state == PeerState::Active => return Ok(p),
                 Some(p) if p.state == PeerState::Down => {
-                    // Handshake explicitly rejected, surface to caller and
-                    // tear down the row so a retry can choose a new token.
+                    // Handshake rejected: tear down the row so a retry can pick
+                    // a new token.
                     let _ = self.db.delete_peer(&p.id);
                     self.handles.lock().await.remove(&p.id);
                     return Err(anyhow!("peer_handshake_failed"));
@@ -193,7 +190,7 @@ impl PeerRegistry {
                 _ => {}
             }
             if std::time::Instant::now() >= deadline {
-                // Timeout: roll back the row so operator can `peer add` cleanly.
+                // Roll back the row so the operator can `peer add` cleanly.
                 if let Some(p) = self.db.get_peer_by_name(name)? {
                     let _ = self.db.delete_peer(&p.id);
                     self.handles.lock().await.remove(&p.id);
@@ -228,7 +225,6 @@ impl PeerRegistry {
         };
         // Mark Removing so any in-flight drainer halts cleanly.
         self.db.set_peer_state(&peer.id, PeerState::Removing)?;
-        // Tear down client task.
         if let Some(handle) = self.handles.lock().await.remove(&peer.id)
             && let Some(client) = handle.client
         {
@@ -243,9 +239,7 @@ impl PeerRegistry {
         let Some(peer) = self.db.get_peer_by_name(name)? else {
             return Err(anyhow!("peer_not_found"));
         };
-        // Minimal ping: report current state + zero RTT for now (full
-        // request/response over the channel is layered on Heartbeat / HeartbeatAck
-        // for v1, returning state suffices).
+        // Stub: report current state + zero RTT; no round-trip ping yet.
         Ok((0, peer.state.as_str().to_string()))
     }
 }

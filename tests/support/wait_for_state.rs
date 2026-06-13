@@ -1,9 +1,7 @@
 #![allow(unreachable_pub)] // shared via `mod support` in each test crate; pub is load-bearing
-// Polls the database for an agent's state, returning when it matches a
-// target state or timing out with the actual final state. Use this in any
-// test where work goes through `enqueue + scheduler.tick_now()` rather than
-// the old synchronous `summon` path. Post-enqueue the agent is `Queued`,
-// so a direct `assert_eq!(state, Active)` would race the scheduler.
+// Polls the DB for an agent's state. Needed wherever work goes through
+// `enqueue + tick_now()`: the agent is `Queued` post-enqueue, so a direct
+// `assert_eq!(state, Active)` would race the scheduler.
 
 use std::time::Duration;
 
@@ -13,9 +11,8 @@ use grimoire::shared::types::{Agent, AgentState};
 
 const POLL_INTERVAL: Duration = Duration::from_millis(25);
 
-/// Poll `db.get_agent(id)` every 25ms until the agent's state equals
-/// `target`. Returns the agent on success, or an error after `timeout`
-/// whose message names the actual final state for fast triage.
+/// Returns the agent once its state equals `target`, or errors after
+/// `timeout` with a message naming the actual final state.
 #[allow(dead_code)]
 pub async fn wait_for_state(
     db: &Database,

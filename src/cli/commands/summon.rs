@@ -51,9 +51,8 @@ pub async fn run(
         Some(p) => Some(crate::cli::client::resolve_agent_id(&p).await?),
         None => None,
     };
-    // Resolve relative --cwd against the CLI's own working directory: the
-    // daemon would otherwise resolve it against *its* cwd, which isn't
-    // what the operator typing the command means.
+    // Resolve relative --cwd against the CLI's cwd; the daemon would otherwise
+    // resolve it against *its* own, not what the operator meant.
     let cwd = cwd.map(|p| {
         if p.is_absolute() {
             p

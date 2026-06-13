@@ -1,27 +1,13 @@
-//! Self-signed identity certificates for peer-federation and worker-pool
-//! mutual TLS. Each daemon and each worker owns a long-lived self-signed
-//! cert+key pair (its transport identity); trust between two endpoints is
-//! established by **pinning** the other side's certificate out-of-band,
-//! exactly the way the per-link bearer tokens already are (see
-//! [`super::auth`], `peer add --token`, `WorkerConfig.secret`).
-//!
-//! ## Why self-signed + pinning rather than a CA
-//!
-//! Grimoire links are point-to-point and few: an operator runs `grim peer
-//! add <name> <url> --token T --cert peer.crt`, exchanging the peer's cert
-//! alongside its token. Each self-signed cert is its own trust anchor, so
-//! pinning that exact cert as the TLS root verifies the remote's identity
-//! with no PKI to provision. The bearer token rides *inside* the now-encrypted
+//! Self-signed identity certificates for peer-federation and worker-pool mutual
+//! TLS. Trust between two endpoints is established by **pinning** the other
+//! side's cert out-of-band, like the per-link bearer tokens (see [`super::auth`]).
+//! Each self-signed cert is its own trust anchor, so pinning it as the TLS root
+//! verifies the remote with no PKI; the bearer token rides inside the encrypted
 //! channel as a second factor.
 //!
-//! ## Resolution order (daemon/worker side)
-//!
-//! 1. Explicit `tls_cert_path` / `tls_key_path` from config, if both set.
-//! 2. `<grimoire_dir>/tls/<name>.crt` + `.key` (auto-generated on first
-//!    start, mode 0600), where `<name>` is `daemon` or `worker`.
-//!
-//! With no config, the daemon converges on the auto-generated file: zero
-//! config for the solo operator, explicit override for org PKI.
+//! Identity resolution: explicit `tls_cert_path`/`tls_key_path` if both set,
+//! else `<grimoire_dir>/tls/<name>.crt`+`.key` (auto-generated mode 0600 on
+//! first start, `<name>` = `daemon` or `worker`).
 
 #![warn(missing_docs)]
 
@@ -31,15 +17,14 @@ use anyhow::{Context, Result};
 
 use super::constants;
 
-/// Constant DNS SAN minted into every identity cert. Because trust is pinned
-/// to the exact certificate, the SAN match performed by rustls is not the
-/// security boundary; a fixed name lets the client always set a matching
-/// `domain_name` without knowing the remote's id ahead of time. `.invalid`
-/// is reserved (RFC 6761) so it can never resolve on a real network.
+/// Constant DNS SAN minted into every identity cert. Trust is pinned to the
+/// exact cert, so the rustls SAN match is not the security boundary; a fixed
+/// name lets the client set a matching `domain_name` without knowing the
+/// remote's id. `.invalid` (RFC 6761) can never resolve on a real network.
 pub const TLS_SAN: &str = "grimoire.invalid";
 
-/// A loaded transport identity: the PEM-encoded cert (also used as the pinned
-/// trust anchor by the remote) and its private key.
+/// A loaded transport identity: PEM cert (also the remote's pinned trust
+/// anchor) plus its private key.
 #[derive(Clone)]
 pub struct Identity {
     cert_pem: String,
@@ -47,8 +32,7 @@ pub struct Identity {
 }
 
 impl Identity {
-    /// The certificate in PEM form. Safe to share: this is what a remote
-    /// pins to trust this endpoint.
+    /// The certificate in PEM form. Safe to share: this is what a remote pins.
     #[must_use]
     pub fn cert_pem(&self) -> &str {
         &self.cert_pem
@@ -60,8 +44,7 @@ impl Identity {
         &self.key_pem
     }
 
-    /// Build a tonic [`tonic::transport::Identity`] for use in a server or
-    /// client TLS config.
+    /// Build a tonic [`tonic::transport::Identity`] for a server/client TLS config.
     #[must_use]
     pub fn to_tonic(&self) -> tonic::transport::Identity {
         tonic::transport::Identity::from_pem(self.cert_pem.as_bytes(), self.key_pem.as_bytes())
@@ -224,7 +207,6 @@ mod tests {
         let id = generate("daemon").unwrap();
         assert!(id.cert_pem().contains("BEGIN CERTIFICATE"));
         assert!(id.key_pem().contains("PRIVATE KEY"));
-        // Fingerprint is a 64-char lowercase hex SHA-256.
         let fp = id.fingerprint();
         assert_eq!(fp.len(), 64, "fingerprint: {fp}");
         assert!(
@@ -267,7 +249,6 @@ mod tests {
             assert_eq!(mode, 0o600, "expected 0600, got {mode:o}");
         }
 
-        // Second call reuses the persisted pair (same fingerprint).
         let second = load_or_init("daemon", None, None).unwrap();
         assert_eq!(first.fingerprint(), second.fingerprint());
 

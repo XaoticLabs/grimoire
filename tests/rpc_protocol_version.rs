@@ -68,8 +68,7 @@ async fn dispatch(req: RpcRequest) -> grimoire::shared::protocol::RpcResponse {
 #[tokio::test]
 async fn omitted_protocol_version_is_accepted_as_v1() {
     let resp = dispatch(req(None)).await;
-    // daemon.status is implemented; we expect a success or a non-version
-    // error. Crucially, we must *not* see unsupported_protocol_version.
+    // success or any non-version error is fine; just not unsupported_protocol_version
     if let Some(err) = resp.error {
         assert_ne!(err.message, "unsupported_protocol_version");
     }
@@ -94,8 +93,7 @@ async fn unknown_protocol_version_is_rejected() {
 
 #[tokio::test]
 async fn future_protocol_version_is_rejected() {
-    // Any non-1 version, even one above the current max, is rejected on a
-    // v1-only daemon. When v2 ships, this test moves to "v1 and v2 accepted".
+    // v1-only daemon rejects any non-1 version; revisit when v2 ships
     let resp = dispatch(req(Some(2))).await;
     let err = resp.error.expect("expected error for v2");
     assert_eq!(err.message, "unsupported_protocol_version");

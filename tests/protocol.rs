@@ -1,18 +1,10 @@
-//! Integration tests for the JSON-RPC protocol types.
-//!
-//! Verifies that RPC requests, responses, and streaming events serialize
-//! to the expected JSON shapes and roundtrip correctly. These tests ensure
-//! CLI↔daemon wire compatibility.
+//! JSON-RPC protocol wire-shape tests guarding CLI↔daemon compatibility.
 
 use chrono::Utc;
 use std::path::PathBuf;
 
 use grimoire::shared::protocol::*;
 use grimoire::shared::types::*;
-
-// ---------------------------------------------------------------------------
-// RpcRequest / RpcResponse roundtrips
-// ---------------------------------------------------------------------------
 
 #[test]
 fn rpc_request_serialization() {
@@ -61,10 +53,6 @@ fn rpc_response_error() {
     assert_eq!(parsed["error"]["message"], "Method not found");
 }
 
-// ---------------------------------------------------------------------------
-// SummonParams / SummonResult
-// ---------------------------------------------------------------------------
-
 #[test]
 fn summon_params_deserialize() {
     let json = r#"{
@@ -94,10 +82,6 @@ fn summon_params_minimal() {
     assert!(params.provider.is_none());
     assert!(params.cwd.is_none());
 }
-
-// ---------------------------------------------------------------------------
-// StreamEvent tagged serialization
-// ---------------------------------------------------------------------------
 
 #[test]
 fn stream_event_output_json_shape() {
@@ -192,10 +176,6 @@ fn stream_event_task_state_change_json_shape() {
     assert_eq!(json["new_state"], "ready");
 }
 
-// ---------------------------------------------------------------------------
-// Pact params/results
-// ---------------------------------------------------------------------------
-
 #[test]
 fn pact_create_params_roundtrip() {
     let params = PactCreateParams {
@@ -211,10 +191,6 @@ fn pact_create_params_roundtrip() {
     assert_eq!(parsed.name.as_deref(), Some("deploy-pact"));
 }
 
-// ---------------------------------------------------------------------------
-// Scroll params
-// ---------------------------------------------------------------------------
-
 #[test]
 fn scroll_inscribe_params_roundtrip() {
     let params = ScrollInscribeParams {
@@ -227,10 +203,6 @@ fn scroll_inscribe_params_roundtrip() {
     assert_eq!(parsed.spec_path, "/home/user/scroll.md");
     assert_eq!(parsed.max_concurrency, Some(8));
 }
-
-// ---------------------------------------------------------------------------
-// AgentState::Queued serde
-// ---------------------------------------------------------------------------
 
 #[test]
 fn agent_state_queued_serde_roundtrip() {
@@ -266,10 +238,6 @@ fn agent_in_queued_state_roundtrips() {
     assert_eq!(parsed.state, AgentState::Queued);
 }
 
-// ---------------------------------------------------------------------------
-// All StreamEvent variants deserialize from JSON
-// ---------------------------------------------------------------------------
-
 #[test]
 fn all_stream_event_variants_from_json() {
     let cases = vec![
@@ -285,14 +253,9 @@ fn all_stream_event_variants_from_json() {
         let event: StreamEvent = serde_json::from_str(json).unwrap_or_else(|e| {
             panic!("Failed to parse: {json}\nError: {e}");
         });
-        // Just verify it parsed without panicking
         let _ = event.agent_id();
     }
 }
-
-// ---------------------------------------------------------------------------
-// StreamEvent::AgentQueued + StreamEvent::WorkerRegistered (durable work queue)
-// ---------------------------------------------------------------------------
 
 #[test]
 fn agent_queued_event_serde_roundtrip() {
@@ -316,7 +279,6 @@ fn agent_queued_event_serde_roundtrip() {
         other => panic!("expected AgentQueued, got {other:?}"),
     }
 
-    // None for block_reason should also roundtrip.
     let event = StreamEvent::AgentQueued {
         agent_id: "x".to_string(),
         lane: "scroll".to_string(),
@@ -368,10 +330,6 @@ fn worker_registered_kind_string() {
     assert_eq!(event.kind(), "worker_registered");
 }
 
-// ---------------------------------------------------------------------------
-// StatusResponse / DaemonStatusResult: queue-distinct counts
-// ---------------------------------------------------------------------------
-
 #[test]
 fn status_response_queued_count_serde() {
     let resp = StatusResponse {
@@ -409,10 +367,6 @@ fn daemon_status_result_includes_queued_and_cap() {
     assert_eq!(json["queued_count"].as_u64(), Some(3));
     assert_eq!(json["max_concurrent_agents"].as_u64(), Some(8));
 }
-
-// ---------------------------------------------------------------------------
-// QueueListResponse / QueueEntry
-// ---------------------------------------------------------------------------
 
 #[test]
 fn queue_list_response_serde_roundtrip() {

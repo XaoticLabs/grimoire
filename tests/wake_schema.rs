@@ -117,8 +117,7 @@ fn delete_wake_source_removes_row() {
     db.insert_wake_source(&src).unwrap();
     assert!(db.delete_wake_source("wake_del1").unwrap());
     assert!(db.get_wake_source("wake_del1").unwrap().is_none());
-    // Idempotent second delete returns false.
-    assert!(!db.delete_wake_source("wake_del1").unwrap());
+    assert!(!db.delete_wake_source("wake_del1").unwrap()); // second delete is a no-op
 }
 
 #[test]

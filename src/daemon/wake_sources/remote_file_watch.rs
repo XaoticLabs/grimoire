@@ -1,16 +1,10 @@
-//! Remote file-watch wake source. Sister to `file_watch` for the
-//! shadow side of a federated workspace — there's no local notify
-//! watcher to arm; instead the registry subscribes to the event bus
-//! and matches paths off the `WorkspaceFileChanged` events that
-//! `apply_workspace_event_deliver` republishes after a peer delivery.
+//! Remote file-watch wake source: the shadow side of a federated workspace.
+//! No local notify watcher — the registry matches paths off the
+//! `WorkspaceFileChanged` events republished after a peer delivery.
 //!
-//! Config keys:
-//! - `workspace_id` — the **local shadow** workspace id (the receiver's
-//!   side of the federation, not the home daemon's id).
-//! - `globs` / `ignore` — same semantics as `FileWatchSource`, evaluated
-//!   against the rel-paths the home daemon reported. There is no
-//!   on-disk root to canonicalize against; the paths are accepted as
-//!   sent.
+//! `workspace_id` is the **local shadow** id (the receiver's side, not the home
+//! daemon's). `globs`/`ignore` match the reported rel-paths as sent; there's no
+//! on-disk root to canonicalize against.
 
 use anyhow::{Result, anyhow};
 use globset::{Glob, GlobSet, GlobSetBuilder};

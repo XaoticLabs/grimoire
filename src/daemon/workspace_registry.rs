@@ -1,9 +1,6 @@
-//! `WorkspaceRegistry`: daemon-internal owner of workspace lifecycle.
-//!
-//! Mirrors the `WakeRegistry` shape (`Arc<Self>`, mutex-protected handle map,
-//! shells out via a `GitRunner` seam so tests can swap the git binary). Owns
-//! the `WorkspaceWatcher` handles for active workspaces; lazy-starts a watcher
-//! on first assign, stops on destroy.
+//! `WorkspaceRegistry`: daemon-internal owner of workspace lifecycle. Shells
+//! out via a `GitRunner` seam (swappable in tests) and owns `WorkspaceWatcher`
+//! handles: lazy-started on first assign, stopped on destroy.
 
 use anyhow::Result;
 use async_trait::async_trait;
@@ -23,14 +20,13 @@ use super::event_bus::EventBus;
 use super::persistence::Database;
 use super::workspace_watcher::WorkspaceWatcherHandle;
 
-/// Errors enumerated as RPC code strings, kept stable for client matching.
-/// Body is `<code>` or `<code>:<details>`; `code()` returns the prefix so RPC
-/// handlers don't have to ad-hoc-split the `Display` output.
+/// Error whose body is `<code>` or `<code>:<details>`; the `code` prefix is a
+/// stable RPC string for client matching.
 #[derive(Debug)]
 pub struct WorkspaceError(pub String);
 
 impl WorkspaceError {
-    /// The RPC code prefix (the segment before the first `:`).
+    /// The RPC code prefix (before the first `:`).
     pub fn code(&self) -> &str {
         self.0.split(':').next().unwrap_or("workspace_error")
     }
@@ -130,9 +126,7 @@ pub struct WorkspaceRegistry {
 }
 
 impl WorkspaceRegistry {
-    /// Hand the underlying database back so callers (notably `rpc.rs`) can
-    /// run workspace-adjacent queries without piping a second `Arc<Database>`
-    /// through the call site.
+    /// Underlying database, for callers running workspace-adjacent queries.
     pub const fn db(&self) -> &Arc<Database> {
         &self.db
     }
@@ -163,14 +157,10 @@ impl WorkspaceRegistry {
         constants::workspaces_root()
     }
 
-    /// Provision a new workspace. Returns the inserted row.
-    ///
-    /// Order of operations:
-    /// 1. Name validation (rejects with `invalid_workspace_name`).
-    /// 2. DB pre-check on uniqueness (rejects with `workspace_already_exists`).
-    /// 3. Filesystem pre-check on path occupancy (rejects with `workspace_path_occupied`).
-    /// 4. `git worktree add` shellout (rejects with `git_worktree_add_failed`).
-    /// 5. DB insert. On race, rolls back via `git worktree remove --force`.
+    /// Provision a new workspace, returning the inserted row. Stages, each with
+    /// its own error code: name validation, DB uniqueness pre-check, path-
+    /// occupancy pre-check, `git worktree add`, DB insert (rolls the worktree
+    /// back via `remove --force` on insert race).
     pub async fn create(
         &self,
         name: &str,
@@ -180,7 +170,6 @@ impl WorkspaceRegistry {
         validate_workspace_id(name)
             .map_err(|e| WorkspaceError(format!("invalid_workspace_name:{e}")))?;
 
-        // Repo validation.
         let repo_canonical = std::fs::canonicalize(repo_path)
             .map_err(|_| WorkspaceError("invalid_repo_path".into()))?;
         if !repo_canonical.is_dir() {
@@ -194,7 +183,6 @@ impl WorkspaceRegistry {
         let _ = std::fs::create_dir_all(&root);
         let target = root.join(name);
 
-        // DB pre-check.
         if self
             .db
             .get_workspace(name)
@@ -207,7 +195,6 @@ impl WorkspaceRegistry {
             return Err(WorkspaceError("workspace_path_occupied".into()));
         }
 
-        // Shell out.
         if let Err(ge) = self
             .git
             .worktree_add(&repo_canonical, &target, branch)
@@ -232,8 +219,7 @@ impl WorkspaceRegistry {
         };
 
         if let Err(e) = self.db.insert_workspace(&ws) {
-            // Best-effort rollback: leave the worktree in place if removal
-            // fails. Reconciliation on next boot will catch it.
+            // Best-effort rollback; boot reconciliation catches a failed remove.
             let _ = self.git.worktree_remove(&repo_canonical, &target).await;
             return Err(WorkspaceError(format!("db_insert_failed:{e}")));
         }
@@ -248,9 +234,7 @@ impl WorkspaceRegistry {
 
     pub fn list(&self) -> Result<(Vec<WorkspaceListEntry>, Vec<String>)> {
         let entries = self.db.list_workspaces_with_counts()?;
-        // Orphans are computed by reconcile; we expose them via a side cache
-        // when reconcile runs. For v1, expose empty here and let `--orphans`
-        // hit a dedicated reconcile-style scan.
+        // Orphans come from a dedicated reconcile scan (`--orphans`), not here.
         Ok((entries, Vec::new()))
     }
 
@@ -262,7 +246,7 @@ impl WorkspaceRegistry {
             Err(e) => return Err(WorkspaceError(format!("db:{e}"))),
         };
 
-        // In-use precheck: any non-terminal agent assigned blocks destroy.
+        // Any non-terminal assigned agent blocks destroy.
         let assigned = self
             .db
             .list_active_assigned_agents(id)
@@ -285,7 +269,6 @@ impl WorkspaceRegistry {
             )));
         }
 
-        // Active → Destroying.
         if ws.state == WorkspaceState::Destroying {
             return Err(WorkspaceError("workspace_destroying".into()));
         }
@@ -297,7 +280,7 @@ impl WorkspaceRegistry {
             handle.shutdown();
         }
 
-        // Shell out remove (tolerate failure).
+        // Best-effort; tolerate worktree-remove failure.
         let _ = self.git.worktree_remove(&ws.repo_path, &ws.path).await;
 
         self.db
@@ -337,10 +320,8 @@ impl WorkspaceRegistry {
     }
 
     async fn ensure_watcher_started(&self, ws: &Workspace) {
-        // Shadow workspaces have no on-disk worktree — they get
-        // their `WorkspaceFileChanged` events republished by the peer
-        // client from inbound federation messages, so there's nothing
-        // for `notify` to watch here.
+        // Shadows have no on-disk worktree (events arrive via federation), so
+        // there's nothing for `notify` to watch.
         if matches!(ws.kind, WorkspaceKind::Shadow) {
             return;
         }
@@ -411,11 +392,8 @@ impl WorkspaceRegistry {
     }
 }
 
-// --- Helper: emit topic mail for memory writes ---
-
-/// Publish topic-mail to every segment-prefix and the wildcard for a memory
-/// write. Caller already wrote the row and emitted the `MemoryWritten`/Deleted
-/// stream event; this fans out to subscribers via the existing mail plumbing.
+/// Fan a memory write out as topic-mail to every segment-prefix topic plus the
+/// wildcard. Caller has already written the row and emitted the stream event.
 pub fn publish_memory_topic_mail(
     db: &Database,
     bus: &EventBus,

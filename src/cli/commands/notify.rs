@@ -3,11 +3,9 @@ use colored::Colorize;
 
 use crate::cli::client::DaemonClient;
 
-/// `grim notify`: emit an operator-facing notification. Intended for spawned
-/// agents to call when *they* decide something is worth surfacing ("ping me
-/// only if interesting"). Provider-neutral: any agent CLI that can run a shell
-/// command can use it. The agent's own id is read from `GRIMOIRE_AGENT_ID`
-/// (injected by the daemon) so the agent need not know it.
+/// `grim notify`: emit an operator-facing notification, for agents that decide
+/// something is worth surfacing. The agent id is read from the daemon-injected
+/// `GRIMOIRE_AGENT_ID` so the agent need not know its own id.
 pub async fn run(message: &str, level: Option<String>) -> Result<()> {
     let mut client = DaemonClient::connect().await?;
 

@@ -6,21 +6,18 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GrimwConfig {
-    /// `https://host:port` of the daemon's worker listener. Plaintext URLs
-    /// are rejected; the worker link is mTLS.
+    /// `https://host:port` of the daemon's worker listener. Plaintext rejected; link is mTLS.
     pub daemon_url: String,
     #[serde(default)]
     pub secret: String,
-    /// Path to the daemon's worker-listener cert (PEM), pinned as the TLS
-    /// trust anchor. On the daemon host this is `<grimoire_dir>/tls/worker.crt`.
+    /// Daemon worker-listener cert (PEM), pinned as the TLS trust anchor.
     pub daemon_cert_path: PathBuf,
-    /// Optional SHA-256 fingerprint of the pinned daemon cert. When set, the
-    /// loaded `daemon_cert_path` is cross-checked against it as a config-sanity
-    /// guard (catches a stale/wrong cert file).
+    /// Optional SHA-256 of the pinned daemon cert; cross-checked against
+    /// `daemon_cert_path` to catch a stale/wrong cert file.
     #[serde(default)]
     pub daemon_cert_sha256: String,
-    /// This worker's own transport-identity cert/key (presented as the client
-    /// cert). Unset → auto-generated + pinned under `<grimoire_dir>/tls/worker.{crt,key}`.
+    /// This worker's transport-identity cert/key (the client cert). Unset →
+    /// auto-generated under `<grimoire_dir>/tls/worker.{crt,key}`.
     #[serde(default)]
     pub tls_cert_path: Option<PathBuf>,
     #[serde(default)]

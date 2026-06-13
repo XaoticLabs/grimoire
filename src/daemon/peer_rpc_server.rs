@@ -1,7 +1,5 @@
-//! Inbound peer gRPC service (Tasks 5, 7). Mirrors `WorkerControlService`:
-//! reads `Hello`, validates token + version + daemon-id, replies with
-//! `HelloAck`, then relays subsequent `MailDeliver` traffic into the
-//! `InboxHandler`.
+//! Inbound peer gRPC service: reads `Hello`, validates token + version +
+//! daemon-id, replies `HelloAck`, then relays traffic into the `InboxHandler`.
 
 use std::pin::Pin;
 use std::sync::Arc;
@@ -31,11 +29,8 @@ pub struct PeerSvc {
 }
 
 impl PeerSvc {
-    /// Build a `PeerSvc` by cloning the handles the service actually uses
-    /// out of the registry. The registry itself is not retained: each of
-    /// `db`, `bus`, `daemon_id`, and `inbox` already owns an independent
-    /// `Arc` to its underlying data, so dropping the registry reference
-    /// after construction doesn't affect lifetimes.
+    /// Clone out the handles the service uses; the registry itself isn't
+    /// retained (each handle owns its own `Arc`).
     pub fn new(registry: Arc<PeerRegistry>) -> PeerServer<Self> {
         let svc = Self {
             db: registry.db.clone(),
@@ -85,8 +80,7 @@ impl PeerService for PeerSvc {
                 "unsupported_protocol_version",
             );
         }
-        // Daemon-id check: if the row already has a daemon_id and it
-        // disagrees with hello.daemon_id, reject.
+        // Reject if the row's daemon_id disagrees with hello's.
         if !peer.daemon_id.is_empty() && peer.daemon_id != hello.daemon_id {
             self.bus.publish(StreamEvent::PeerHandshakeFailed {
                 peer_name: Some(peer.name.clone()),
@@ -100,13 +94,10 @@ impl PeerService for PeerSvc {
         }
         if peer.daemon_id.is_empty() {
             let _ = self.db.update_peer_daemon_id(&peer.id, &hello.daemon_id);
-            // Keep the in-session snapshot consistent with the row we just
-            // updated: every inbound handler below keys dedupe, shadow
-            // lookups, and republished events off `peer.daemon_id`. Without
-            // this, the entire first session after `peer add` (before the
-            // local outbound handshake fills the row) runs with an empty
-            // sender daemon-id, silently dropping federated workspace
-            // events and misattributing lifecycle deliveries.
+            // Sync the in-session snapshot too: inbound handlers key dedupe,
+            // shadow lookups, and republished events off `peer.daemon_id`.
+            // Skipping this would make the first session after `peer add` drop
+            // federated workspace events and misattribute lifecycle deliveries.
             peer.daemon_id = hello.daemon_id.clone();
         }
         let _ = self.db.set_peer_state(&peer.id, PeerState::Active);
@@ -165,8 +156,7 @@ impl PeerService for PeerSvc {
                             .await;
                     }
                     Some(peer_outbound::Msg::MemoryDeliver(d)) => {
-                        // Inbound namespace replication. Apply via LWW
-                        // (idempotent) and ack on the same stream.
+                        // Namespace replication: apply via LWW (idempotent), ack.
                         let ack =
                             super::peer_client::apply_memory_deliver(&db, &peer_id_for_loop, &d);
                         let _ = out_tx
@@ -233,9 +223,8 @@ impl PeerService for PeerSvc {
     }
 }
 
-// `tonic::Status` is large (≈176B), but the streaming-RPC return type is fixed by
-// the generated tonic trait, and we can't box it without changing the public API.
-// The `Result` wrapper is likewise dictated by the tonic trait signature.
+// Return type + `Result` wrapper are fixed by the generated tonic trait, so
+// the large `Status` can't be boxed away.
 #[allow(clippy::result_large_err, clippy::unnecessary_wraps)]
 fn single_helloack_stream(
     daemon_id: String,

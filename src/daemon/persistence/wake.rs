@@ -5,7 +5,7 @@ use crate::shared::types::{WakeSource, WakeSourceState};
 
 use super::row_to_wake_source;
 
-/// Column list for `SELECT … FROM wake_sources`. Matches `row_to_wake_source`.
+/// `SELECT … FROM wake_sources` column list; order must match `row_to_wake_source`.
 const WAKE_SRC_COLS: &str =
     "id, agent_id, kind, config_json, state, fail_reason, last_fired_at, fire_count, created_at";
 
@@ -96,9 +96,8 @@ impl super::Database {
         Ok(())
     }
 
-    /// Per-agent token-bucket row used by the rate limiter. Returns
-    /// `(tokens, last_refill_at, capacity, refill_per_sec)`. If the row
-    /// doesn't exist yet, it is created at full capacity.
+    /// Token-bucket row `(tokens, last_refill_at, capacity, refill_per_sec)`,
+    /// created at full capacity on first lookup.
     pub fn get_or_init_rate_limit(&self, agent_id: &str, now: i64) -> Result<(f64, i64, i64, f64)> {
         let mut conn = self.conn_lock();
         let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;

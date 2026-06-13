@@ -1,7 +1,7 @@
 //! `grim demo`: one-command scaffolds that wire existing primitives into a
-//! working standing-agent flow. Each step prints the underlying `grim` action
-//! it performs, so the demo doubles as a legibility aid: nothing here is magic,
-//! it's just `summon --keep-alive` + a file-watch wake source + `grim notify`.
+//! standing-agent flow. Each step prints the underlying `grim` action, so the
+//! demo doubles as a legibility aid — it's just `summon --keep-alive` + a
+//! file-watch wake source + `grim notify`.
 
 use anyhow::Result;
 use colored::Colorize;
@@ -10,9 +10,8 @@ use std::path::PathBuf;
 use crate::cli::client::DaemonClient;
 use crate::shared::protocol::{SummonResult, WakeAddResult};
 
-/// The standing reviewer's brief. Provider-neutral: any agent CLI that can run
-/// shell commands can act on it. Relies on `GRIMOIRE_AGENT_ID` (injected by the
-/// daemon) so `grim notify` is auto-attributed.
+/// The standing reviewer's brief. Provider-neutral; relies on the daemon-injected
+/// `GRIMOIRE_AGENT_ID` so its `grim notify` calls are auto-attributed.
 const REVIEWER_PROMPT: &str = "You are a standing code reviewer running under Grimoire. \
 You wake whenever a file changes in this repository. On each wake: inspect the most recent \
 changes (e.g. run `git diff` and `git status`), and IF you find something a human should \

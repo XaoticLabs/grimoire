@@ -9,11 +9,9 @@ use crate::shared::types::{Task, TaskState};
 use super::ScrollKeeper;
 
 impl ScrollKeeper {
-    /// Park a gated task in `AwaitingApproval` and signal the operator. The
-    /// notification is the human-facing HITL channel (it fans out to the
-    /// configured webhook / log / desktop via the notifier); the
-    /// `TaskStateChange` keeps the dashboard and `grim scroll` in sync.
-    /// Idempotent: re-holding an already-pending task only re-affirms state.
+    /// Park a gated task in `AwaitingApproval` and signal the operator (the
+    /// notification is the human-facing HITL channel; `TaskStateChange` keeps
+    /// the dashboard/`grim scroll` in sync). Idempotent for already-pending tasks.
     pub(super) async fn hold_for_approval(&self, task: &Task) {
         use crate::shared::types::ApprovalState;
         let already_pending = matches!(
@@ -78,8 +76,8 @@ impl ScrollKeeper {
             .ok_or_else(|| anyhow::anyhow!("task '{task_ref}' not found in scroll {scroll_id}"))
     }
 
-    /// HITL approve: clear a task's gate and let the DAG schedule it. Only
-    /// valid for a task currently `AwaitingApproval`. Returns the task name.
+    /// HITL approve: clear the gate and let the DAG schedule it. Only valid for
+    /// an `AwaitingApproval` task. Returns the task name.
     pub async fn approve_task(&self, scroll_id: &str, task_ref: &str) -> anyhow::Result<String> {
         use crate::shared::types::ApprovalState;
         let task = self.resolve_task_in_scroll(scroll_id, task_ref)?;
@@ -92,7 +90,6 @@ impl ScrollKeeper {
         }
         self.db
             .set_task_approval_state(&task.id, ApprovalState::Approved)?;
-        // Flip back to a schedulable state; the gate check now passes.
         self.db.update_task_state(&task.id, &TaskState::Ready)?;
         self.manager
             .event_bus()

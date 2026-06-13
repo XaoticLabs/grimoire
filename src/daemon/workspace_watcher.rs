@@ -12,17 +12,12 @@ use tokio::sync::mpsc;
 
 use super::peer_registry::PeerRegistry;
 
-/// Late-bound handle to the daemon's `PeerRegistry`. Set once at boot
-/// (see `daemon::start`) so the per-workspace watcher tasks can wake
-/// the peer outbox drainer immediately after enqueueing federated
-/// events. Optional — when unset (tests, daemon variants without
-/// federation), workspace fanout still enqueues; drains just wait for
-/// the next inbound message or heartbeat tick.
+/// Late-bound `PeerRegistry`, set once at boot so watcher tasks can wake the
+/// outbox drainer right after enqueueing. When unset (tests, no-federation
+/// builds), fanout still enqueues; drains just wait for the next tick.
 static PEER_REGISTRY: OnceLock<Arc<PeerRegistry>> = OnceLock::new();
 
-/// Install the peer registry handle used to wake outbox drainers
-/// after `workspace_event_enqueue`. Safe to call once; later calls are
-/// no-ops.
+/// Install the peer registry handle. Idempotent; later calls no-op.
 pub fn set_peer_registry(reg: Arc<PeerRegistry>) {
     let _ = PEER_REGISTRY.set(reg);
 }
@@ -122,11 +117,10 @@ impl WorkspaceWatcher {
                     msg = event_rx.recv() => {
                         let Some(item) = msg else { return };
                         buffer.push(item);
-                        // Drain anything else that's already queued.
                         while let Ok(extra) = event_rx.try_recv() {
                             buffer.push(extra);
                         }
-                        // Wait debounce window for any follow-up.
+                        // Hold the debounce window for follow-ups.
                         loop {
                             tokio::select! {
                                 _ = shutdown_rx.recv() => return,
@@ -176,19 +170,16 @@ fn emit_batch(workspace_id: &str, db: &Database, bus: &EventBus, buffer: &mut Ve
 
     publish_workspace_file_change(workspace_id, db, bus, &paths, &kinds, truncated_count);
 
-    // Fan out to federated peers. One outbox row per peer with direction
-    // `outbound` or `both`. Failures are logged but never abort the local
-    // publish — federation is best-effort on top of the always-durable
-    // local event.
+    // Fan out to outbound/both peers; best-effort, never aborts the durable
+    // local publish above.
     fanout_to_federated_peers(db, workspace_id, &paths, &kinds, truncated_count);
 
     buffer.clear();
 }
 
-/// Publish a `WorkspaceFileChanged` stream event and topic mail. The
-/// shared path between the watcher (local FS changes) and the federation
-/// receiver (events arriving from a home daemon onto a shadow workspace),
-/// so shadows and locals emit byte-identical events.
+/// Publish a `WorkspaceFileChanged` event + topic mail. Shared by the local
+/// watcher and the federation receiver so shadows and locals emit identical
+/// events.
 pub fn publish_workspace_file_change(
     workspace_id: &str,
     db: &Database,
@@ -244,8 +235,7 @@ fn fanout_to_federated_peers(
         return;
     }
     if let Some(registry) = PEER_REGISTRY.get().cloned() {
-        // notify_outbox takes an async mutex — hop onto the runtime so
-        // we don't block the watcher task's emit path.
+        // notify_outbox locks an async mutex; spawn so the emit path stays free.
         tokio::spawn(async move {
             for peer_id in woke {
                 registry.notify_outbox(&peer_id).await;

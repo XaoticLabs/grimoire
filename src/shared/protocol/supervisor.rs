@@ -4,10 +4,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::shared::types::AgentId;
 
-// One row per agent with supervision metadata in a shape the dashboard can
-// group by `parent_id` to render parent → child trees. `last_restart_*` is
-// the most recent `restart_history` row, summarising the agent's tail.
-
+// One row per agent; the dashboard groups by `parent_id` to render trees.
+// `last_restart_*` is the most recent `restart_history` row.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SupervisorNode {
     pub agent_id: AgentId,
@@ -29,10 +27,6 @@ pub struct SupervisorNode {
 pub struct SupervisorTreeResult {
     pub nodes: Vec<SupervisorNode>,
 }
-
-// `supervisor.restart-now` / `supervisor.clear-escalation` are the manual
-// overrides the dashboard exposes per row. `supervisor.history` backs the
-// expandable restart-history drawer.
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SupervisorRestartNowParams {

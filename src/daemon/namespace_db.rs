@@ -1,22 +1,15 @@
 //! Federated namespace memory: a string-named KV store decoupled from git
-//! workspaces, designed to replicate across daemons.
+//! workspaces, replicated across daemons.
 //!
-//! ## Conflict resolution: last-write-wins on a Lamport tuple
+//! Conflict resolution is last-write-wins on a `(lamport, origin_daemon_id)`
+//! tuple (lamport first, lexical origin tiebreak). A write applies iff its
+//! tuple is strictly greater than the stored one — so every daemon converges
+//! regardless of arrival order and redelivery is a no-op, needing no separate
+//! dedupe. Deletes are tombstones (`deleted = 1`): a write with a fresh tuple
+//! that resolves by the same rule.
 //!
-//! Every write carries a version tuple `(lamport, origin_daemon_id)`. A write
-//! is accepted iff its tuple is strictly greater than the stored one, ordered
-//! by `lamport` first and breaking ties on `origin_daemon_id` lexically. This
-//! is deterministic across the cluster: given the same set of writes, every
-//! daemon converges on the same value regardless of arrival order, and
-//! re-delivering a write is a no-op (it can never be *strictly greater* than
-//! the copy already applied). Replication therefore needs no separate dedupe.
-//!
-//! Deletes are **tombstones** (`deleted = 1`, empty value): a delete is just a
-//! write with a fresh tuple, so it propagates and resolves by the same rule.
-//!
-//! LWW silently drops the loser of a truly concurrent write. That's the
-//! accepted v1 tradeoff; the v2 design (vector clocks + conflict surfacing)
-//! is specced in `docs/specs/federated-memory-v2.md`.
+//! LWW silently drops the loser of a truly concurrent write (accepted tradeoff;
+//! vector-clock v2 is specced in `docs/specs/federated-memory-v2.md`).
 
 use anyhow::Result;
 use chrono::Utc;
@@ -72,13 +65,11 @@ pub enum NsApply {
 }
 
 impl Database {
-    /// `true` iff `(a_lamport, a_origin)` strictly dominates `(b_lamport, b_origin)`.
     fn tuple_gt(a_lamport: u64, a_origin: &str, b_lamport: u64, b_origin: &str) -> bool {
         (a_lamport, a_origin) > (b_lamport, b_origin)
     }
 
-    /// Advance the local Lamport counter for a fresh local event and return
-    /// the new value (`counter + 1`).
+    /// Advance the local Lamport counter and return the new value.
     fn lamport_tick(txn: &rusqlite::Transaction<'_>) -> Result<u64> {
         txn.execute(
             "UPDATE namespace_lamport SET counter = counter + 1 WHERE node = 0",
@@ -92,8 +83,8 @@ impl Database {
         Ok(c.max(0) as u64)
     }
 
-    /// Observe a remote Lamport value: bump the local counter to at least
-    /// `seen` so subsequent local events sort after everything we've applied.
+    /// Bump the local counter to at least `seen` so later local events sort
+    /// after everything observed.
     fn lamport_observe(txn: &rusqlite::Transaction<'_>, seen: u64) -> Result<()> {
         txn.execute(
             "UPDATE namespace_lamport SET counter = MAX(counter, ?1) WHERE node = 0",
@@ -116,9 +107,8 @@ impl Database {
         c.max(0) as u64
     }
 
-    /// Apply a write under the LWW rule, also advancing the local clock to the
-    /// write's lamport. Used for **inbound replication**: the tuple is
-    /// supplied by the origin daemon, not minted here.
+    /// Apply an inbound-replication write under LWW, advancing the local clock.
+    /// The tuple is supplied by the origin daemon, not minted here.
     pub fn namespace_apply_write(&self, w: &NamespaceWrite) -> Result<NsApply> {
         let conn = self.workspace_conn_lock();
         let txn = conn.unchecked_transaction()?;
@@ -172,7 +162,7 @@ impl Database {
     }
 
     /// Local put: mint a fresh `(lamport, origin=this daemon)` tuple, store it,
-    /// and return the `NamespaceWrite` so the caller can enqueue replication.
+    /// and return the write for the caller to enqueue.
     pub fn namespace_put(
         &self,
         namespace: &str,
@@ -283,9 +273,8 @@ impl Database {
         ))
     }
 
-    /// Register (or merge) a namespace↔peer federation. Mirrors
-    /// `upsert_topic_federation`: an existing row with a different direction
-    /// merges to `Both`. Returns the effective direction.
+    /// Register (or merge) a namespace↔peer federation; differing directions
+    /// merge to `Both`. Returns the effective direction.
     pub fn namespace_upsert_federation(
         &self,
         id: &str,
@@ -320,9 +309,8 @@ impl Database {
         Ok(final_dir)
     }
 
-    /// Enqueue a write for replication to a single peer (Pending, due now).
-    /// Redelivery is safe (LWW apply is idempotent), so there's no per-op
-    /// dedupe; `op_id` is just a correlation handle for the ack.
+    /// Enqueue a write for replication to one peer. Redelivery is safe (LWW is
+    /// idempotent), so no per-op dedupe; `op_id` is just an ack correlation handle.
     pub fn namespace_enqueue(&self, peer_id: &str, op_id: &str, w: &NamespaceWrite) -> Result<()> {
         let conn = self.workspace_conn_lock();
         let now = Utc::now().timestamp();
@@ -428,7 +416,7 @@ impl Database {
         Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
     }
 
-    /// Drop a namespace federation row. Mirrors `delete_topic_federation`.
+    /// Drop a namespace federation row; returns whether one existed.
     pub fn delete_namespace_federation(&self, peer_id: &str, namespace: &str) -> Result<bool> {
         let conn = self.workspace_conn_lock();
         let n = conn.execute(
@@ -438,8 +426,7 @@ impl Database {
         Ok(n > 0)
     }
 
-    /// List every namespace_federations row across all namespaces. Powers
-    /// the "active federations" view in CLI/web.
+    /// Every `namespace_federations` row across all namespaces.
     pub fn list_namespace_federations(
         &self,
     ) -> Result<Vec<crate::shared::types::NamespaceFederation>> {

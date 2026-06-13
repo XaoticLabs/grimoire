@@ -10,17 +10,14 @@ use std::time::Duration;
 /// Poll interval while waiting for a child task process to exit.
 const TASK_POLL_INTERVAL: Duration = Duration::from_millis(20);
 
-/// Build the daemon-owned env-var contribution for a spawned task. Always
-/// includes `GRIMOIRE_AGENT_ID` from the assignment; merges any extra env
-/// the daemon sent on the `AssignTask.env` proto field (forward-compat for
-/// future `GRIMOIRE_*` vars without a wire bump). Returned as a Vec rather
-/// than a HashMap so the caller's iteration order is deterministic in tests.
+/// Build a spawned task's env: always `GRIMOIRE_AGENT_ID`, plus any extra the
+/// daemon sent on `AssignTask.env`. A Vec (not HashMap) for deterministic
+/// iteration order in tests.
 fn build_agent_env(agent_id: &str, extra: &HashMap<String, String>) -> Vec<(String, String)> {
     let mut out: Vec<(String, String)> = Vec::with_capacity(extra.len() + 1);
+    // Canonical injection is the safety net for older daemons that don't
+    // populate `assign.env`; a daemon-sent value below overrides it.
     out.push(("GRIMOIRE_AGENT_ID".to_string(), agent_id.to_string()));
-    // Extra entries from the daemon. A daemon-sent `GRIMOIRE_AGENT_ID` here
-    // is honored; the canonical injection is just the safety net for
-    // older daemons that don't populate `assign.env`.
     for (k, v) in extra {
         out.push((k.clone(), v.clone()));
     }
@@ -122,13 +119,9 @@ impl TaskDispatcher {
         for (k, v) in &provider.env {
             cmd.env(k, v);
         }
-        // Daemon-owned identity injection. `GRIMOIRE_AGENT_ID` is the canonical
-        // env var spawned agents read so they can call back into `grim` (mail,
-        // memory, notify) knowing who they are without being told. Previously
-        // only locally-executed agents got it; remote-worker agents couldn't
-        // `grim notify` because this line wasn't here. `assign.env` is the
-        // proto field 7 (forward-compat for any future `GRIMOIRE_*` the
-        // daemon wants to send: workspace, scroll, etc., without a wire bump).
+        // Identity injection: spawned agents read `GRIMOIRE_AGENT_ID` to call
+        // back into `grim` (mail/memory/notify). Remote-worker agents need this
+        // too, not just locally-executed ones.
         for (k, v) in build_agent_env(&assign.agent_id, &assign.env) {
             cmd.env(k, v);
         }

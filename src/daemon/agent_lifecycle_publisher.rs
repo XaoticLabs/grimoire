@@ -1,10 +1,9 @@
-//! Bus subscriber that fans local `StateChange` events into the
-//! `agent_lifecycle_outbox` for every peer with an outbound lifecycle
-//! federation. The drainer in `peer_client::run_once` ships them.
+//! Bus subscriber fanning local `StateChange` events into the
+//! `agent_lifecycle_outbox` for each outbound-lifecycle peer (shipped by the
+//! `peer_client::run_once` drainer).
 //!
-//! Only local `StateChange` events feed the publisher;
-//! `RemoteAgentStateChanged` (federated arrivals) are skipped to
-//! prevent re-fanout loops in A → B → C topologies.
+//! Only local `StateChange` feeds it; federated `RemoteAgentStateChanged`
+//! arrivals are skipped to prevent re-fanout loops in A → B → C topologies.
 
 use std::sync::Arc;
 
@@ -14,10 +13,8 @@ use crate::daemon::peer_registry::PeerRegistry;
 use crate::daemon::persistence::Database;
 use crate::shared::protocol::StreamEvent;
 
-/// Spawn the background subscriber. Drops naturally when the broadcast
-/// channel closes (shutdown). Failures during enqueue are warn-logged
-/// and never abort the loop — lifecycle federation is best-effort on
-/// top of always-durable local state.
+/// Spawn the subscriber (ends when the broadcast channel closes). Enqueue
+/// failures are warn-logged, never fatal — lifecycle federation is best-effort.
 pub fn spawn(db: Arc<Database>, bus: EventBus, registry: Arc<PeerRegistry>) {
     let mut rx = bus.subscribe();
     tokio::spawn(async move {
@@ -40,11 +37,9 @@ pub fn spawn(db: Arc<Database>, bus: EventBus, registry: Arc<PeerRegistry>) {
                 }
             };
 
-            // Snapshot the agent row so we can ship the receiver-side
-            // metadata it needs to render rich notifications without
-            // re-querying. A missing row (race with destroy) ships a
-            // bare payload — the receiver tolerates `name`/`task` =
-            // None.
+            // Ship the agent metadata so the receiver renders rich
+            // notifications without re-querying. A missing row (raced destroy)
+            // ships a bare payload; the receiver tolerates None.
             let snap = db.get_agent(&agent_id).ok().flatten();
             let payload = AgentLifecyclePayload {
                 agent_id: agent_id.clone(),

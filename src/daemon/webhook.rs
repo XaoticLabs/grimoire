@@ -1,44 +1,33 @@
 //! Inbound webhook → mail bridge.
 //!
-//! Each configured `[webhooks.<name>]` exposes one HTTP endpoint at
-//! `/webhooks/<name>` that converts the raw request body into mail on a
-//! configured topic (or to a direct recipient), then drops it into the
-//! existing `mail.send` path. Wake-on-mail picks it up from there, so a
-//! standing agent subscribed to the topic gets woken with the webhook
-//! payload as its prompt, no extra wiring required.
-//!
-//! This is the missing leg that turns the standing-agent demo from
-//! "watch files locally" into "watch your real GitHub PRs": a CI / GitHub /
-//! Slack / Linear hook posts here, an agent wakes, acts, sleeps.
+//! Each `[webhooks.<name>]` exposes `/webhooks/<name>`, converting the request
+//! body into mail on a topic (or to a recipient) via the `mail.send` path.
+//! Wake-on-mail then wakes a subscribed standing agent with the payload as its
+//! prompt.
 
 use subtle::ConstantTimeEq;
 
 use crate::shared::config::WebhookConfig;
 
-/// HTTP header callers present the per-webhook shared secret in. Picked to
-/// be specific enough not to collide with provider-native headers (GitHub's
-/// `X-Hub-Signature-256`, Slack's `X-Slack-Signature`), so a reverse proxy
-/// can map provider auth → this header without ambiguity.
+/// Header carrying the per-webhook secret. Distinct from provider-native
+/// headers so a reverse proxy can remap provider auth onto it unambiguously.
 pub const WEBHOOK_TOKEN_HEADER: &str = "x-grimoire-webhook-token";
 
-/// Outcome of authenticating a webhook request against its config. Modeled
-/// as an enum (not just `bool`) so the HTTP handler can pick the correct
-/// status code per failure mode without re-parsing the config.
+/// Webhook auth outcome, an enum (not `bool`) so the handler picks a status
+/// code per failure mode.
 #[derive(Debug, PartialEq, Eq)]
 pub enum WebhookAuth {
-    /// The config has no `secret`; the endpoint is open. Operator's choice.
+    /// No `secret` configured; endpoint is open by operator choice.
     Open,
-    /// Secret matched (constant-time compared).
     Match,
     /// Secret required but not presented.
     Missing,
-    /// Secret required and presented but did not match.
+    /// Secret presented but wrong.
     Mismatch,
 }
 
-/// Constant-time check of the presented `X-Grimoire-Webhook-Token` against
-/// the config secret. The early-out for `secret = None` is intentional and
-/// part of the spec, operators opt in to auth, not the other way around.
+/// Constant-time check of the presented token against the config secret.
+/// `secret = None` opening the endpoint is intentional: operators opt into auth.
 pub fn check_token(presented: Option<&str>, expected: Option<&str>) -> WebhookAuth {
     match expected {
         None => WebhookAuth::Open,
@@ -55,10 +44,8 @@ pub fn check_token(presented: Option<&str>, expected: Option<&str>) -> WebhookAu
     }
 }
 
-/// Validate the webhook config and return the resolved mail address
-/// (`topic://…` or `agent://…`). Returns the error code the HTTP handler
-/// should surface in the response body, matching the mail-layer codes so
-/// operators see one consistent vocabulary.
+/// Resolve the webhook config to a mail address (`topic://…` or `agent://…`),
+/// or a mail-layer error code for the handler to surface.
 pub fn resolve_target(cfg: &WebhookConfig) -> Result<String, &'static str> {
     match (&cfg.topic, &cfg.recipient) {
         (Some(t), None) => Ok(format!("topic://{t}")),

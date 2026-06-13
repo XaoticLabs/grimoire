@@ -9,15 +9,13 @@ pub enum WakeSourceKind {
     Cron,
     FileWatch,
     ParentCompletion,
-    /// File events for a shadow workspace, delivered via federation
-    /// (`WorkspaceEventDeliver`) and republished onto the local bus. The
-    /// matcher runs over the rel-paths the home daemon reported — there
-    /// is no on-disk worktree on this side to canonicalize against.
+    /// Shadow-workspace file events via `WorkspaceEventDeliver`. The matcher
+    /// runs over the rel-paths the home daemon reported — no local worktree to
+    /// canonicalize against.
     RemoteFileWatch,
-    /// Lifecycle events from a federated agent, delivered via
-    /// `AgentLifecycleDeliver` and republished as
-    /// `RemoteAgentStateChanged`. Filters on (sender_daemon_id,
-    /// remote_agent_id, target states).
+    /// Federated-agent lifecycle via `AgentLifecycleDeliver`, republished as
+    /// `RemoteAgentStateChanged`. Filters on (sender_daemon_id, remote_agent_id,
+    /// target states).
     RemoteAgentCompletion,
 }
 

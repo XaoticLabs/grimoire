@@ -1,11 +1,7 @@
-//! Federation inbound mail handler.
-//!
-//! When a `MailDeliver` arrives over the peer channel:
-//! 1. Validate body size and recipient shape.
-//! 2. Idempotency-keyed insert into `peer_inbox` on `(sender_daemon_id, sender_seq)`.
-//! 3. If new (not a replay): insert the local `mail` row.
-//! 4. Emit `PeerMailReceived` and `MailReceived` events. The scheduler's
-//!    existing `tick_mail_wake` path picks up wake-on-mail next tick.
+//! Federation inbound mail handler. On a `MailDeliver`: validate, dedupe via an
+//! idempotency-keyed `peer_inbox` insert on `(sender_daemon_id, sender_seq)`,
+//! and if new insert the local `mail` row and emit `PeerMailReceived` +
+//! `MailReceived` (the scheduler's `tick_mail_wake` handles wake-on-mail).
 
 use anyhow::Result;
 use std::sync::Arc;
@@ -40,8 +36,7 @@ impl InboxHandler {
             return Ok(ack_fail(&msg.mail_id, "invalid_recipient"));
         };
 
-        // Idempotency check up front. If we've already seen this
-        // (sender_daemon_id, sender_seq), ack ok and don't re-insert.
+        // Dedupe on (sender_daemon_id, sender_seq): a replay acks ok, no re-insert.
         let inserted = self.db.insert_peer_inbox_if_absent(
             &peer.daemon_id,
             msg.sender_seq,
@@ -63,13 +58,11 @@ impl InboxHandler {
                 self.deliver_direct(peer, msg, &agent_id).await
             }
             Address::Agent(agent_id) => {
-                // Bare local form is also accepted (server's daemon-id
-                // collapsed at the sender).
+                // Bare local form (sender collapsed our daemon-id).
                 self.deliver_direct(peer, msg, &agent_id).await
             }
             Address::Topic(topic) => {
-                // Inbound topic federation: requires explicit Inbound/Both
-                // authorization on this side (federation Task 12).
+                // Inbound topic federation needs explicit Inbound/Both auth here.
                 if !self
                     .db
                     .topic_federation_inbound_authorized(&peer.id, &topic)?

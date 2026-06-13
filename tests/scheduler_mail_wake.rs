@@ -1,8 +1,5 @@
-//! Scheduler mail-wake branch tests.
-//!
-//! Drives `Scheduler::tick_now()` after configuring the scheduler with a
-//! recording `MailWaker` so we can assert what got invoked, with what
-//! prompt, and how many slots were consumed.
+//! Scheduler mail-wake branch tests, driving `tick_now()` with a recording
+//! `MailWaker` to assert what got invoked and with what prompt.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -95,10 +92,9 @@ impl Executor for StubExecutor {
 }
 
 fn seed_dormant_with_session(db: &Database, id: &str, session_id: Option<&str>) -> AgentId {
-    // The wake-mail filter requires Dormant agents. A Dormant agent always
-    // has a session_id in production; for the "no session" negative test we
-    // still seed Complete (which is *not* a wake candidate either, exercising
-    // the same skip path).
+    // Wake-mail requires Dormant, which always has a session in production.
+    // The no-session case seeds Complete (also not a wake candidate) to
+    // exercise the same skip path.
     let state = if session_id.is_some() {
         AgentState::Dormant
     } else {

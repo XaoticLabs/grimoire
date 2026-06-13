@@ -6,24 +6,19 @@ use tokio::process::Command;
 use super::process_manager::SpawnedAgent;
 use crate::shared::config::SandboxConfig;
 
-/// Identity injected into a spawned agent's environment so the agent can call
-/// back into `grim` (mail, memory, notify) knowing who it is, without the
-/// agent having to be told its own id. Provider-neutral: applied as
-/// `GRIMOIRE_*` env vars on the child process regardless of which CLI runs,
-/// so claude / `pi` / opencode / aider all see the same contract.
+/// Identity injected as provider-neutral `GRIMOIRE_*` env vars so a spawned
+/// agent can call back into `grim` (mail, memory, notify) knowing its own id,
+/// uniformly across claude / pi / opencode / aider.
 #[derive(Debug, Clone, Default)]
 pub struct AgentContext {
     pub agent_id: String,
-    /// Optional per-spawn confinement (cgroup limits, fs jail, budgets).
-    /// Providers should call [`crate::daemon::sandbox::apply_resource_limits`]
-    /// on the built `Command` so any resource caps are enforced.
+    /// Per-spawn confinement. Providers must call
+    /// [`crate::daemon::sandbox::apply_resource_limits`] on the built `Command`.
     pub sandbox: Option<SandboxConfig>,
 }
 
 impl AgentContext {
-    /// Set the `GRIMOIRE_*` identity env vars on a command about to be spawned.
-    /// Future fields (workspace, session) extend here without touching the
-    /// `Provider` trait signature.
+    /// Set the `GRIMOIRE_*` identity env vars on a command about to spawn.
     pub fn apply_env(&self, cmd: &mut Command) {
         cmd.env("GRIMOIRE_AGENT_ID", &self.agent_id);
     }
@@ -43,14 +38,12 @@ pub struct ProviderCapabilities {
     pub output_format: OutputFormat,
 }
 
-/// How an agent's continuity is restored when a dormant agent is woken.
+/// How a dormant agent's continuity is restored on wake.
 ///
-/// - `Native`: the underlying CLI owns the session; the daemon resumes it by id
-///   via [`Provider::spawn_resume`] (Claude `--resume`, pi `--session`).
-///   Full-fidelity, the CLI keeps the transcript and its own state.
-/// - `ContextReplay`: the CLI is stateless; the daemon reconstructs a context
-///   preamble from the durable event log and prepends it to a fresh
-///   [`Provider::spawn`]. The universal fallback for generic config providers.
+/// - `Native`: the CLI owns the session; resumed by id via
+///   [`Provider::spawn_resume`] (Claude `--resume`, pi `--session`).
+/// - `ContextReplay`: stateless CLI; the daemon rebuilds a context preamble
+///   from the event log and prepends it to a fresh [`Provider::spawn`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ResumeStrategy {
     Native,
@@ -63,9 +56,7 @@ pub trait Provider: Send + Sync {
 
     fn capabilities(&self) -> ProviderCapabilities;
 
-    /// Continuity strategy used to wake a dormant agent. Defaults from
-    /// `supports_resume`; native-session adapters keep the default, generic
-    /// config providers fall through to `ContextReplay`.
+    /// Wake strategy; defaults from `supports_resume`.
     fn resume_strategy(&self) -> ResumeStrategy {
         if self.capabilities().supports_resume {
             ResumeStrategy::Native
@@ -98,11 +89,9 @@ pub trait Provider: Send + Sync {
     /// Extract the final result text from collected stdout lines
     fn extract_result(&self, stdout_lines: &[String]) -> Option<String>;
 
-    /// Per-bucket token counts (input / output / cache-read / cache-creation)
-    /// used to attribute USD spend against `[providers.<name>.pricing]` and
-    /// to compare against `SandboxConfig.token_budget`. Providers that
-    /// don't surface usage telemetry return `None` (the default); such
-    /// providers are then unbillable and unbudgetable, by design.
+    /// Per-bucket token counts for USD attribution and budget checks. `None`
+    /// (default) when the provider has no usage telemetry — such runs are
+    /// unbillable and unbudgetable by design.
     fn extract_token_breakdown(&self, _stdout_lines: &[String]) -> Option<TokenBreakdown> {
         None
     }

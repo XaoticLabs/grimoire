@@ -27,9 +27,8 @@ fn fresh_agent(id: &str, worker_id: Option<&str>) -> Agent {
 
 #[test]
 fn db_migration_adds_worker_id_column() {
-    // Arrange: open a DB at a path created with a hand-written pre-migration
-    // schema that lacks `worker_id`. Then open via `Database::open` and
-    // assert the migration ran.
+    // Hand-write a pre-migration schema lacking `worker_id`, then open via
+    // `Database::open` and assert the migration added the column.
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("grimoire.db");
 

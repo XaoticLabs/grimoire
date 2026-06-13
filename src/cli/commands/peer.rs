@@ -184,8 +184,7 @@ async fn run_cert() -> Result<()> {
         return Err(anyhow!("peer cert failed: {}", err.message));
     }
     let result: PeerLocalCertResult = serde_json::from_value(resp.result.unwrap_or_default())?;
-    // PEM to stdout (pipeable to a file); fingerprint to stderr so it doesn't
-    // pollute a redirected cert file.
+    // Fingerprint to stderr so it doesn't pollute a redirected cert file.
     eprintln!(
         "{} {}",
         "fingerprint (sha256):".green(),

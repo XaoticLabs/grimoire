@@ -1,9 +1,5 @@
-// Contract tests for `daemon::scheduler`.
-//
-// These tests drive the scheduler through its test-mode `tick_now()` entry
-// point so timing is deterministic. The scheduler depends on a `Dispatcher`
-// trait so we substitute a fake here that records calls and can be configured
-// to return errors.
+// Contract tests for `daemon::scheduler`, driven through `tick_now()` for
+// determinism with a fake `Dispatcher` that records calls and can force errors.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -21,8 +17,6 @@ use grimoire::daemon::persistence::{Database, QueueRow};
 use grimoire::daemon::scheduler::{Dispatcher, Scheduler};
 use grimoire::daemon::worker_registry::{RegisterParams, WorkerRegistry};
 use grimoire::shared::types::{Agent, AgentId, AgentState};
-
-// --- Test helpers ---
 
 fn make_queued_agent(id: &str, provider: Option<&str>) -> Agent {
     Agent {
@@ -92,12 +86,8 @@ impl Dispatcher for FakeDispatcher {
         if self.fail_next.swap(false, Ordering::SeqCst) {
             return Err(anyhow!("fake dispatcher: forced failure"));
         }
-        // Mirror the AgentManager success path enough to satisfy the
-        // scheduler's in-flight accounting on subsequent ticks: leave
-        // `agents.state` at `summoning` (claim_for_dispatch already set it),
-        // or flip to `active` so future ticks count it as in-flight.
-        // We don't need a real DB write here because the test computes
-        // assertions before the next tick.
+        // No DB write needed: tests assert before the next tick, and
+        // claim_for_dispatch already moved the agent out of `queued`.
         self.calls.lock().await.push(row.id);
         Ok(())
     }
@@ -138,8 +128,6 @@ fn build_scheduler(
     Arc::new(Scheduler::new(db, workers, bus, cap_atom, dispatcher))
 }
 
-// --- Contract tests ---
-
 #[tokio::test]
 async fn scheduler_dispatches_up_to_cap() {
     let db = Arc::new(Database::open_in_memory().unwrap());
@@ -172,11 +160,10 @@ async fn scheduler_respects_inflight_count() {
     let workers = build_registry(bus.clone());
     register_worker(&workers, "w1", "claude");
 
-    // Two agents already running.
+    // two running, one queued
     db.insert_agent(&make_active_agent("running1")).unwrap();
     db.insert_agent(&make_active_agent("running2")).unwrap();
 
-    // One queued.
     enqueue(
         &db,
         &make_queued_agent("queued1", Some("claude")),
@@ -201,7 +188,7 @@ async fn scheduler_blocks_no_eligible_worker() {
     let db = Arc::new(Database::open_in_memory().unwrap());
     let bus = EventBus::new(db.clone());
     let workers = build_registry(bus.clone());
-    // No workers registered for "absent" provider.
+    // no worker advertises the "absent" provider
     register_worker(&workers, "w1", "claude");
 
     enqueue(
@@ -237,13 +224,11 @@ async fn scheduler_unblocks_on_worker_registered() {
     let dispatcher = Arc::new(FakeDispatcher::new());
     let sched = build_scheduler(db.clone(), workers.clone(), bus, 4, dispatcher.clone());
 
-    // First tick: blocked.
     sched.tick_now().await.unwrap();
     assert_eq!(dispatcher.calls().await.len(), 0);
 
     register_worker(&workers, "w2", "absent");
 
-    // Second tick: dispatched.
     sched.tick_now().await.unwrap();
     let calls = dispatcher.calls().await;
     assert_eq!(calls.len(), 1);
@@ -268,7 +253,7 @@ async fn scheduler_requeues_on_dispatch_failure() {
 
     sched.tick_now().await.unwrap();
 
-    // Row should be back in the queue with the original enqueued_at.
+    // requeued with the original enqueued_at preserved
     let rows = db.list_queue().unwrap();
     assert_eq!(rows.len(), 1, "row was requeued");
     assert_eq!(rows[0].id, "a1");
@@ -277,7 +262,6 @@ async fn scheduler_requeues_on_dispatch_failure() {
         original_enqueued_at.timestamp_millis(),
         "enqueued_at preserved"
     );
-    // Agent state flipped back to queued.
     let agent = db.get_agent("a1").unwrap().unwrap();
     assert_eq!(agent.state, AgentState::Queued);
 }
@@ -289,13 +273,12 @@ async fn scheduler_adhoc_lane_drains_first() {
     let workers = build_registry(bus.clone());
     register_worker(&workers, "w1", "claude");
 
-    // Scroll row inserted first.
+    // scroll row enqueued first, ad-hoc later — ad-hoc still wins
     enqueue(
         &db,
         &make_queued_agent("scroll1", Some("claude")),
         &make_queue_row("scroll1", "scroll", Some("claude"), 0),
     );
-    // Ad-hoc row inserted later.
     enqueue(
         &db,
         &make_queued_agent("adhoc1", Some("claude")),

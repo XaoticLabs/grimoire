@@ -1,15 +1,11 @@
 //! Persistence helpers for cross-peer scroll task dispatch.
 //!
-//! - `scroll_task_dispatches` is the durable record of "task T of
-//!   scroll S has been handed to peer P, who acked with
-//!   `remote_agent_id`." Created on dispatch enqueue, updated on
-//!   ack, terminal on lifecycle completion.
-//! - `scroll_dispatch_outbox` is the wire-level at-least-once queue,
-//!   identical state machine to the other federation outboxes.
-//! - `scroll_dispatch_inbox` dedupes inbound by
-//!   `(sender_daemon_id, sender_seq)`. The `local_agent_id` column
-//!   is stashed for replay debugging — on a replayed delivery we
-//!   re-ack with the same agent id rather than spawning a duplicate.
+//! - `scroll_task_dispatches` — durable record of (scroll, task) handed to a
+//!   peer; `remote_agent_id` filled on ack, terminal on completion.
+//! - `scroll_dispatch_outbox` — wire-level at-least-once queue.
+//! - `scroll_dispatch_inbox` — dedupes inbound by `(sender_daemon_id,
+//!   sender_seq)`; on replay re-acks with the stored `local_agent_id` rather
+//!   than spawning a duplicate.
 
 use anyhow::Result;
 use chrono::Utc;
@@ -88,10 +84,8 @@ impl super::Database {
         Ok(())
     }
 
-    /// Look up the dispatch row driven by an inbound remote-agent
-    /// transition. Coordinator's lifecycle subscriber uses this to map
-    /// `(sender_daemon_id, remote_agent_id) -> (scroll, task)` and
-    /// then update the task state.
+    /// Map an inbound `(peer_id, remote_agent_id)` back to its dispatch row,
+    /// so the coordinator can update the originating task's state.
     pub fn scroll_dispatch_find_by_remote(
         &self,
         peer_id: &str,
@@ -209,11 +203,9 @@ impl super::Database {
         )?)
     }
 
-    /// Record an inbound dispatch. On first sighting, returns
-    /// `Ok(None)` and the caller spawns the agent + writes
-    /// `scroll_dispatch_inbox_set_agent`. On replay, returns
-    /// `Ok(Some(local_agent_id))` so the receiver re-acks with the
-    /// same id (no duplicate spawn).
+    /// Dedupe lookup for an inbound dispatch: `Ok(None)` on first sighting
+    /// (caller spawns + records), `Ok(Some(local_agent_id))` on replay (re-ack,
+    /// no duplicate spawn).
     pub fn scroll_dispatch_inbox_lookup(
         &self,
         sender_daemon_id: &str,

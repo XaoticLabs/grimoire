@@ -1,21 +1,15 @@
-//! Adapter for Earendil Works' `pi` coding agent CLI.
+//! Adapter for Earendil Works' `pi` coding agent CLI. `Native` resume adapter
+//! (pi has a JSONL session tree under `~/.pi/agent/sessions/` and resume by id).
 //!
-//! pi has a native session model with a JSONL session tree
-//! (`~/.pi/agent/sessions/`) and resume by id/path, so this is a `Native`
-//! resume adapter. We deliberately use pi's **print/JSON one-shot mode**, not
-//! its persistent `--mode rpc` server: dormancy in Grimoire means the process
-//! exits, and a resident RPC subprocess per dormant agent would break the
-//! "sleeps when idle / scales to many" property (see the spec's
-//! "Considered & Deferred" section).
+//! Uses pi's print/JSON one-shot mode, NOT its persistent `--mode rpc` server:
+//! dormancy here means the process exits, and a resident RPC subprocess per
+//! dormant agent would break the "sleeps when idle / scales to many" property.
 //!
-//! Verified live against pi 0.75.4 (2026-05-22): `pi -p --mode json` runs a
-//! headless turn and exits cleanly after `agent_end`. The first stdout event is
-//! `{"type":"session","id":"<uuid>","cwd":...}`. That `id` is the resumable
-//! session id (and also names the persisted file under
-//! `~/.pi/agent/sessions/<cwd-scope>/`). Resume is `pi --session <id> -p`.
-//! pi enables its read/bash/edit/write tools by default, so an agent can shell
-//! out to `grim notify/mail/memory` without an allowlist (unlike Claude's
-//! headless mode).
+//! Wire facts (pi 0.75.4): `pi -p --mode json` runs a headless turn and exits
+//! after `agent_end`; the first stdout event `{"type":"session","id":...}`
+//! carries the resumable session id; resume is `pi --session <id> -p`. pi's
+//! read/bash/edit/write tools are on by default, so agents can call
+//! `grim notify/mail/memory` without an allowlist (unlike Claude headless).
 
 use anyhow::Result;
 use std::path::Path;
@@ -44,7 +38,6 @@ impl Provider for PiProvider {
         ProviderCapabilities {
             supports_resume: true,
             supports_model_selection: true,
-            // pi's JSON mode is "print mode with structured events".
             output_format: OutputFormat::StreamJson,
         }
     }
@@ -57,9 +50,7 @@ impl Provider for PiProvider {
         ctx: &AgentContext,
     ) -> Result<SpawnedAgent> {
         let mut cmd = Command::new(&self.binary);
-        // Headless single-shot (`-p`) with structured JSON events (`--mode json`).
-        // The session is persisted by default (no `--no-session`) so the agent can
-        // be resumed on the next wake.
+        // Headless one-shot; session persists by default so it's resumable on wake.
         cmd.arg("-p").arg("--mode").arg("json");
 
         if let Some(m) = model {
@@ -88,8 +79,7 @@ impl Provider for PiProvider {
         ctx: &AgentContext,
     ) -> Result<SpawnedAgent> {
         let mut cmd = Command::new(&self.binary);
-        // `pi --session <id>` resumes a specific stored session (partial ids are
-        // accepted per pi's docs); `-p --mode json` keeps it headless.
+        // `--session <id>` resumes a stored session (partial ids ok); `-p` headless.
         cmd.arg("--session")
             .arg(session_id)
             .arg("-p")
@@ -110,8 +100,7 @@ impl Provider for PiProvider {
     }
 
     fn extract_session_id(&self, line: &str) -> Option<String> {
-        // pi emits `{"type":"session","id":"<uuid>",...}` as the first event of a
-        // headless run (verified against pi 0.75.4). That `id` is the resume key.
+        // First event of a headless run; its `id` is the resume key.
         let v: serde_json::Value = serde_json::from_str(line).ok()?;
         if v.get("type").and_then(serde_json::Value::as_str) == Some("session") {
             return v
@@ -123,9 +112,8 @@ impl Provider for PiProvider {
     }
 
     fn extract_result(&self, stdout_lines: &[String]) -> Option<String> {
-        // pi emits JSON events; the final assistant text lives in the last
-        // `message_end`/`turn_end` event with `message.role == "assistant"`.
-        // Pull that out so pact `{output}` injection gets clean prose, not JSON.
+        // Final assistant text lives in the last `message_end`/`turn_end` event
+        // with `message.role == "assistant"`; pact `{output}` wants prose, not JSON.
         for line in stdout_lines.iter().rev() {
             let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else {
                 continue;

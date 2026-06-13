@@ -1,20 +1,14 @@
-//! `grim mcp` — an MCP (Model Context Protocol) server over stdio that
-//! proxies to the daemon's UDS RPC. Any MCP client (Claude Code, an IDE, a
-//! script) can summon and drive agents without knowing grimoire's own
-//! protocol.
+//! `grim mcp` — an MCP server over stdio that proxies to the daemon's UDS RPC,
+//! so any MCP client can drive agents without speaking grimoire's protocol.
 //!
-//! Speaks spec revision 2025-11-25 including the experimental **Tasks**
-//! utility, which is a natural fit: a task-augmented `summon_agent` call
-//! returns immediately with a task whose `taskId` *is* the agent id;
-//! `tasks/get` maps agent states onto task statuses and `tasks/result`
-//! blocks until the agent is terminal and returns its final output. The
-//! daemon's queue was already shaped like this — MCP Tasks is just the
-//! standard wire form of it.
+//! Speaks spec revision 2025-11-25 including the experimental **Tasks** utility:
+//! a task-augmented `summon_agent` returns a task whose `taskId` *is* the agent
+//! id; `tasks/get` maps agent states onto task statuses, `tasks/result` blocks
+//! until terminal. The daemon's queue was already shaped this way.
 //!
-//! Transport is stdio (newline-delimited JSON-RPC 2.0), the only transport
-//! a local supervisor needs: the MCP host spawns `grim mcp` per session, so
-//! the requestor is implicitly identified and task access is bounded by the
-//! session. Diagnostics go to stderr; stdout carries protocol frames only.
+//! Transport is stdio (newline-delimited JSON-RPC 2.0): the host spawns
+//! `grim mcp` per session, so the requestor is implicit and task access is
+//! session-bounded. Diagnostics go to stderr; stdout carries frames only.
 
 use std::collections::HashMap;
 use std::io::Write;
@@ -37,8 +31,7 @@ const RESULT_BLOCK_MAX: std::time::Duration = std::time::Duration::from_hours(1)
 
 struct Session {
     client: DaemonClient,
-    /// Tasks created this session: taskId (agent id) → ISO-8601 createdAt.
-    /// Session-scoped by design — stdio means one requestor.
+    /// taskId (agent id) → ISO-8601 createdAt. Session-scoped: stdio = one requestor.
     tasks: HashMap<String, String>,
     /// Negotiated protocol revision (set by `initialize`).
     version: String,
@@ -415,7 +408,7 @@ impl Session {
 
     // --- Tasks utility (2025-11-25, experimental) --------------------------
 
-    /// Fetch the task object for a session task, or an error string.
+    /// Build the task object for a session task, or an error string.
     async fn task_object(&mut self, task_id: &str) -> Result<Value, String> {
         let created_at = self
             .tasks

@@ -13,13 +13,10 @@ use crate::shared::protocol::*;
 use super::super::rpc;
 use super::AppState;
 
-/// UID the daemon process is running as. Cached at boot; used by the UDS
-/// peer-credentials check to decide whether a connecting client is the
-/// owning user (trusted, no token required) or a different UID (must
-/// present a valid bearer token on the first RPC).
+/// UID the daemon runs as, used by the peer-credentials check: the owning user
+/// is trusted (no token); a different UID must present a valid token.
 #[cfg(unix)]
 fn daemon_uid() -> u32 {
-    // Safety: getuid is always safe; the libc wrapper returns the value.
     nix::unistd::Uid::current().as_raw()
 }
 
@@ -36,10 +33,9 @@ pub(super) async fn run_uds_server(state: AppState) -> Result<()> {
     }
 
     let listener = UnixListener::bind(&socket_path)?;
-    // Lock the socket file down to the owning user. Combined with the
-    // per-connection peercred check below this gives belt-and-braces
-    // protection: other UIDs can't open the socket *and* couldn't pass
-    // the in-band check if they did.
+    // Lock the socket to the owning user (0o600). Belt-and-braces with the
+    // per-connection peercred check: other UIDs can't open it, and couldn't
+    // pass the in-band check if they did.
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -56,9 +52,8 @@ pub(super) async fn run_uds_server(state: AppState) -> Result<()> {
         let (stream, _) = listener.accept().await?;
         let state = state.clone();
 
-        // Determine whether this connection is from the owning user. If so
-        // the kernel-supplied peer credentials substitute for a bearer
-        // token; otherwise the first RPC must carry a valid `auth_token`.
+        // Owning-user connections are trusted via kernel peer credentials;
+        // other UIDs must carry a valid `auth_token` on the first RPC.
         let peercred_trusted = match stream.peer_cred() {
             Ok(cred) => cred.uid() == owner_uid,
             Err(e) => {
@@ -71,8 +66,7 @@ pub(super) async fn run_uds_server(state: AppState) -> Result<()> {
             let (reader, mut writer) = stream.into_split();
             let reader = BufReader::new(reader);
             let mut lines = reader.lines();
-            // Per-connection auth state. Cached so the token check only
-            // runs once per connection, not per RPC.
+            // Sticky per-connection auth: the token is checked once, not per RPC.
             let mut authed = peercred_trusted;
 
             while let Ok(Some(line)) = lines.next_line().await {
@@ -85,10 +79,8 @@ pub(super) async fn run_uds_server(state: AppState) -> Result<()> {
                     }
                 };
 
-                // Auth gate. Trusted peercred connections skip this; others
-                // must present a matching token on the first RPC. Once the
-                // token has matched, the connection is sticky-authed for
-                // the remainder of its lifetime (no re-check per RPC).
+                // Auth gate: peercred-trusted connections skip it; others must
+                // present a matching token on the first RPC, then stay authed.
                 match check_uds_auth(authed, req.auth_token.as_deref(), &state.auth_token) {
                     UdsAuthDecision::Pass => {
                         authed = true;
@@ -96,9 +88,8 @@ pub(super) async fn run_uds_server(state: AppState) -> Result<()> {
                     UdsAuthDecision::Reject => {
                         let err = RpcResponse::error(req.id, -32000, "unauthenticated".to_string());
                         let _ = write_response(&mut writer, &err).await;
-                        // Close the connection on failed auth. Repeated
-                        // attempts on the same socket would just be a
-                        // (very slow) brute-force vector.
+                        // Close on failed auth; retries on the same socket would
+                        // be a brute-force vector.
                         return;
                     }
                 }
@@ -179,9 +170,8 @@ pub(super) async fn run_uds_server(state: AppState) -> Result<()> {
     }
 }
 
-/// Outcome of evaluating a single RPC's auth state. Extracted into a pure
-/// function for unit-testability; the caller is responsible for caching
-/// `Pass` results across subsequent RPCs on the same connection.
+/// Outcome of evaluating a single RPC's auth state. The caller caches `Pass`
+/// across subsequent RPCs on the same connection.
 #[derive(Debug, PartialEq, Eq)]
 pub enum UdsAuthDecision {
     Pass,

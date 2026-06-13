@@ -144,8 +144,7 @@ async fn tick_supervision_respects_capacity() {
     let db = Arc::new(Database::open_in_memory().unwrap());
     let bus = EventBus::new(db.clone());
     seed(&db, "dis00002", AgentState::Failed);
-    // Pre-occupy a slot by inserting an Active agent in DB.
-    seed(&db, "actv0001", AgentState::Active);
+    seed(&db, "actv0001", AgentState::Active); // pre-occupy the one slot
     let now = Utc::now();
     let clock = Arc::new(TestClock::new(now));
     let sup = build_supervisor_with_pending(db.clone(), bus.clone(), clock, "dis00002", now).await;
@@ -154,7 +153,6 @@ async fn tick_supervision_respects_capacity() {
     let sched = make_scheduler(db.clone(), bus, 1, sup.clone(), rdisp);
     sched.tick_now().await.unwrap();
     assert!(rec.calls.lock().await.is_empty());
-    // The pending entry should still be there.
     let snap = sup.pending_snapshot().await;
     assert_eq!(snap.len(), 1);
 }
@@ -223,8 +221,7 @@ async fn restart_dispatch_emits_restarted_event() {
     impl Executor for StubExec {
         async fn start(&self, _req: ExecuteRequest) -> Result<ExecutorHandle> {
             let (tx, _rx) = tokio::sync::oneshot::channel::<()>();
-            // Never-completing future so the agent stays Active for the
-            // duration of the test.
+            // never-completing future keeps the agent Active for the whole test
             let completion = tokio::spawn(async {
                 std::future::pending::<()>().await;
                 MonitorResult {

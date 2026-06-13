@@ -1,9 +1,7 @@
-//! End-to-end integration tests for the durable work queue: enqueue →
-//! scheduler dispatch → AgentManager.dispatch_internal → state transitions,
-//! plus restart recovery, banish-while-queued, and ad-hoc/scroll lane order.
-//!
-//! Tests use the manual-tick scheduler entry point (`Scheduler::tick_now`)
-//! plus a controllable mock executor so they are deterministic.
+//! End-to-end integration tests for the durable work queue (enqueue →
+//! dispatch → state transitions), restart recovery, banish-while-queued,
+//! and lane ordering. Driven by `Scheduler::tick_now` + a controllable
+//! mock executor for determinism.
 
 #[path = "support/wait_for_state.rs"]
 mod wait_for_state_helper;
@@ -31,13 +29,9 @@ use grimoire::shared::types::{Agent, AgentId, AgentState};
 
 use wait_for_state_helper::wait_for_state;
 
-// --- Helper-helpers: a controllable executor ------------------------------
-//
-// Each `start` call returns immediately with a completion future tied to a
-// `oneshot::Sender<MonitorResult>` that the test holds. `complete(id, ...)`
-// pushes a result through that sender, which the AgentManager's
-// `watch_completion` consumes and translates into a `StateChange` event.
-
+// Controllable executor: `start` returns a completion future tied to a
+// oneshot the test holds; `complete(id, ...)` pushes a result through it,
+// which AgentManager's `watch_completion` turns into a StateChange.
 #[derive(Default)]
 struct ControlledExecutor {
     pending: Mutex<std::collections::HashMap<AgentId, oneshot::Sender<MonitorResult>>>,
@@ -161,8 +155,6 @@ impl Harness {
     }
 }
 
-// --- wait_for_state contract ---------------------------------------------
-
 #[tokio::test]
 async fn wait_for_state_returns_when_target_matches() {
     let h = Harness::build(8).await;
@@ -208,11 +200,9 @@ async fn wait_for_state_times_out_when_state_never_matches() {
     );
 }
 
-// --- Integration scenarios -----------------------------------------------
-
 #[tokio::test]
 async fn restart_recovery_keeps_queued_loses_active() {
-    // Use a temp file path so the second daemon boot sees the same data.
+    // temp file path so the second daemon boot sees the same data
     let tmp = tempfile::tempdir().unwrap();
     let path = tmp.path().join("grimoire.db");
 
@@ -234,7 +224,7 @@ async fn restart_recovery_keeps_queued_loses_active() {
                 .await
                 .unwrap();
         }
-        // Synthetic Active agent (simulates a daemon that died mid-flight).
+        // synthetic Active agent: a daemon that died mid-flight
         let active = Agent {
             id: "act00001".to_string(),
             name: None,
@@ -254,15 +244,14 @@ async fn restart_recovery_keeps_queued_loses_active() {
             workspace_id: None,
         };
         db.insert_agent(&active).unwrap();
-        // Drop Harness (and DB connection) to simulate daemon death.
+        // drop Harness (and DB connection) to simulate daemon death
     }
 
-    // Second boot: open fresh DB at the same path. AgentManager::new
-    // triggers reload_from_db -> restart_recovery on construction.
+    // Second boot: AgentManager::new triggers reload_from_db ->
+    // restart_recovery on construction.
     let db2 = Arc::new(Database::open(&path).unwrap());
     let _h2 = Harness::build_with_db(db2.clone(), 0).await;
 
-    // The synthetic Active is now Failed.
     let act = db2.get_agent("act00001").unwrap().expect("present");
     assert_eq!(
         act.state,
@@ -270,11 +259,9 @@ async fn restart_recovery_keeps_queued_loses_active() {
         "Active across restart must be Failed"
     );
 
-    // Three Queued survived.
     let queued = db2.list_agents(Some("queued")).unwrap();
     assert_eq!(queued.len(), 3, "Queued agents must persist across restart");
 
-    // task_queue rows still match the surviving agents.
     let queue = db2.list_queue().unwrap();
     assert_eq!(queue.len(), 3, "task_queue rows survive restart");
 }
@@ -301,21 +288,19 @@ async fn capacity_saturation_promotes_on_completion() {
         ids.push(a.id);
     }
 
-    // First tick: dispatches up to cap.
     h.scheduler.tick_now().await.unwrap();
 
     let active_or_summoning = h.db.count_in_flight_agents().unwrap();
     assert_eq!(active_or_summoning, 2, "cap=2 should give 2 in-flight");
     assert_eq!(h.db.count_queued().unwrap(), 1, "third stays queued");
 
-    // Complete the first dispatched agent, freeing a slot.
     let started = h.executor.started_ids().await;
     assert_eq!(started.len(), 2);
     h.executor
         .complete(&started[0], AgentState::Complete, Some(0))
         .await;
 
-    // Wait for that agent to settle to Complete (watch_completion is async).
+    // watch_completion is async, so wait for the agent to settle
     wait_for_state(
         &h.db,
         &started[0],
@@ -325,7 +310,6 @@ async fn capacity_saturation_promotes_on_completion() {
     .await
     .expect("completion propagates");
 
-    // Tick again: third should promote.
     h.scheduler.tick_now().await.unwrap();
     let third = ids.iter().find(|id| !started.contains(id)).unwrap();
     wait_for_state(&h.db, third, AgentState::Active, Duration::from_secs(2))
@@ -338,7 +322,7 @@ async fn capacity_saturation_promotes_on_completion() {
 #[tokio::test]
 async fn no_eligible_worker_unblocks_on_registration() {
     let h = Harness::build(4).await;
-    // No worker yet for "absent".
+    // no worker registered for "absent" yet
 
     let agent = h
         .manager
@@ -355,7 +339,6 @@ async fn no_eligible_worker_unblocks_on_registration() {
 
     h.scheduler.tick_now().await.unwrap();
 
-    // Still queued, with the right block reason.
     assert_eq!(h.db.count_queued().unwrap(), 1);
     let rows = h.db.list_queue().unwrap();
     assert_eq!(
@@ -364,7 +347,6 @@ async fn no_eligible_worker_unblocks_on_registration() {
         "scheduler must mark block reason when no worker advertises the provider"
     );
 
-    // Register a matching worker; tick again.
     h.register_worker("w-absent", "absent");
     h.scheduler.tick_now().await.unwrap();
 
@@ -379,8 +361,7 @@ async fn scroll_and_adhoc_interleave_adhoc_wins() {
     let h = Harness::build(1).await;
     h.register_worker("w1", "claude");
 
-    // Saturate with one in-flight agent. We do this via enqueue + tick so
-    // the scheduler's bookkeeping is consistent.
+    // saturate the one slot via enqueue + tick to keep scheduler bookkeeping consistent
     let occupant = h
         .manager
         .enqueue(
@@ -403,7 +384,7 @@ async fn scroll_and_adhoc_interleave_adhoc_wins() {
     .await
     .unwrap();
 
-    // Now enqueue scroll first, ad-hoc second.
+    // enqueue scroll first, ad-hoc second
     let scroll_agent = h
         .manager
         .enqueue(
@@ -416,7 +397,7 @@ async fn scroll_and_adhoc_interleave_adhoc_wins() {
         )
         .await
         .unwrap();
-    // Tiny delay so enqueued_at differs deterministically.
+    // delay so enqueued_at differs deterministically
     tokio::time::sleep(Duration::from_millis(10)).await;
     let adhoc_agent = h
         .manager
@@ -431,7 +412,6 @@ async fn scroll_and_adhoc_interleave_adhoc_wins() {
         .await
         .unwrap();
 
-    // Free the slot.
     h.executor
         .complete(&occupant.id, AgentState::Complete, Some(0))
         .await;
@@ -444,7 +424,6 @@ async fn scroll_and_adhoc_interleave_adhoc_wins() {
     .await
     .unwrap();
 
-    // Tick: ad-hoc lane drains first even though scroll was enqueued earlier.
     h.scheduler.tick_now().await.unwrap();
 
     wait_for_state(
@@ -483,8 +462,7 @@ async fn banish_while_queued_dequeues() {
         .unwrap();
     assert_eq!(h.db.count_queued().unwrap(), 1);
 
-    // Banish while Queued: must remove the row and mark Banished, never
-    // touch the executor.
+    // banish while Queued: removes the row, marks Banished, never hits the executor
     let ok = h.manager.banish(&agent.id).await.unwrap();
     assert!(ok);
 

@@ -3,9 +3,8 @@ use colored::Colorize;
 
 use crate::cli::client::DaemonClient;
 
-/// `grim invoke` is now a thin wrapper over `mail.send --wake-eligible`. The
-/// scheduler's mail-wake path picks the message up and resumes any
-/// Dormant agent at the recipient address.
+/// Thin wrapper over `mail.send --wake-eligible`: the scheduler's mail-wake
+/// path resumes any Dormant agent at the recipient address.
 pub async fn run(id: &str, message: &str) -> Result<()> {
     let mut client = DaemonClient::connect().await?;
 

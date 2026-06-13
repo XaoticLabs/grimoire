@@ -1,11 +1,7 @@
-//! Integration tests for HITL approval gates on scroll tasks.
-//!
-//! A task marked `- approve: true` is held in `AwaitingApproval` once its
-//! dependencies are met, before any agent is enqueued. `approve_task`
-//! clears the gate and lets the DAG schedule it; `reject_task` fails it and
-//! skips everything downstream. The scheduler is not running in-test, so an
-//! approved/ungated task is enqueued (state Active, agent assigned) but
-//! never actually dispatched to an executor.
+//! HITL approval gates on scroll tasks. A `- approve: true` task is held in
+//! `AwaitingApproval` once deps are met; `approve_task` lets the DAG schedule
+//! it, `reject_task` fails it and skips downstream. No scheduler runs here, so
+//! an approved task reaches Active with an agent assigned but is never dispatched.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -26,8 +22,8 @@ async fn setup() -> (Arc<Database>, Arc<ScrollKeeper>, EventBus) {
         grimoire::daemon::agent_manager::AgentManager::new(db.clone(), event_bus.clone(), config)
             .await;
     let keeper = Arc::new(ScrollKeeper::new(db.clone(), manager));
-    // Wire the keeper's event-bus listener (the production completion path).
-    keeper.clone().start(&event_bus);
+    keeper.clone().start(&event_bus); // production completion path
+
     (db, keeper, event_bus)
 }
 
@@ -44,9 +40,8 @@ Build the thing.
 Deploy the thing.
 ";
 
-/// Drive a (real) worker completion for a task by publishing the
-/// StateChange the keeper subscribes to. Re-fetches the task to read the
-/// agent id assigned at enqueue time.
+/// Drive a worker completion by publishing the StateChange the keeper
+/// subscribes to, using the agent id assigned at enqueue time.
 async fn complete_task(db: &Database, bus: &EventBus, task_id: &str) {
     let task = db.get_task(task_id).unwrap().unwrap();
     let agent_id = task.agent_id.expect("task has an enqueued agent");
@@ -71,19 +66,18 @@ async fn gated_task_is_held_for_approval() {
     let build = tasks.iter().find(|t| t.name == "Build").unwrap().clone();
     let deploy = tasks.iter().find(|t| t.name == "Deploy").unwrap().clone();
 
-    // The gate directive landed on Deploy only.
+    // gate directive landed on Deploy only
     assert!(!db.get_task_approval(&build.id).unwrap().0);
     assert!(db.get_task_approval(&deploy.id).unwrap().0);
 
     keeper.activate(&scroll_id).await.unwrap();
 
-    // Deploy stays Blocked behind Build until Build completes.
     assert_eq!(
         db.get_task(&deploy.id).unwrap().unwrap().state,
         TaskState::Blocked
     );
 
-    // Complete Build → the keeper schedules Deploy, which is gated and held.
+    // complete Build → keeper schedules Deploy, which is gated and held
     complete_task(&db, &bus, &build.id).await;
 
     let deploy_held = db.get_task(&deploy.id).unwrap().unwrap();
@@ -98,7 +92,6 @@ async fn gated_task_is_held_for_approval() {
         ApprovalState::Pending
     );
 
-    // An operator notification was emitted.
     let mut saw_notification = false;
     while let Ok(ev) = rx.try_recv() {
         if let StreamEvent::Notification { message, .. } = ev
@@ -130,7 +123,7 @@ async fn approve_lets_the_task_run() {
         TaskState::AwaitingApproval
     );
 
-    // Approve → enqueued (Active) and assigned an agent (never dispatched).
+    // approve → Active with an agent assigned (never dispatched)
     let name = keeper.approve_task(&scroll_id, "Deploy").await.unwrap();
     assert_eq!(name, "Deploy");
     let deploy_after = db.get_task(&deploy.id).unwrap().unwrap();
@@ -183,7 +176,6 @@ Verify.
         db.get_task(&deploy.id).unwrap().unwrap().state,
         TaskState::Failed
     );
-    // Downstream Verify is skipped.
     assert_eq!(
         db.get_task(&verify.id).unwrap().unwrap().state,
         TaskState::Skipped

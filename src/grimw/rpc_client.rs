@@ -13,9 +13,8 @@ use crate::shared::worker_proto::{
 };
 
 /// Build the mTLS channel to the daemon's worker listener: present this
-/// worker's identity as the client cert and pin the daemon's cert as the sole
-/// trust anchor. The `domain_name` matches the constant SAN in every grimoire
-/// identity cert.
+/// worker's identity as the client cert, pin the daemon's cert as the sole
+/// trust anchor. `domain_name` matches the constant SAN in every identity cert.
 async fn connect_daemon(config: &GrimwConfig) -> Result<Channel> {
     if !config.daemon_url.starts_with("https://") {
         return Err(anyhow::anyhow!(
@@ -116,14 +115,12 @@ pub async fn run(
 
     info!(worker_id = %worker_id, "worker registered");
 
-    // Heartbeat loop
     let hb_tx = tx.clone();
     let hb_dispatcher = dispatcher.clone();
     let hb_handle = tokio::spawn(async move {
         let mut seq: u64 = 0;
         let mut interval = tokio::time::interval(Duration::from_secs(HEARTBEAT_INTERVAL_SECS));
-        // First tick fires immediately; skip it so the daemon receives the
-        // first Register before any Heartbeat.
+        // Skip the immediate first tick so Register reaches the daemon before any Heartbeat.
         interval.tick().await;
         loop {
             interval.tick().await;
@@ -143,14 +140,13 @@ pub async fn run(
         }
     });
 
-    // Inbound loop
     loop {
         tokio::select! {
             biased;
             _ = &mut shutdown_rx => {
                 info!("shutdown requested; draining");
                 dispatcher.drain();
-                // Wait briefly for in-flight tasks to finish; bound to 5s.
+                // Bounded wait for in-flight tasks to finish.
                 let deadline = tokio::time::Instant::now() + STREAM_DEADLINE;
                 while dispatcher.in_flight() > 0 && tokio::time::Instant::now() < deadline {
                     tokio::time::sleep(STREAM_RETRY_YIELD).await;

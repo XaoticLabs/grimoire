@@ -1,7 +1,6 @@
-//! `grim budget`: read-only visibility into configured `[budgets.*]`
-//! caps and today's running spend. There is no `create` / `delete` here on
-//! purpose: budgets live in `config.toml` so they're versionable and
-//! reproducible across daemon restarts.
+//! `grim budget`: read-only view of `[budgets.*]` caps and today's spend. No
+//! `create`/`delete` by design — budgets live in `config.toml` so they're
+//! versionable and survive daemon restarts.
 
 use anyhow::{Context, Result};
 use clap::Subcommand;

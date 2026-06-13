@@ -28,9 +28,8 @@ impl EventBus {
     }
 
     pub fn publish(&self, event: StreamEvent) {
-        // broadcast: ignore "no receivers"
+        // Ignore "no receivers" and "writer gone" (shutdown).
         let _ = self.sender.send(event.clone());
-        // mpsc: ignore "writer task gone" (e.g., shutdown)
         let _ = self.writer.send(event);
     }
 

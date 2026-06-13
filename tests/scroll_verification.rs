@@ -1,11 +1,7 @@
-//! Integration tests for verification-gated scroll tasks.
-//!
-//! A task with a `verify:` rubric does not complete when its worker
-//! finishes: the keeper summons an evaluator agent that scores the
-//! worker's transcript against the rubric, and the DAG proceeds only
-//! when the score clears the threshold. These tests drive the keeper
-//! through the event bus exactly like the daemon does, with an
-//! in-memory DB and no real provider processes.
+//! Verification-gated scroll tasks: a `verify:` task holds open on worker
+//! completion while the keeper summons an evaluator that scores the
+//! transcript; the DAG proceeds only when the score clears the threshold.
+//! Driven through the event bus like the daemon, in-memory, no real providers.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -23,10 +19,6 @@ use grimoire::shared::protocol::StreamEvent;
 use grimoire::shared::types::{
     Agent, AgentEvent, AgentState, RestartPolicy, Scroll, ScrollState, Task, TaskState,
 };
-
-// ---------------------------------------------------------------------------
-// Parser: verify / verify_threshold directives
-// ---------------------------------------------------------------------------
 
 #[test]
 fn parser_reads_verify_and_threshold() {
@@ -73,10 +65,6 @@ Do A.
     assert!(spec.tasks[0].verify.is_none());
     assert!(spec.tasks[0].verify_threshold.is_none());
 }
-
-// ---------------------------------------------------------------------------
-// Keeper: verification flow
-// ---------------------------------------------------------------------------
 
 const WORKER_ID: &str = "wkr00001";
 const TASK_ID: &str = "tkv00001";
@@ -214,7 +202,7 @@ async fn worker_completion_summons_evaluator_and_holds_task() {
     seed_agent(&db, WORKER_ID, AgentState::Active);
     seed_verified_scroll(&db, None);
 
-    // Give the worker some transcript for the evaluator prompt.
+    // give the worker some transcript for the evaluator prompt
     db.append_event(&StreamEvent::Output {
         agent_id: WORKER_ID.into(),
         stream: "stdout".into(),
@@ -224,11 +212,11 @@ async fn worker_completion_summons_evaluator_and_holds_task() {
 
     let verifier_id = drive_to_verification(&db, &bus).await;
 
-    // The task is held open, not completed.
+    // task held open, not completed
     let task = db.get_task(TASK_ID).unwrap().unwrap();
     assert_eq!(task.state, TaskState::Active);
 
-    // The evaluator is enqueued on the ad-hoc lane with rubric + transcript.
+    // evaluator enqueued on the ad-hoc lane with rubric + transcript
     let evaluator = db.get_agent(&verifier_id).unwrap().unwrap();
     assert_eq!(evaluator.state, AgentState::Queued);
     assert_eq!(evaluator.name.as_deref(), Some("verify:build"));
@@ -242,7 +230,7 @@ async fn worker_completion_summons_evaluator_and_holds_task() {
     assert_eq!(queue[0].lane, "adhoc");
     assert_eq!(queue[0].id, verifier_id);
 
-    // Downstream stays blocked while the verdict is pending.
+    // downstream stays blocked while the verdict is pending
     let down = db.get_task(DOWN_ID).unwrap().unwrap();
     assert_eq!(down.state, TaskState::Blocked);
 }
@@ -265,14 +253,13 @@ async fn passing_verdict_completes_task_and_schedules_downstream() {
     let task = db.get_task(TASK_ID).unwrap().unwrap();
     assert_eq!(task.state, TaskState::Complete);
 
-    // The verdict is recorded against the worker for `grim eval --list`.
+    // verdict recorded against the worker for `grim eval --list`
     let evals = db.list_eval_results(WORKER_ID).unwrap();
     assert_eq!(evals.len(), 1);
     assert!((evals[0].score - 0.95).abs() < 1e-9);
     assert_eq!(evals[0].verdict.as_deref(), Some("pass"));
     assert_eq!(evals[0].evaluator_id, verifier_id);
 
-    // Downstream unblocked and spawned.
     let down = db.get_task(DOWN_ID).unwrap().unwrap();
     assert_eq!(down.state, TaskState::Active);
     assert!(down.agent_id.is_some());
@@ -298,12 +285,12 @@ async fn failing_verdict_fails_task_and_skips_downstream() {
     let down = db.get_task(DOWN_ID).unwrap().unwrap();
     assert_eq!(down.state, TaskState::Skipped);
 
-    // Failing verdicts are still recorded.
+    // failing verdicts are still recorded
     let evals = db.list_eval_results(WORKER_ID).unwrap();
     assert_eq!(evals.len(), 1);
     assert!((evals[0].score - 0.2).abs() < 1e-9);
 
-    // Everything is terminal, so the scroll fails.
+    // everything terminal → scroll fails
     let scroll = db.get_scroll(SCROLL_ID).unwrap().unwrap();
     assert_eq!(scroll.state, ScrollState::Failed);
 }
@@ -322,7 +309,7 @@ async fn garbage_verdict_fails_task_instead_of_hanging() {
     let down = db.get_task(DOWN_ID).unwrap().unwrap();
     assert_eq!(down.state, TaskState::Skipped);
 
-    // Nothing parseable, nothing recorded.
+    // nothing parseable, nothing recorded
     assert!(db.list_eval_results(WORKER_ID).unwrap().is_empty());
 }
 

@@ -5,10 +5,9 @@ use rusqlite::Connection;
 
 use super::Database;
 
-/// Best-effort `ALTER TABLE ADD COLUMN` for forward-only migrations. Returns
-/// `Ok(())` whether or not the column already exists. `column_ddl` is the
-/// full DDL fragment (e.g. `"keep_alive INTEGER NOT NULL DEFAULT 0"`).
-/// All identifiers are crate literals, no injection surface.
+/// Idempotent `ALTER TABLE ADD COLUMN` for forward-only migrations.
+/// `column_ddl` is the full DDL fragment; all identifiers are crate literals
+/// (no injection surface).
 pub(super) fn add_column_if_missing(
     conn: &Connection,
     table: &str,
@@ -188,10 +187,8 @@ impl Database {
                 FOREIGN KEY(agent_id) REFERENCES agents(id)
             );
 
-            -- Tree-level USD ceilings. One row per supervision-tree root;
-            -- spend is summed over the whole subtree at enforcement time.
-            -- exhausted_at records the first time the cap was hit so the
-            -- operator notification fires exactly once.
+            -- One USD ceiling per supervision-tree root; spend is summed over
+            -- the subtree at enforcement. `exhausted_at` is set once (fire-once).
             CREATE TABLE IF NOT EXISTS tree_budgets (
                 root_agent_id   TEXT PRIMARY KEY REFERENCES agents(id),
                 cap_usd         REAL NOT NULL,
@@ -244,35 +241,29 @@ impl Database {
             "escalation_depth",
             "escalation_depth INTEGER NOT NULL DEFAULT 0",
         )?;
-        // Token-budget bookkeeping: cumulative input+output tokens charged to
-        // the agent across all of its turns. Updated at process exit when the
-        // provider reports a `usage` block. `SandboxConfig.token_budget`
-        // compares against this value before the next dispatch.
+        // Cumulative input+output tokens across all turns; `SandboxConfig
+        // .token_budget` gates the next dispatch against this.
         add_column_if_missing(
             &conn,
             "agents",
             "tokens_used",
             "tokens_used INTEGER NOT NULL DEFAULT 0",
         )?;
-        // Supervision tree: when set, this agent dies with its parent.
-        // Kept as a DB-only column (out of `Agent`) to minimise blast radius;
-        // looked up via `db.list_children` only when a parent banishes.
+        // Supervision-tree link: when set, this agent dies with its parent.
+        // DB-only (out of `Agent`); read only on a parent's banish.
         add_column_if_missing(&conn, "agents", "parent_agent_id", "parent_agent_id TEXT")?;
         conn.execute_batch(
             "CREATE INDEX IF NOT EXISTS idx_agents_parent ON agents(parent_agent_id);",
         )?;
-        // USD spend attributed to this agent across its life, computed at
-        // each run-completion from `tokens_used` × `[providers.<name>.pricing]`.
-        // Stored as REAL (cents-precision is fine; vendor pricing is dollars
-        // per million tokens).
+        // Lifetime USD spend, charged at each run-completion from
+        // `tokens_used` × `[providers.<name>.pricing]`.
         add_column_if_missing(
             &conn,
             "agents",
             "usd_spent",
             "usd_spent REAL NOT NULL DEFAULT 0",
         )?;
-        // Per-budget, per-UTC-day spend ledger. Primary key is composite so
-        // a budget can spend across many days and the `today` lookup is a
+        // Per-budget, per-UTC-day spend ledger; composite PK so `today` is a
         // single indexed row read.
         conn.execute_batch(
             "CREATE TABLE IF NOT EXISTS budget_spend (
@@ -282,10 +273,7 @@ impl Database {
                 PRIMARY KEY (budget_name, day)
             );",
         )?;
-        // Rubric-scored evaluations of one agent's transcript by another.
-        // Many-per-target (a target can be eval'd against different rubrics
-        // or by different evaluators), keyed by a synthetic id so callers
-        // can reference / ack a specific verdict.
+        // Rubric-scored evaluations, many-per-target, keyed by synthetic id.
         conn.execute_batch(
             "CREATE TABLE IF NOT EXISTS eval_results (
                 id           TEXT PRIMARY KEY,
@@ -335,7 +323,6 @@ impl Database {
             CREATE INDEX IF NOT EXISTS workspace_assignments_by_agent
                 ON workspace_assignments (agent_id);
 
-            -- Federation: peer link metadata, outbox, inbox, topic federations.
             CREATE TABLE IF NOT EXISTS peers (
                 id                  TEXT PRIMARY KEY,
                 daemon_id           TEXT NOT NULL,
@@ -388,12 +375,9 @@ impl Database {
             CREATE INDEX IF NOT EXISTS topic_federations_by_topic
                 ON topic_federations(topic);
 
-            -- Federated namespace memory. A namespace is a string-named KV
-            -- store decoupled from git workspaces; it can replicate to peers.
-            -- Conflict resolution is last-write-wins on the (lamport,
-            -- origin_daemon_id) tuple. Deletes are tombstones (deleted=1) so
-            -- they propagate by the same LWW rule. See docs/specs for the v2
-            -- vector-clock design.
+            -- Federated namespace KV store. Conflict resolution is LWW on
+            -- (lamport, origin_daemon_id); deletes are tombstones (deleted=1)
+            -- so they propagate by the same rule.
             CREATE TABLE IF NOT EXISTS namespace_memory (
                 namespace        TEXT NOT NULL,
                 key              TEXT NOT NULL,
@@ -408,16 +392,15 @@ impl Database {
             CREATE INDEX IF NOT EXISTS namespace_memory_by_key
                 ON namespace_memory(namespace, key);
 
-            -- Per-daemon Lamport clock (single row). Advances on every local
-            -- write and on observing a remote write's timestamp.
+            -- Per-daemon Lamport clock (single row); advances on local writes
+            -- and on observing a remote timestamp.
             CREATE TABLE IF NOT EXISTS namespace_lamport (
                 node    INTEGER PRIMARY KEY CHECK (node = 0),
                 counter INTEGER NOT NULL
             );
             INSERT OR IGNORE INTO namespace_lamport (node, counter) VALUES (0, 0);
 
-            -- Which peers a namespace replicates to, and in which direction.
-            -- Mirrors topic_federations.
+            -- Which peers a namespace replicates to, and the direction.
             CREATE TABLE IF NOT EXISTS namespace_federations (
                 id          TEXT PRIMARY KEY,
                 peer_id     TEXT NOT NULL REFERENCES peers(id) ON DELETE CASCADE,
@@ -429,9 +412,8 @@ impl Database {
             CREATE INDEX IF NOT EXISTS namespace_federations_by_ns
                 ON namespace_federations(namespace);
 
-            -- Durable per-peer queue of namespace writes awaiting replication.
-            -- Same Pending/InFlight/Delivered backoff state machine as
-            -- peer_outbox; redelivery is safe because LWW apply is idempotent.
+            -- Per-peer queue of namespace writes awaiting replication;
+            -- redelivery is safe because LWW apply is idempotent.
             CREATE TABLE IF NOT EXISTS namespace_outbox (
                 id               TEXT PRIMARY KEY,
                 peer_id          TEXT NOT NULL REFERENCES peers(id) ON DELETE CASCADE,
@@ -455,9 +437,8 @@ impl Database {
 
         add_column_if_missing(&conn, "agents", "workspace_id", "workspace_id TEXT")?;
 
-        // Shadow workspaces have no on-disk worktree, so the path column is
-        // filled with a sentinel `shadow://<home-id>/<ws-id>` so the
-        // existing UNIQUE constraint still holds.
+        // Shadow workspaces have no worktree; `path` holds a sentinel
+        // `shadow://<home-id>/<ws-id>` to satisfy the UNIQUE constraint.
         add_column_if_missing(
             &conn,
             "workspaces",
@@ -484,9 +465,8 @@ impl Database {
                 ON workspace_federations(workspace_id);",
         )?;
 
-        // Per-peer outbox for workspace file events. Mirrors the
-        // namespace_outbox shape — `sender_seq` is the monotonic
-        // correlation key the receiver acks back; `payload` is the
+        // Per-peer outbox for workspace file events. `sender_seq` is the
+        // monotonic correlation key acked back; `payload` is the
         // JSON-serialized WorkspaceFileChanged batch.
         conn.execute_batch(
             "CREATE TABLE IF NOT EXISTS workspace_event_outbox (
@@ -506,10 +486,8 @@ impl Database {
                 ON workspace_event_outbox(peer_id, state, next_attempt_at);",
         )?;
 
-        // Receiver-side dedupe. `(sender_daemon_id, sender_seq)` is
-        // the at-least-once correlation key — the sender retries until
-        // it gets a positive ack, so the receiver must ignore replays.
-        // `received_at` is purely informational / for future pruning.
+        // Receiver-side dedupe keyed on `(sender_daemon_id, sender_seq)`: the
+        // sender retries until acked, so replays must be ignored.
         conn.execute_batch(
             "CREATE TABLE IF NOT EXISTS workspace_event_inbox (
                 sender_daemon_id TEXT NOT NULL,
@@ -522,14 +500,11 @@ impl Database {
                 ON workspace_event_inbox(workspace_id);",
         )?;
 
-        // Peer dispatch column on tasks. Coordinator records which
-        // peer (if any) the task is dispatched to. NULL ⇒ local task.
+        // Peer the task is dispatched to; NULL ⇒ local task.
         add_column_if_missing(&conn, "tasks", "peer_name", "peer_name TEXT")?;
 
-        // Verification-gated tasks: optional rubric an evaluator agent
-        // scores the worker's transcript against, the pass threshold,
-        // and the evaluator's agent id once verification is in flight.
-        // NULL rubric ⇒ ordinary task, completes on worker completion.
+        // Verification-gating columns; NULL `verify_rubric` ⇒ ordinary task
+        // that completes on worker completion.
         add_column_if_missing(&conn, "tasks", "verify_rubric", "verify_rubric TEXT")?;
         add_column_if_missing(&conn, "tasks", "verify_threshold", "verify_threshold REAL")?;
         add_column_if_missing(
@@ -539,10 +514,8 @@ impl Database {
             "verifier_agent_id TEXT",
         )?;
 
-        // peers.accept_scroll_dispatch — opt-in flag. The dispatch
-        // handler refuses inbound `ScrollTaskDispatch` from peers that
-        // haven't been enrolled, so operators can pin which peers may
-        // hand them work.
+        // Opt-in flag: the dispatch handler refuses inbound `ScrollTaskDispatch`
+        // from peers not enrolled here.
         add_column_if_missing(
             &conn,
             "peers",
@@ -550,13 +523,10 @@ impl Database {
             "accept_scroll_dispatch INTEGER NOT NULL DEFAULT 0",
         )?;
 
-        // Scroll task dispatches. One row per (scroll, task,
-        // peer) dispatch. `remote_agent_id` is filled in once the
-        // receiver acks. `state` is `pending` → `dispatched` →
-        // `complete`/`failed`/`cancelled`. Mirrors the outbox-row
-        // semantics but is the *durable record* of the dispatch
-        // outside the at-least-once wire layer (the wire side lives
-        // in `scroll_dispatch_outbox` / `scroll_dispatch_inbox`).
+        // Durable record of (scroll, task, peer) dispatches, separate from the
+        // at-least-once wire layer (scroll_dispatch_outbox/inbox).
+        // `remote_agent_id` filled on ack; `state` is
+        // `pending` → `dispatched` → `complete`/`failed`/`cancelled`.
         conn.execute_batch(
             "CREATE TABLE IF NOT EXISTS scroll_task_dispatches (
                 id              TEXT PRIMARY KEY,
@@ -598,11 +568,9 @@ impl Database {
              );",
         )?;
 
-        // Per-agent artifact: the structured diff/cost record captured at
-        // completion. `base_commit` is recorded at dispatch; the rest is
-        // filled in when the agent reaches a terminal state. One row per
-        // agent (upserted), so a restarted agent's artifact reflects its
-        // last run. `files_changed` is a JSON array of `FileChange`.
+        // One upserted row per agent: `base_commit` recorded at dispatch, the
+        // rest at terminal state, so a restart's artifact reflects its last
+        // run. `files_changed` is a JSON array of `FileChange`.
         conn.execute_batch(
             "CREATE TABLE IF NOT EXISTS agent_artifacts (
                 agent_id      TEXT PRIMARY KEY REFERENCES agents(id) ON DELETE CASCADE,
@@ -617,10 +585,9 @@ impl Database {
             );",
         )?;
 
-        // Idempotency keys for `agent.summon`. A caller-supplied key maps to
-        // the agent minted on its first use; a repeat summon with the same
-        // key returns that agent instead of spawning a duplicate. Keys are
-        // global (not per-caller); collisions are the caller's contract.
+        // `agent.summon` idempotency keys: a key maps to the agent minted on
+        // first use; repeats return it. Keys are global (collisions are the
+        // caller's contract).
         conn.execute_batch(
             "CREATE TABLE IF NOT EXISTS idempotency_keys (
                 key        TEXT PRIMARY KEY,
@@ -629,11 +596,9 @@ impl Database {
             );",
         )?;
 
-        // Task-level retry policy + approval gate (HITL). `max_retries` is
-        // the count of re-spawns a failed task gets before it is marked
-        // failed for good; `retry_count` tracks how many have happened.
-        // `requires_approval` holds a Ready task until an operator approves;
-        // `approval_state` is none/pending/approved/rejected.
+        // Task retry policy + HITL approval gate. `max_retries`/`retry_count`
+        // cap and track re-spawns; `requires_approval` holds a Ready task
+        // until approved; `approval_state` is none/pending/approved/rejected.
         add_column_if_missing(
             &conn,
             "tasks",
@@ -659,10 +624,9 @@ impl Database {
             "approval_state TEXT NOT NULL DEFAULT 'none'",
         )?;
 
-        // Agent lifecycle federation. Subscription rows are
-        // per-peer (no per-agent filter on the wire — receivers filter
-        // via the `RemoteAgentCompletion` wake source's config). Outbox
-        // mirrors `workspace_event_outbox`. Inbox dedupes on
+        // Agent lifecycle federation. Subscriptions are per-peer with no
+        // per-agent wire filter — receivers filter via the
+        // `RemoteAgentCompletion` wake source. Inbox dedupes on
         // `(sender_daemon_id, sender_seq)`.
         conn.execute_batch(
             "CREATE TABLE IF NOT EXISTS agent_lifecycle_federations (

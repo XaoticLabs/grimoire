@@ -12,11 +12,9 @@ pub struct WorkspaceCreateParams {
     pub name: String,
     pub repo_path: String,
     pub branch: String,
-    /// If set, copy every `workspace_memory` row from this source workspace
-    /// into the newly created workspace post-creation. Used for swarm
-    /// decompose: parent agent seeds child workspaces with accumulated
-    /// findings. Source workspace must already exist; failure to copy
-    /// leaves the new workspace empty but does not abort creation.
+    /// If set, copy every `workspace_memory` row from this source into the new
+    /// workspace (seeding swarm children). Source must exist; a copy failure
+    /// leaves the workspace empty but does not abort creation.
     #[serde(default)]
     pub copy_memory_from: Option<WorkspaceId>,
 }
@@ -51,8 +49,6 @@ pub struct WorkspaceAssignParams {
 }
 
 pub type WorkspaceAssignResult = EmptyResult;
-
-// --- Memory params/results ---
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MemoryPutParams {

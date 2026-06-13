@@ -9,9 +9,8 @@ use super::ScrollKeeper;
 
 impl ScrollKeeper {
     pub(super) async fn handle_agent_completion(&self, agent_id: &str) {
-        // A completing agent may be an evaluator verifying another
-        // task's worker, not a worker itself. Check that link first:
-        // its completion carries a verdict, not task output.
+        // A completing agent may be an evaluator (carries a verdict, not task
+        // output) rather than a worker; check that link first.
         match self.db.get_task_by_verifier_agent_id(agent_id) {
             Ok(Some(task)) => {
                 self.finish_verification(&task, agent_id).await;
@@ -33,8 +32,8 @@ impl ScrollKeeper {
             }
         };
 
-        // Verification gate: a rubric-bearing task is not complete when
-        // its worker finishes; an evaluator scores the transcript first.
+        // Verification gate: a rubric-bearing task isn't complete until an
+        // evaluator scores the worker's transcript.
         if task.verify_rubric.is_some() {
             if task.verifier_agent_id.is_none() {
                 self.start_verification(&task, agent_id).await;
@@ -60,11 +59,9 @@ impl ScrollKeeper {
     }
 
     pub(super) async fn handle_agent_failure(&self, agent_id: &str) {
-        // If the agent has an active restart policy, defer the failure
-        // handling to the supervisor, which will transition the agent to
-        // Restarting and eventually to terminal Failed if the budget is
-        // exhausted. Without this gate, scroll-keeper could mark the task
-        // failed before the supervisor flips state.
+        // Defer to the supervisor when a restart policy is active: it owns the
+        // Restarting/Failed transitions. Without this gate scroll-keeper could
+        // mark the task failed before the supervisor flips state.
         if let Ok(Some(cfg)) = self.db.get_supervision(agent_id) {
             use crate::shared::types::RestartPolicy;
             if cfg.policy != RestartPolicy::Never {
@@ -73,8 +70,7 @@ impl ScrollKeeper {
             }
         }
 
-        // A dying evaluator means the verdict will never arrive: the
-        // verification (and therefore the task) fails rather than hangs.
+        // A dead evaluator means no verdict will arrive: fail rather than hang.
         if let Ok(Some(task)) = self.db.get_task_by_verifier_agent_id(agent_id) {
             warn!(
                 scroll_id = %task.scroll_id,
@@ -105,11 +101,9 @@ impl ScrollKeeper {
         self.retry_or_fail(&task).await;
     }
 
-    /// A `RemoteAgentStateChanged` arrived. Look up the
-    /// dispatch row and, on a terminal remote state, mirror it onto
-    /// the local task. Non-terminal transitions are ignored — the
-    /// task already sits in `active` once `update_task_agent` runs at
-    /// dispatch time.
+    /// On a terminal remote state, mirror it onto the local dispatch task.
+    /// Non-terminal transitions are ignored (the task already sits in `active`
+    /// from dispatch time).
     pub(super) async fn handle_remote_state_change(
         &self,
         sender_daemon_id: &str,
@@ -163,8 +157,6 @@ impl ScrollKeeper {
         if task_state == TaskState::Failed {
             self.skip_downstream(&dispatch.task_id);
         }
-        // Kick the scroll's DAG so anything waiting on this task can
-        // move forward.
         if let Err(e) = self.schedule_tasks(&dispatch.scroll_id).await {
             warn!(error = %e, "schedule_tasks after remote completion failed");
         }

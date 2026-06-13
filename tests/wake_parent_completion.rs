@@ -68,8 +68,7 @@ async fn setup() -> (
 }
 
 async fn drain() {
-    // Give the parent-completion subscriber time to receive the event and
-    // the registry's drain loop time to process the FireMsg.
+    // let the subscriber receive the event and the drain loop process the FireMsg
     tokio::time::sleep(std::time::Duration::from_millis(80)).await;
 }
 

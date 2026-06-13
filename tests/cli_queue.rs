@@ -1,5 +1,4 @@
-// Tests for `grim queue`: formatter on `QueueEntry` fixtures plus a direct
-// RPC-handler path that reads from a real in-memory DB.
+//! Tests for `grim queue`: formatter on `QueueEntry` fixtures plus a direct RPC-handler path over an in-memory DB.
 
 use std::sync::Arc;
 
@@ -13,8 +12,7 @@ use grimoire::shared::types::{Agent, AgentState};
 use std::path::PathBuf;
 
 const fn _ensure_module_loads() {
-    // Touch the symbol so an unused-import warning doesn't fire on the
-    // CI compile path; `queue_cmd::run` is async and not called here.
+    // Touch the symbol to suppress unused-import; `queue_cmd::run` is async, not called here.
     let _ = &queue_cmd::run;
 }
 
@@ -104,10 +102,8 @@ fn cli_queue_renders_no_worker_block_reason() {
 }
 
 // --- RPC-shape contract via direct DB read --------------------------------
-//
-// The RPC handler shape is `db.list_queue() -> entries`. We exercise the
-// transformation by inserting rows and verifying that the resulting
-// `QueueListResponse` shape is parseable and ordered.
+// Mirrors the handler's `db.list_queue() -> entries` transform and checks the
+// resulting `QueueListResponse` is parseable and ordered.
 
 #[test]
 fn queue_list_returns_pending_entries() {

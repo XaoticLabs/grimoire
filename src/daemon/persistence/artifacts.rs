@@ -6,10 +6,8 @@ use rusqlite::{OptionalExtension, params};
 use crate::shared::types::{AgentArtifact, FileChange};
 
 impl super::Database {
-    /// Record the baseline commit for an agent at dispatch time. Upserts so
-    /// a restart re-baselines against the current HEAD. A `None` base (cwd
-    /// is not a repo) still writes the row so the completion-time upsert has
-    /// somewhere to land.
+    /// Record an agent's baseline commit at dispatch. Upserts so a restart
+    /// re-baselines; a `None` base (non-repo cwd) still writes the row.
     pub fn set_artifact_base(&self, agent_id: &str, base_commit: Option<&str>) -> Result<()> {
         let conn = self.conn_lock();
         conn.execute(
@@ -20,7 +18,7 @@ impl super::Database {
         Ok(())
     }
 
-    /// Read the baseline commit recorded at dispatch for `agent_id`, if any.
+    /// The baseline commit recorded at dispatch, if any.
     pub fn get_artifact_base(&self, agent_id: &str) -> Result<Option<String>> {
         let conn = self.conn_lock();
         let base = conn
@@ -34,8 +32,7 @@ impl super::Database {
         Ok(base)
     }
 
-    /// Persist the full computed artifact for an agent, replacing any prior
-    /// row (e.g. the dispatch-time base-only stub).
+    /// Persist the full artifact, replacing any prior row (e.g. the base-only stub).
     pub fn upsert_artifact(&self, a: &AgentArtifact) -> Result<()> {
         let files_json = serde_json::to_string(&a.files_changed)?;
         let conn = self.conn_lock();
@@ -67,8 +64,7 @@ impl super::Database {
         Ok(())
     }
 
-    /// Fetch an agent's artifact, if one has been captured. Returns `None`
-    /// when the agent never ran to completion or produced no row.
+    /// An agent's captured artifact, or `None` if none was ever captured.
     pub fn get_artifact(&self, agent_id: &str) -> Result<Option<AgentArtifact>> {
         let conn = self.conn_lock();
         let row = conn
@@ -114,9 +110,8 @@ impl super::Database {
         Ok(id)
     }
 
-    /// Bind an idempotency key to an agent. Fails silently (no-op) if the
-    /// key already exists — the caller should have looked it up first; the
-    /// `OR IGNORE` defends against a race between two concurrent summons.
+    /// Bind an idempotency key to an agent. `OR IGNORE` no-ops on an existing
+    /// key, defending against a race between concurrent summons.
     pub fn insert_idempotency_key(&self, key: &str, agent_id: &str) -> Result<()> {
         let conn = self.conn_lock();
         conn.execute(

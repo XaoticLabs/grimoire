@@ -91,7 +91,7 @@ async fn boot_skips_replay_for_already_escalated() {
         None,
     )
     .unwrap();
-    // Persist an Escalated event with a later timestamp.
+    // Escalated event with a later timestamp
     let _ = db.append_event(&StreamEvent::Escalated {
         agent_id: "crh00003".into(),
         target: "topic://x".into(),

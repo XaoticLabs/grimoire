@@ -7,16 +7,15 @@ pub const SOCKET_FILENAME: &str = "grimd.sock";
 pub const DB_FILENAME: &str = "grimoire.db";
 pub const DAEMON_ID_FILENAME: &str = "daemon.id";
 
-/// Federation peer-protocol version. Bumped whenever wire-incompatible
-/// changes ship in `proto/peer.proto`. Negotiated via `Hello { protocol_version }`.
+/// Federation peer-protocol version (`proto/peer.proto`). Negotiated via
+/// `Hello { protocol_version }`; bump on wire-incompatible changes.
 pub const PEER_PROTOCOL_VERSION: u32 = 1;
 
 /// Highest RPC protocol version this build supports.
 pub const RPC_PROTOCOL_VERSION: u32 = 1;
 
-/// Wire-format version of the worker control protocol. Bumped whenever
-/// `proto/worker.proto` ships wire-incompatible changes. Sent by the
-/// worker on `Register` and rejected by the daemon if it doesn't match.
+/// Worker control-protocol version (`proto/worker.proto`). Sent on `Register`,
+/// rejected by the daemon on mismatch; bump on wire-incompatible changes.
 pub const WORKER_PROTOCOL_VERSION: u32 = 1;
 
 pub const MAX_WORKSPACE_NAME_LEN: usize = 64;
@@ -69,7 +68,6 @@ pub fn daemon_id_path() -> PathBuf {
     grimoire_dir().join(DAEMON_ID_FILENAME)
 }
 
-/// Generate a short 8-character ID from a UUID.
 pub fn generate_short_id() -> String {
     uuid::Uuid::new_v4().to_string()[..8].to_string()
 }

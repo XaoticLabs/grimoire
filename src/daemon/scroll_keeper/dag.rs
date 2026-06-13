@@ -22,7 +22,6 @@ impl ScrollKeeper {
             adj.entry(from.clone()).or_default().push(to.clone());
         }
 
-        // Topological sort via DFS to detect cycles
         let mut visited = HashSet::new();
         let mut in_stack = HashSet::new();
 
@@ -50,8 +49,7 @@ impl ScrollKeeper {
     }
 }
 
-/// Cycle-detecting DFS helper for `validate_dag`. Returns `true` if a
-/// back-edge is found from `node`.
+/// Cycle-detecting DFS for `validate_dag`: `true` if a back-edge exists.
 fn dag_has_cycle(
     node: &str,
     adj: &HashMap<String, Vec<String>>,

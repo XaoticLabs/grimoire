@@ -1,31 +1,24 @@
-//! Per-agent artifact capture: the structured record of what an agent
-//! changed on disk (files, unified diff, line counts) plus what it cost
-//! (tokens, USD), computed from git at the moment the agent finishes.
+//! Per-agent artifact capture: a structured record of what an agent changed on
+//! disk (files, unified diff, line counts) plus cost (tokens, USD), computed
+//! from git when the agent finishes — so review/merge workflows treat the diff
+//! as a first-class object. Best-effort: a non-git cwd, missing base, or git
+//! error yields a cost-only artifact rather than failing the agent.
 //!
-//! The orchestrator owns this record so review-and-merge workflows
-//! (HITL approval, fork-and-race) can treat an agent's diff as a
-//! first-class object instead of reconstructing it from stdout. Capture
-//! is best-effort: a non-git cwd, a missing base commit, or a git error
-//! yields a cost-only artifact rather than failing the agent.
-//!
-//! Isolation note: the diff is computed against the cwd's git state, so
-//! concurrent agents sharing one working tree will see each other's
-//! edits. Meaningful per-agent diffs require per-agent isolation — a
-//! named workspace or, for fork-and-race, a dedicated worktree.
+//! Isolation gotcha: the diff is against the cwd's git state, so agents sharing
+//! a working tree see each other's edits. Meaningful per-agent diffs need
+//! per-agent isolation (a named workspace or dedicated worktree).
 
 use std::path::Path;
 use std::process::Command;
 
 use crate::shared::types::{AgentArtifact, FileChange};
 
-/// Bytes of unified diff we retain. A generous cap: enough to review a
-/// substantial change, bounded so a runaway agent can't store a gigabyte
-/// of diff. Tail is dropped (the head of a diff is the file list).
+/// Cap on retained diff bytes (head kept, tail dropped) so a runaway agent
+/// can't store a gigabyte of diff.
 pub const MAX_DIFF_BYTES: usize = 256 * 1024;
 
-/// Run `git -C <cwd> <args...>`, returning stdout as a String on success.
-/// `None` on any failure (not a repo, git missing, non-zero exit). The
-/// `--no-optional-locks` flag keeps a read from racing an agent's own git.
+/// `git -C <cwd> <args...>` → stdout on success, `None` on any failure.
+/// `--no-optional-locks` avoids racing an agent's own git.
 fn git(cwd: &Path, args: &[&str]) -> Option<String> {
     let out = Command::new("git")
         .arg("--no-optional-locks")
@@ -40,9 +33,8 @@ fn git(cwd: &Path, args: &[&str]) -> Option<String> {
     Some(String::from_utf8_lossy(&out.stdout).into_owned())
 }
 
-/// Resolve the current `HEAD` commit of `cwd`, if it is a git work tree
-/// with at least one commit. Recorded at dispatch time as the baseline
-/// the completion-time diff is taken against.
+/// `HEAD` commit of `cwd`, if it's a git work tree with a commit. Recorded at
+/// dispatch as the baseline for the completion-time diff.
 pub fn head_commit(cwd: &Path) -> Option<String> {
     let sha = git(cwd, &["rev-parse", "HEAD"])?;
     let sha = sha.trim();
@@ -53,15 +45,13 @@ pub fn head_commit(cwd: &Path) -> Option<String> {
     }
 }
 
-/// Compute the on-disk change an agent produced: the file list (from
-/// porcelain status, so it catches staged, unstaged, and untracked
-/// changes alike), per-file line counts and a total (from numstat against
-/// `base`), and the unified diff text (against `base`, capped).
+/// Compute an agent's on-disk change: file list (porcelain status, catching
+/// staged/unstaged/untracked), per-file + total line counts (numstat vs
+/// `base`), and the capped unified diff (vs `base`).
 ///
-/// `base` is the commit recorded at dispatch. When it is `None` (the cwd
-/// was not a repo at dispatch) the diff is taken against `HEAD` so a
-/// repo created mid-run still yields something; if that also fails the
-/// returned diff is empty and only the cost fields are meaningful.
+/// `base` is the dispatch-time commit; `None` falls back to `HEAD` (so a repo
+/// created mid-run still reports something). If that also fails, only the cost
+/// fields are meaningful.
 #[must_use]
 pub fn compute(
     agent_id: &str,
@@ -76,15 +66,14 @@ pub fn compute(
     let mut deletions: u64 = 0;
     let mut diff_text: Option<String> = None;
 
-    // The range the diff/numstat is taken against. `base` is preferred;
-    // fall back to HEAD so a non-baselined run still reports tracked edits.
+    // Prefer `base`; fall back to HEAD so a non-baselined run still reports
+    // tracked edits.
     let range = base
         .map(str::to_string)
         .or_else(|| head_commit(cwd))
         .unwrap_or_default();
 
     if !range.is_empty() {
-        // Per-file line counts for tracked changes.
         if let Some(numstat) = git(cwd, &["diff", "--numstat", &range]) {
             for line in numstat.lines() {
                 let mut cols = line.split('\t');
@@ -106,7 +95,6 @@ pub fn compute(
             }
         }
 
-        // Full unified diff for tracked changes, tail-truncated to the cap.
         if let Some(mut diff) = git(cwd, &["diff", &range]) {
             if diff.len() > MAX_DIFF_BYTES {
                 let mut cut = diff.len() - MAX_DIFF_BYTES;
@@ -121,10 +109,8 @@ pub fn compute(
         }
     }
 
-    // Porcelain status is the authoritative file list: it also surfaces
-    // untracked files (`??`) and deletions that a base-relative numstat of
-    // only-tracked paths may present differently. Merge it in, preferring
-    // the richer numstat line counts where a path appears in both.
+    // Merge in porcelain status for untracked (`??`) and deletions that a
+    // tracked-only numstat misses, preferring numstat counts on overlap.
     if let Some(status) = git(cwd, &["status", "--porcelain"]) {
         for line in status.lines() {
             if line.len() < 4 {

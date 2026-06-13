@@ -12,10 +12,9 @@ use crate::shared::types::{AgentState, Peer};
 use super::super::event_bus::EventBus;
 use super::super::persistence::Database;
 
-/// Apply an inbound namespace write if the peer is authorized to replicate
-/// into that namespace, then build the ack. Authorization failures ack with
-/// `ok=false` so the sender stops retrying a namespace we don't accept.
-/// Shared by the outbound client and the inbound server.
+/// Apply an inbound namespace write (if the peer is authorized) and build the
+/// ack. Authz failures ack `ok=false` so the sender stops retrying a namespace
+/// we don't accept. Shared by the outbound client and inbound server.
 pub fn apply_memory_deliver(
     db: &crate::daemon::persistence::Database,
     peer_id: &str,
@@ -162,31 +161,24 @@ struct WorkspaceEventPayload {
     truncated: u32,
 }
 
-/// Republish an inbound `WorkspaceEventDeliver` onto the local
-/// shadow workspace. Shared between the outbound client's reverse
-/// stream (peer_client) and the inbound server (peer_rpc_server).
+/// Republish an inbound `WorkspaceEventDeliver` onto the local shadow
+/// workspace. Shared between the outbound client and inbound server.
 ///
-/// Ack semantics:
-/// - `ok: true` — applied OR a known terminal state (no shadow
-///   configured, already-seen). The sender drops the row.
-/// - `ok: false` — authz failure or payload error. The sender stops
-///   retrying (the row exits via the same `mark_delivered` ack path,
-///   intentionally — workspace events are time-sensitive, retrying
-///   stale fs events forever is worse than dropping them).
+/// Both `ok: true` (applied / terminal) and `ok: false` (authz/payload error)
+/// drop the row: fs events are time-sensitive, so retrying stale ones forever
+/// is worse than dropping them.
 pub fn apply_workspace_event_deliver(
     db: &Database,
     bus: &EventBus,
     peer: &Peer,
     d: &WorkspaceEventDeliver,
 ) -> WorkspaceEventAck {
-    // Resolve the local shadow workspace. The sender ships its own
-    // (home) workspace id; we look up which of our shadows points at
+    // Sender ships its home workspace id; find our shadow pointing at
     // (peer.daemon_id, home_workspace_id).
     let shadow_id = match db.find_shadow_workspace(&peer.daemon_id, &d.workspace_id) {
         Ok(Some(id)) => id,
         Ok(None) => {
-            // No shadow configured locally — drop with positive ack so
-            // the sender doesn't retry forever.
+            // No local shadow — drop with positive ack.
             tracing::debug!(
                 peer = %peer.name,
                 home_workspace = %d.workspace_id,
@@ -225,8 +217,7 @@ pub fn apply_workspace_event_deliver(
         }
     }
 
-    // Dedupe by (sender_daemon_id, sender_seq). Already-seen → drop
-    // with positive ack; replay is the sender's normal retry path.
+    // Dedupe by (sender_daemon_id, sender_seq); already-seen → drop, ok=true.
     match db.workspace_event_inbox_record(&peer.daemon_id, d.sender_seq, &shadow_id) {
         Ok(true) => {}
         Ok(false) => {
@@ -272,18 +263,12 @@ pub fn apply_workspace_event_deliver(
     }
 }
 
-/// Receive a `ScrollTaskDispatch` from a coordinator peer and
-/// queue a local agent for it.
+/// Receive a `ScrollTaskDispatch` from a coordinator peer and queue a local
+/// agent for it. Gated on `accept_scroll_dispatch = 1`; inbox dedupe returns
+/// the prior `local_agent_id` on replay instead of spawning a duplicate.
 ///
-/// Gates:
-/// - Peer must have `accept_scroll_dispatch = 1` (opt-in).
-/// - Inbox dedupe: replays return the previously-assigned
-///   `local_agent_id` instead of spawning a duplicate.
-///
-/// The receiver does NOT acquire any scroll DB rows on its side —
-/// scrolls are coordinator-owned. The dispatched agent is a plain
-/// queued agent; it shows up in `grim ps` like anything else and is
-/// surfaced to the coordinator only via lifecycle federation.
+/// The receiver acquires no scroll DB rows (scrolls are coordinator-owned); the
+/// agent is a plain queued agent, surfaced back only via lifecycle federation.
 pub async fn apply_scroll_task_dispatch(
     db: &Database,
     bus: &crate::daemon::event_bus::EventBus,

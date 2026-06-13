@@ -1,9 +1,6 @@
-//! End-to-end durability test for the event log.
-//!
-//! Publishes a known sequence through a real `EventBus` + `Database` pair,
-//! drops both, reopens the same DB file, and verifies that every event was
-//! persisted with contiguous per-stream sequence numbers and id ordering
-//! matching publish order.
+//! End-to-end durability test for the event log: publish, drop, reopen the DB
+//! file, and verify every event persisted with contiguous per-stream seqs and
+//! id ordering matching publish order.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -63,7 +60,6 @@ async fn poll_count(db: &Database, target: i64, timeout: Duration) -> i64 {
 /// Publish the canonical scenario through `bus` and wait until 8 events
 /// have been persisted (or the 2s budget is exhausted).
 async fn publish_scenario(bus: &EventBus, db: &Database) {
-    // 3 Outputs for "A"
     for i in 0..3 {
         bus.publish(StreamEvent::Output {
             agent_id: "A".to_string(),
@@ -71,7 +67,6 @@ async fn publish_scenario(bus: &EventBus, db: &Database) {
             line: format!("a-out-{i}"),
         });
     }
-    // 2 ScrollProgress for "S"
     for i in 0..2 {
         bus.publish(StreamEvent::ScrollProgress {
             scroll_id: "S".to_string(),
@@ -83,7 +78,6 @@ async fn publish_scenario(bus: &EventBus, db: &Database) {
             skipped: 0,
         });
     }
-    // 1 AgentCreated for "B"
     let agent = grimoire::shared::types::Agent {
         id: "B".to_string(),
         name: Some("agent-B".to_string()),
@@ -103,7 +97,6 @@ async fn publish_scenario(bus: &EventBus, db: &Database) {
         workspace_id: None,
     };
     bus.publish(StreamEvent::AgentCreated { agent });
-    // 2 more Outputs for "A"
     for i in 3..5 {
         bus.publish(StreamEvent::Output {
             agent_id: "A".to_string(),
@@ -123,14 +116,11 @@ async fn events_persist_across_database_reopen() {
         let db = Arc::new(Database::open(tmp.path()).unwrap());
         let bus = EventBus::new(db.clone());
         publish_scenario(&bus, &db).await;
-        // Drop bus first so the writer task drains and exits.
+        // Drop bus so the writer drains and exits, then yield for the final commit.
         drop(bus);
-        // Yield to let the writer's final loop iteration commit.
         tokio::time::sleep(Duration::from_millis(50)).await;
-        // Drop the only Arc by ending the scope.
     }
 
-    // Reopen.
     let db2 = Database::open(tmp.path()).unwrap();
     let count: i64 = db2.with_test_conn(|c| {
         c.query_row("SELECT COUNT(*) FROM events", [], |r| r.get(0))

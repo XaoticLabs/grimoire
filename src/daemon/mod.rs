@@ -92,14 +92,10 @@ pub async fn start() -> Result<()> {
     manager.set_supervisor(supervisor.clone()).await;
     let _supervisor_task = supervisor.spawn();
 
-    // Scheduler: promotes Queued agents to Active per global capacity and
-    // dispatches supervised restarts when they come due. The daemon's
-    // single load-bearing tick loop: without it, `grim summon` would queue
-    // a row that never starts, and `Failed` agents with `--restart on_failure`
-    // would never resurface. Wired here (rather than per-test) because all
-    // its collaborators (AgentManager as Dispatcher/MailWaker/RestartDispatcher,
-    // WorkerRegistry, Supervisor) are now constructed. Handle is held in the
-    // local binding so the background task lives for the daemon's lifetime.
+    // Scheduler: the daemon's load-bearing tick loop. Without it queued agents
+    // never start and Failed agents with a restart policy never resurface.
+    // Wired here because all its collaborators are now constructed; the handle
+    // binding keeps the task alive for the daemon's lifetime.
     let workers = Arc::new(worker_registry::WorkerRegistry::new_with_bus(
         WORKER_HEARTBEAT_INTERVAL,
         event_bus.clone(),
@@ -126,9 +122,8 @@ pub async fn start() -> Result<()> {
     );
     let _scheduler_handle = Arc::new(scheduler_obj).spawn();
 
-    // Outbound notifications: a pure event-bus subscriber that fans matched
-    // events out to any configured sink (webhook POST, local JSON log,
-    // notify-send toast). Only spawned when at least one sink is set.
+    // Outbound notifications: bus subscriber fanning matched events to
+    // configured sinks. Only spawned when at least one sink is set.
     if config.notifications.has_sink() {
         let cfg = &config.notifications;
         let sinks = [
@@ -146,11 +141,11 @@ pub async fn start() -> Result<()> {
         }
     }
 
-    // Start orchestrator (listens for agent completions, fires pacts)
+    // Orchestrator: fires pacts on agent completion.
     let orch = orchestrator::Orchestrator::new(db.clone(), manager.clone());
     orch.start(&event_bus);
 
-    // Start scroll keeper (listens for agent completions, manages scroll DAGs)
+    // Scroll keeper: advances scroll DAGs on agent completion.
     let scroll_keeper = Arc::new(scroll_keeper::ScrollKeeper::new(
         db.clone(),
         manager.clone(),
@@ -164,10 +159,9 @@ pub async fn start() -> Result<()> {
         tracing::warn!(error = %e, "workspace registry reconcile failed");
     }
 
-    // Federation mTLS transport identity. Auto-generated + pinned on first
-    // boot under <grimoire_dir>/tls/daemon.{crt,key}, or loaded from explicit
-    // config paths. Shared by the outbound peer clients (client cert) and the
-    // inbound listener (server cert).
+    // Federation mTLS identity, shared by outbound peer clients (client cert)
+    // and the inbound listener (server cert). Auto-minted + pinned on first
+    // boot under <grimoire_dir>/tls/daemon.{crt,key}, or loaded from config.
     let tls_identity = Arc::new(crate::shared::tls::load_or_init(
         "daemon",
         config.daemon.tls_cert_path.as_deref(),
@@ -178,8 +172,7 @@ pub async fn start() -> Result<()> {
         "federation transport identity resolved"
     );
 
-    // Federation peer registry: outbound peer clients + outbox drainers +
-    // dispatch into the inbox handler.
+    // Peer registry: outbound peer clients + outbox drainers + inbox dispatch.
     let peer_registry = peer_registry::PeerRegistry::new(
         db.clone(),
         event_bus.clone(),
@@ -192,20 +185,17 @@ pub async fn start() -> Result<()> {
     }
     peer_registry.spawn_all_active().await;
 
-    // Let the workspace watcher wake outbox drainers immediately after
-    // enqueueing a federated event, rather than waiting on the peer's next
-    // heartbeat tick.
+    // Lets the watcher wake outbox drainers right after enqueueing a federated
+    // event instead of waiting on the peer's next heartbeat tick.
     workspace_watcher::set_peer_registry(peer_registry.clone());
 
-    // Agent-lifecycle producer. One bus subscriber fans every local
-    // `StateChange` event into the lifecycle outbox for each federated peer.
-    // Boot recovery: revert any in-flight rows so the drainer reships.
+    // Lifecycle producer: fans local `StateChange` events into each peer's
+    // outbox. Boot recovery: revert in-flight rows so the drainer reships.
     let _ = db.agent_lifecycle_reset_in_flight();
     agent_lifecycle_publisher::spawn(db.clone(), event_bus.clone(), peer_registry.clone());
 
-    // Hand peer_registry to scroll_keeper so peer-targeted tasks dispatch via
-    // the outbox path. Also revert any in-flight scroll-dispatch outbox rows so
-    // the drainer reships them.
+    // Hand peer_registry to scroll_keeper for outbox-path dispatch. Reset
+    // in-flight scroll-dispatch rows so the drainer reships them.
     let _ = db.scroll_dispatch_reset_in_flight();
     scroll_keeper.set_peer_registry(peer_registry.clone()).await;
 
@@ -213,16 +203,15 @@ pub async fn start() -> Result<()> {
         spawn_peer_listener(addr, peer_registry.clone(), tls_identity.clone());
     }
 
-    // Worker-pool control plane. Bound only when `[worker]` is configured.
-    // mTLS: the daemon presents a dedicated "worker" identity cert and trusts
-    // only the worker certs pinned in `trusted_worker_certs`.
+    // Worker-pool control plane, bound only when `[worker]` is configured.
+    // mTLS with a dedicated "worker" identity, trusting only certs pinned in
+    // `trusted_worker_certs`.
     if let Some(worker_cfg) = config.worker.clone() {
         spawn_worker_listener(worker_cfg, workers.clone());
     }
 
-    // Resolve (and on first boot mint) the CLI/HTTP bearer token. Workers
-    // and peers carry their own per-link tokens; this one only governs the
-    // local UDS RPC and the dashboard.
+    // CLI/HTTP bearer token (minted on first boot). Governs only local UDS RPC
+    // and the dashboard; workers and peers carry their own per-link tokens.
     let auth_token = Arc::new(auth::load_or_init_daemon(
         config.daemon.auth.token.as_deref(),
     )?);
@@ -231,7 +220,6 @@ pub async fn start() -> Result<()> {
         "auth token resolved (file is canonical source for the CLI)"
     );
 
-    // Start servers (UDS + HTTP)
     let webhooks = Arc::new(config.webhooks.clone());
     let http_port = config.daemon.port;
     server::run(
@@ -264,9 +252,8 @@ fn bootstrap_runtime(config: &Config) -> Result<()> {
     let socket = config.socket_path();
     let port = config.port();
 
-    // Startup banner, written to stderr (not the structured tracing log)
-    // so it shows up in interactive `grim daemon start` even when the user
-    // hasn't enabled an env filter that lets `info!` through.
+    // Banner on stderr (not tracing) so it shows in interactive
+    // `grim daemon start` regardless of the env filter.
     #[allow(clippy::print_stderr)]
     {
         eprintln!();
@@ -285,12 +272,9 @@ fn bootstrap_runtime(config: &Config) -> Result<()> {
     Ok(())
 }
 
-/// Promote Complete-with-session agents to Dormant and publish the
-/// corresponding `StateChange` events on the live bus, so the event log
-/// captures the transition and any boot-time subscriber sees it. Idempotent.
-///
-/// Runs *before* any subsystem (scheduler, wake registry) starts reading
-/// agent state, otherwise the boot-time view would be inconsistent.
+/// Promote Complete-with-session agents to Dormant, publishing `StateChange`
+/// so the event log and boot-time subscribers see it. Idempotent. MUST run
+/// before any subsystem reads agent state, or the boot view is inconsistent.
 fn replay_dormant_migration(db: &Arc<persistence::Database>, event_bus: &event_bus::EventBus) {
     let migrated_ids = match db.migrate_dormant_agents() {
         Ok(ids) => {
@@ -316,9 +300,8 @@ fn replay_dormant_migration(db: &Arc<persistence::Database>, event_bus: &event_b
     }
 }
 
-/// Spawn the peer-federation gRPC listener as a background task. Errors in
-/// address parsing or the server loop are logged and the daemon continues
-/// without federation rather than failing boot.
+/// Spawn the peer-federation gRPC listener. Address/server errors are logged
+/// and the daemon continues without federation rather than failing boot.
 fn spawn_peer_listener(
     addr: String,
     peer_registry: Arc<peer_registry::PeerRegistry>,
@@ -330,13 +313,10 @@ fn spawn_peer_listener(
             return;
         };
 
-        // mTLS: present our identity as the server cert, and require inbound
-        // peers to present a client cert signed by (i.e. equal to, since each
-        // is self-signed) one of the certs we pinned at `peer add`. With no
-        // peers pinned yet the listener still binds, but every client cert is
-        // untrusted, so no inbound stream completes (the bearer-token check
-        // would reject unknown peers regardless). Newly-added inbound peers
-        // require a daemon restart to enter the trust bundle.
+        // mTLS: present our server cert; require inbound peers to present a
+        // client cert pinned at `peer add` (self-signed, so trust == equality).
+        // With none pinned the listener still binds but rejects every client.
+        // Newly-added peers enter the trust bundle only on daemon restart.
         let mut tls = tonic::transport::ServerTlsConfig::new().identity(tls_identity.to_tonic());
         let bundle = peer_registry
             .db
@@ -369,9 +349,8 @@ fn spawn_peer_listener(
     });
 }
 
-/// Load the daemon's worker-listener identity and the pinned-worker-cert
-/// bundle, then spawn the mTLS worker control listener. Cert/load failures are
-/// logged and the worker pool stays down rather than failing daemon boot.
+/// Spawn the mTLS worker control listener. Cert/load failures are logged and
+/// the worker pool stays down rather than failing daemon boot.
 fn spawn_worker_listener(
     cfg: crate::shared::config::WorkerConfig,
     workers: Arc<worker_registry::WorkerRegistry>,
@@ -388,8 +367,7 @@ fn spawn_worker_listener(
         }
     };
 
-    // Concatenate pinned worker certs into a single client-CA bundle. A path
-    // that can't be read is skipped with a warning rather than aborting.
+    // Pinned worker certs into one client-CA bundle; unreadable paths skipped.
     let mut certs = Vec::new();
     for path in &cfg.trusted_worker_certs {
         match std::fs::read_to_string(path) {

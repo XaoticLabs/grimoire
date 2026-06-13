@@ -1,15 +1,10 @@
 #![allow(missing_docs)] // Module-level doc covers the model; per-item docs pending.
 
-//! Mail address parsing.
-//!
-//! Two schemes are supported:
-//!
-//!   * `agent://<id>`, where `<id>` is the 8-char short id (`[0-9a-f]{8}`).
-//!   * `topic://<name>`, where `<name>` is one or more slash-separated
-//!     segments each matching `[a-zA-Z0-9][a-zA-Z0-9._:-]*`, total length
-//!     capped at 128.
-//!
-//! Anything else, including a bare string with no `://`, is rejected.
+//! Mail address parsing. Two schemes:
+//!   * `agent://<id>`, `<id>` = 8-char short id (`[0-9a-f]{8}`).
+//!   * `topic://<name>`, `<name>` = slash-separated segments each matching
+//!     `[a-zA-Z0-9][a-zA-Z0-9._:-]*`, total length ≤ 128.
+//! Anything else (including a bare string with no `://`) is rejected.
 
 use crate::shared::types::{AgentId, DaemonId, validate_daemon_id};
 
@@ -72,10 +67,8 @@ impl std::error::Error for AddressParseError {}
 
 pub fn parse_address(s: &str) -> Result<Address, AddressParseError> {
     if let Some(rest) = s.strip_prefix("agent://") {
-        // Try the federated form first (`grimd-<daemon-id>/<agent-id>`).
-        // Falls back to bare 8-hex.
+        // Federated form (`grimd-<8hex>/<8hex>`) first, else bare 8-hex.
         if let Some(stripped) = rest.strip_prefix("grimd-") {
-            // Strict shape: <8hex>/<8hex>, no extra path segments.
             return match parse_federated_agent_tail(stripped) {
                 Some((daemon_id, agent_id)) => Ok(Address::FederatedAgent {
                     daemon_id,
@@ -114,8 +107,7 @@ fn parse_federated_agent_tail(s: &str) -> Option<(DaemonId, AgentId)> {
     Some((daemon.to_string(), agent.to_string()))
 }
 
-/// `^[0-9a-f]{8}$`. The existing short-id shape; reject anything else,
-/// including segments after a slash.
+/// `^[0-9a-f]{8}$` (short-id shape). Rejects segments after a slash.
 pub fn is_valid_agent_id(s: &str) -> bool {
     if s.len() != 8 {
         return false;
@@ -124,19 +116,15 @@ pub fn is_valid_agent_id(s: &str) -> bool {
         .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
 }
 
-/// Topic names are slash-separated segments. Each segment matches
-/// `[a-zA-Z0-9][a-zA-Z0-9._:-]*` and the full string is capped at 128
-/// chars. Slashes carry no semantics to the bus — they're just a naming
-/// convention — but the daemon already publishes to multi-segment topics
-/// (e.g. `workspace/<id>/files`, `workspace/<id>/memory/<prefix>`), so
-/// subscribers must be able to name them too.
+/// Slash-separated segments, each matching `[a-zA-Z0-9][a-zA-Z0-9._:-]*`,
+/// total ≤ 128 chars. Slashes are a naming convention only, but the daemon
+/// publishes multi-segment topics (`workspace/<id>/files`), so subscribers
+/// must be able to name them too.
 pub fn is_valid_topic_name(s: &str) -> bool {
     if s.is_empty() || s.len() > 128 {
         return false;
     }
-    // Reject leading, trailing, or consecutive slashes — there's no valid
-    // interpretation, and accepting them invites collisions in any
-    // subscriber matching scheme.
+    // Leading/trailing/double slashes invite collisions in subscriber matching.
     if s.starts_with('/') || s.ends_with('/') || s.contains("//") {
         return false;
     }

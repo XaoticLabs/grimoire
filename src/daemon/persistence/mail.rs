@@ -6,9 +6,8 @@ use crate::shared::types::{AgentId, Mail, MailState, Subscription};
 use super::{MAIL_COLS, OutboxFanoutRow, row_to_mail, row_to_subscription, unix_now};
 
 impl super::Database {
-    /// Insert a mail row, computing `seq` per `recipient_id` inside an
-    /// IMMEDIATE transaction so concurrent inserts to the same recipient
-    /// serialize. Returns `Err` if `recipient_id` is empty.
+    /// `seq` is computed per `recipient_id` inside an IMMEDIATE transaction so
+    /// concurrent inserts to the same recipient serialize.
     pub fn insert_mail(&self, mail: &Mail) -> Result<()> {
         if mail.recipient_id.is_empty() {
             anyhow::bail!("recipient_id must not be empty");
@@ -41,8 +40,7 @@ impl super::Database {
         Ok(())
     }
 
-    /// Insert a mail row but use a caller-provided `seq` value. Used by topic
-    /// fanout when inserting multiple rows in a single transaction.
+    /// Insert with a caller-provided `seq`, for multi-row fanout in one tx.
     pub(super) fn insert_mail_with_seq_in_tx(
         tx: &rusqlite::Transaction<'_>,
         mail: &Mail,
@@ -68,11 +66,8 @@ impl super::Database {
         Ok(())
     }
 
-    /// Insert multiple mail rows + per-peer `peer_outbox` fanout rows in a
-    /// single IMMEDIATE transaction. Each `mail.seq` is computed per
-    /// recipient; each outbox `sender_seq` is computed per `peer_id`.
-    /// Returns the list of `(peer_id, outbox_id)` pairs inserted so callers
-    /// can emit per-row events.
+    /// Insert mail rows + per-peer `peer_outbox` fanout rows in one IMMEDIATE
+    /// transaction. `mail.seq` is per recipient; outbox `sender_seq` is per peer.
     pub fn insert_mail_batch_with_outbox(
         &self,
         mails: &[Mail],
@@ -100,9 +95,8 @@ impl super::Database {
                 params![peer_id],
                 |r| r.get(0),
             )?;
-            // For topic fanout, the recipient string here carries the
-            // remote topic address (`topic://<name>`); receivers fan out
-            // to local subscribers per `topic_federations` direction.
+            // For topic fanout, `recipient` carries the remote topic address
+            // (`topic://<name>`); receivers fan out per `topic_federations`.
             tx.execute(
                 "INSERT INTO peer_outbox (id, peer_id, mail_id, sender_seq, recipient, sender, topic, body, created_at, attempts, next_attempt_at, state)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 0, ?9, 'pending')",
@@ -123,9 +117,8 @@ impl super::Database {
         Ok(())
     }
 
-    /// Insert multiple mail rows for distinct recipients in a single
-    /// IMMEDIATE transaction. Each row's `seq` is computed per recipient.
-    /// Used for topic fanout so a partial fanout cannot be observed.
+    /// Insert mail rows in one IMMEDIATE transaction so a partial topic fanout
+    /// cannot be observed. Each `seq` is computed per recipient.
     pub fn insert_mail_batch(&self, mails: &[Mail]) -> Result<()> {
         if mails.is_empty() {
             return Ok(());
@@ -186,8 +179,7 @@ impl super::Database {
         )
     }
 
-    /// Find a mail row by short id prefix. Returns `Err` if multiple match,
-    /// `Ok(None)` if none match.
+    /// Find a mail row by short id prefix. `Err` if the prefix is ambiguous.
     pub fn get_mail_by_prefix(&self, prefix: &str) -> Result<Option<Mail>> {
         let conn = self.conn_lock();
         let sql = format!("SELECT {MAIL_COLS} FROM mail WHERE id LIKE ?1 || '%' LIMIT 2");
@@ -233,8 +225,7 @@ impl super::Database {
         )
     }
 
-    /// Returns distinct recipient ids that have at least one Pending,
-    /// wake-eligible mail row. Used by the scheduler's mail-wake branch.
+    /// Distinct recipient ids with at least one Pending, wake-eligible mail row.
     pub fn list_recipients_with_pending_wake_eligible_mail(&self) -> Result<Vec<AgentId>> {
         self.query_vec(
             "SELECT recipient_id, MIN(seq) FROM mail \
@@ -245,9 +236,8 @@ impl super::Database {
         )
     }
 
-    /// Insert a subscription. On UNIQUE conflict (subscriber_id, topic),
-    /// returns the existing subscription's id. Sets `sub.id` to whatever id
-    /// ends up in the DB. Returns the (possibly existing) id.
+    /// Insert a subscription, returning the existing id on UNIQUE
+    /// (subscriber_id, topic) conflict rather than erroring.
     pub fn insert_subscription(&self, sub: &Subscription) -> Result<String> {
         let mut conn = self.conn_lock();
         let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;

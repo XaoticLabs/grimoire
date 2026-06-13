@@ -1,21 +1,11 @@
-//! Shared authentication token used by the CLI (over UDS) and dashboard
-//! (over HTTP). Peer-federation and worker-pool links use their own
-//! per-link bearer tokens (orthogonal trust domains that live elsewhere:
-//! `peer_registry`, `WorkerConfig.secret`).
+//! Shared auth token for the CLI (UDS) and dashboard (HTTP). Peer-federation
+//! and worker-pool links use their own per-link bearer tokens (orthogonal
+//! trust domains: `peer_registry`, `WorkerConfig.secret`).
 //!
-//! ## Resolution order
-//!
-//! On daemon boot, the active token is resolved in this order:
-//!
-//! 1. `GRIMOIRE_AUTH_TOKEN` environment variable (operator override / CI).
-//! 2. `[daemon.auth] token = "..."` in `config.toml` (explicit config).
+//! Resolution order (same for daemon and CLI):
+//! 1. `GRIMOIRE_AUTH_TOKEN` env var (operator override / CI).
+//! 2. `[daemon.auth] token` in `config.toml`.
 //! 3. `~/.grimoire/auth.token` (auto-generated on first start, mode 0600).
-//!
-//! The CLI uses the same resolution order. With no config and no env, both
-//! sides converge on the auto-generated file: zero-config for the solo
-//! developer, explicit override for shared/CI machines.
-//!
-//! ## Verification
 //!
 //! All comparisons go through [`AuthToken::verify`], which uses
 //! `subtle::ConstantTimeEq` to avoid leaking timing information.
@@ -62,10 +52,7 @@ impl AuthToken {
         let a = self.0.as_bytes();
         let b = provided.as_bytes();
         if a.len() != b.len() {
-            // ConstantTimeEq still does work to avoid early-exit, but inputs
-            // of different lengths can't match by definition. Use a fixed
-            // dummy compare so timing reveals only that the lengths differ
-            // (which is unavoidable).
+            // Dummy compare so timing reveals only the (unavoidable) length diff.
             let _ = a.ct_eq(a);
             return false;
         }
@@ -170,20 +157,16 @@ mod tests {
     use super::*;
     use std::sync::Mutex;
 
-    /// Tests in this module mutate process-global env vars (`GRIMOIRE_AUTH_TOKEN`,
-    /// `GRIMOIRE_AUTH_TOKEN_PATH`). Cargo runs tests in parallel by default,
-    /// so without serialization one test's env changes leak into another's
-    /// `load_or_init_daemon` call. This mutex serializes the env-touching
-    /// tests; it lives in test code only.
+    /// Serializes env-touching tests so one test's `GRIMOIRE_AUTH_TOKEN*`
+    /// mutations don't leak into another's `load_or_init_daemon` under
+    /// cargo's parallel runner.
     static ENV_LOCK: Mutex<()> = Mutex::new(());
 
     /// # Safety
     ///
-    /// `std::env::set_var` / `remove_var` became `unsafe` in Rust 1.80
-    /// because concurrent reads from other threads can observe a torn
-    /// `environ` pointer. The caller must hold [`ENV_LOCK`] for the entire
-    /// scope in which any env-touching code may run; the lock provides
-    /// the required exclusion across all tests in this module.
+    /// `set_var`/`remove_var` are `unsafe` since Rust 1.80 (concurrent reads
+    /// can observe a torn `environ`). Caller must hold [`ENV_LOCK`] for the
+    /// whole scope any env-touching code may run.
     #[allow(unsafe_code, clippy::disallowed_methods)]
     unsafe fn env_set(key: &str, value: impl AsRef<std::ffi::OsStr>) {
         unsafe { std::env::set_var(key, value) };
@@ -219,7 +202,6 @@ mod tests {
             t.chars()
                 .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase())
         );
-        // Two consecutive generations should never collide.
         assert_ne!(t, generate_token());
     }
 

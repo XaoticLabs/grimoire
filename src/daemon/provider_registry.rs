@@ -17,15 +17,16 @@ pub struct ProviderRegistry {
 
 impl ProviderRegistry {
     pub fn from_config(config: &Config) -> Self {
-        // Reserved built-in adapter names; `[providers.*]` may not shadow these.
+        // Built-in adapter names `[providers.*]` may not shadow (shadowing
+        // would swap native-resume for transcript-replay and lose fidelity).
         const RESERVED: [&str; 2] = ["claude", "pi"];
 
         let mut providers: HashMap<String, Arc<dyn Provider>> = HashMap::new();
         let mut sandboxes: HashMap<String, crate::shared::config::SandboxConfig> = HashMap::new();
         let mut pricings: HashMap<String, crate::shared::config::ProviderPricing> = HashMap::new();
 
-        // `[providers.claude.sandbox]` / `[providers.pi.sandbox]` may configure
-        // the built-in adapters even though those aren't built from `ProviderConfig`.
+        // Built-ins still honor `[providers.<name>.sandbox/pricing]` even though
+        // they aren't built from `ProviderConfig`.
         for name in RESERVED {
             if let Some(pc) = config.providers.get(name) {
                 if let Some(sb) = &pc.sandbox {
@@ -37,10 +38,7 @@ impl ProviderRegistry {
             }
         }
 
-        // Always register the built-in native-resume adapters. Their names
-        // are reserved: a `[providers.*]` config entry may not shadow them
-        // (doing so would swap a native-session adapter for the generic
-        // transcript-replay one and silently lose resume fidelity).
+        // Built-in native-resume adapters, always registered.
         providers.insert(
             "claude".to_string(),
             Arc::new(ClaudeProvider::new(config.claude_binary())),
@@ -89,16 +87,13 @@ impl ProviderRegistry {
         }
     }
 
-    /// Per-provider [`SandboxConfig`](crate::shared::config::SandboxConfig) resolved from `[providers.<name>.sandbox]`.
-    /// Returns `None` when the provider isn't sandbox-configured, leaving the
-    /// agent unconfined (current default).
+    /// `[providers.<name>.sandbox]`; `None` leaves the agent unconfined.
     pub fn sandbox_for(&self, name: &str) -> Option<crate::shared::config::SandboxConfig> {
         self.sandboxes.get(name).cloned()
     }
 
-    /// Per-provider USD pricing resolved from `[providers.<name>.pricing]`.
-    /// `None` means the provider is unpriced. Agents still record token
-    /// usage but contribute zero USD to budgets.
+    /// `[providers.<name>.pricing]`; `None` is unpriced (tokens recorded, zero
+    /// USD billed).
     pub fn pricing_for(&self, name: &str) -> Option<crate::shared::config::ProviderPricing> {
         self.pricings.get(name).cloned()
     }

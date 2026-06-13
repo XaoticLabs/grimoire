@@ -1,8 +1,7 @@
 //! Shared fixtures for the supervisor contract tests.
 
-// Each test binary `mod common`s this file privately, so the lint sees its
-// `pub` items as unreachable from that crate's root. The visibility is
-// load-bearing, sibling test files need it.
+// Each test binary `mod common`s this privately, so the lint sees these
+// `pub` items as unreachable, but sibling test files need the visibility.
 #![allow(unreachable_pub)]
 
 use std::path::PathBuf;
@@ -50,9 +49,8 @@ pub fn seed(db: &Database, id: &str, state: AgentState) {
     db.insert_agent(&agent).unwrap();
 }
 
-// Shared via `mod common` in every supervisor test binary, but only some of
-// them call it; the others see it as dead. `allow`, not `expect`, because the
-// lint must not fire in the binaries that do use it.
+// Only some supervisor test binaries call this; `allow` (not `expect`) so the
+// lint stays quiet in both the using and non-using binaries.
 #[allow(dead_code)]
 pub fn build(db: Arc<Database>, bus: EventBus, clock: Arc<TestClock>) -> Arc<Supervisor> {
     let mail: Arc<dyn EscalationMailSender> = Arc::new(NoopMail);

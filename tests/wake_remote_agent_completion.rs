@@ -138,9 +138,8 @@ async fn ignores_other_sender_daemon() {
 
 #[tokio::test]
 async fn ignores_local_state_change() {
-    // A local `StateChange` is the producer-side event and must NOT
-    // fire a `RemoteAgentCompletion` wake — that wake watches the
-    // federated `RemoteAgentStateChanged` event exclusively.
+    // local `StateChange` must NOT fire this wake; it watches the federated
+    // `RemoteAgentStateChanged` event exclusively
     let (db, bus, reg, sender) = setup().await;
     seed_agent(&db, "child001");
     seed_agent(&db, "parent01");

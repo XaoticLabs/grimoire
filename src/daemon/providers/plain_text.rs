@@ -7,9 +7,8 @@ use crate::daemon::process_manager::SpawnedAgent;
 use crate::daemon::provider::{AgentContext, OutputFormat, Provider, ProviderCapabilities};
 use crate::shared::config::ProviderConfig;
 
-/// Byte cap on AGENTS.md content prepended to a generic provider's prompt.
-/// Native-session CLIs (claude, codex, opencode) read instruction files
-/// themselves; this is the equivalent courtesy for CLIs that don't.
+/// Byte cap on AGENTS.md content prepended to a generic provider's prompt
+/// (native-session CLIs read instruction files themselves; generic ones don't).
 const AGENTS_MD_BUDGET_BYTES: usize = 8 * 1024;
 
 pub struct PlainTextProvider {
@@ -33,9 +32,8 @@ impl PlainTextProvider {
             .collect()
     }
 
-    /// If the agent's cwd has an `AGENTS.md`, prepend it (tail-truncated to
-    /// [`AGENTS_MD_BUDGET_BYTES`]) so generic CLIs see the same project
-    /// instructions that agent-native CLIs read on their own.
+    /// Prepend the cwd's `AGENTS.md` (tail-truncated to
+    /// [`AGENTS_MD_BUDGET_BYTES`]) so generic CLIs see project instructions.
     fn compose_task(cwd: &Path, task: &str) -> String {
         let path = cwd.join("AGENTS.md");
         let Ok(content) = std::fs::read_to_string(&path) else {

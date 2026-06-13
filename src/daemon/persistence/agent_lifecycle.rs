@@ -1,15 +1,10 @@
 //! Persistence helpers for agent-lifecycle federation.
 //!
-//! Three tables back the producer/consumer pipeline (definitions in
-//! `mod.rs::migrate`):
-//! - `agent_lifecycle_federations` — per-peer subscription rows
-//!   (direction string, identical semantics to `workspace_federations`).
-//! - `agent_lifecycle_outbox` — durable per-peer queue. Mirrors
-//!   `workspace_event_outbox` (state machine, monotonic
-//!   `sender_seq`, retry backoff). Each row is one wire delivery.
-//! - `agent_lifecycle_inbox` — receiver-side dedupe by
-//!   `(sender_daemon_id, sender_seq)`. INSERT-OR-IGNORE; first
-//!   sighting returns `true`.
+//! - `agent_lifecycle_federations` — per-peer subscription rows.
+//! - `agent_lifecycle_outbox` — durable per-peer queue (monotonic `sender_seq`,
+//!   retry backoff); one row per wire delivery.
+//! - `agent_lifecycle_inbox` — receiver-side dedupe by `(sender_daemon_id,
+//!   sender_seq)`.
 
 use anyhow::Result;
 use chrono::Utc;
@@ -27,9 +22,8 @@ pub struct AgentLifecycleOutboxRow {
 }
 
 impl super::Database {
-    /// Upsert an `agent_lifecycle_federations` row for one peer. Merge
-    /// existing direction the same way `namespace_federations` does so
-    /// `Outbound + Inbound -> Both`.
+    /// Upsert a peer's lifecycle federation, merging directions
+    /// (`Outbound + Inbound -> Both`).
     pub fn upsert_agent_lifecycle_federation(
         &self,
         id: &str,
@@ -62,8 +56,7 @@ impl super::Database {
         Ok(final_dir)
     }
 
-    /// Delete a peer's lifecycle federation. Returns rows affected
-    /// (0 if no row existed; 1 if removed).
+    /// Delete a peer's lifecycle federation, returning rows affected.
     pub fn delete_agent_lifecycle_federation(&self, peer_id: &str) -> Result<usize> {
         let conn = self.conn_lock();
         Ok(conn.execute(
@@ -72,9 +65,7 @@ impl super::Database {
         )?)
     }
 
-    /// Peer ids whose subscription includes outbound fanout. The
-    /// producer reads this on every `StateChange` to decide who gets a
-    /// row enqueued.
+    /// Peer ids subscribed for outbound fanout, read on every `StateChange`.
     pub fn agent_lifecycle_outbound_peers(&self) -> Result<Vec<String>> {
         let conn = self.conn_lock();
         let mut stmt = conn.prepare(
@@ -85,8 +76,7 @@ impl super::Database {
         Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
     }
 
-    /// True iff `peer_id` is allowed to deliver agent-lifecycle events
-    /// into our local bus.
+    /// Whether `peer_id` may deliver agent-lifecycle events into our local bus.
     pub fn agent_lifecycle_inbound_authorized(&self, peer_id: &str) -> Result<bool> {
         let conn = self.conn_lock();
         let dir: Option<String> = conn
@@ -104,8 +94,7 @@ impl super::Database {
         ))
     }
 
-    /// Enqueue a serialized lifecycle event for one outbound peer.
-    /// Allocates `sender_seq = MAX + 1` atomically per peer.
+    /// Enqueue a serialized lifecycle event, allocating `sender_seq` atomically per peer.
     pub fn agent_lifecycle_enqueue(&self, peer_id: &str, payload: &[u8]) -> Result<u64> {
         let mut conn = self.conn_lock();
         let now = Utc::now().timestamp();
@@ -188,8 +177,8 @@ impl super::Database {
         Ok(())
     }
 
-    /// Boot recovery: revert `in_flight` to `pending` so the drainer
-    /// reships. Receiver-side dedupe makes the resend idempotent.
+    /// Boot recovery: revert `in_flight` to `pending` for reship; receiver
+    /// dedupe makes the resend idempotent.
     pub fn agent_lifecycle_reset_in_flight(&self) -> Result<usize> {
         let conn = self.conn_lock();
         Ok(conn.execute(

@@ -116,10 +116,8 @@ async fn agent_manager_summon_uses_executor() {
     let manager =
         AgentManager::new_with_executor(db.clone(), bus, Config::default(), executor).await;
 
-    // summon is split into enqueue (queue write) + dispatch
-    // (executor call). The scheduler normally drives dispatch; here we mirror
-    // its claim+dispatch sequence by hand to keep the test focused on the
-    // executor wire-up.
+    // summon splits into enqueue + dispatch; mirror the scheduler's claim+dispatch
+    // by hand to keep the focus on executor wire-up.
     let agent = manager
         .enqueue(
             "echo hi",

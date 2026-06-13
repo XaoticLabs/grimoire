@@ -12,12 +12,10 @@ pub struct ClaudeProvider {
     pub binary: String,
 }
 
-/// Scoped tool-allow rules so a spawned/woken agent can call back into Grimoire
-/// (notify the operator, message peers, read/write shared memory) without a
-/// permission prompt it can't answer in headless `--print` mode. Deliberately
-/// narrow: it grants the three coordination verbs and NOT arbitrary shell or
-/// destructive grim verbs (`banish`, `summon`, `daemon`). Comma-separated per
-/// `claude --allowedTools` syntax (`Bash(cmd *)`).
+/// Allowlist letting a headless agent call back into Grimoire without a
+/// permission prompt it can't answer in `--print` mode. Deliberately narrow:
+/// the three coordination verbs only, not arbitrary shell or destructive verbs
+/// (`banish`, `summon`, `daemon`). `claude --allowedTools` syntax.
 const GRIM_CALLBACK_TOOLS: &str = "Bash(grim notify *),Bash(grim mail *),Bash(grim memory *)";
 
 impl ClaudeProvider {
@@ -126,10 +124,9 @@ impl Provider for ClaudeProvider {
         None
     }
 
-    /// Per-bucket breakdown pulled from the trailing `result` event's
-    /// `usage` block (also tolerates the older `usage` shape on
-    /// `message_stop`). The daemon derives totals (`extract_usage` was
-    /// removed) and per-bucket USD via `[providers.claude.pricing]`.
+    /// Per-bucket token breakdown from the trailing `result` event's `usage`
+    /// block (also tolerates the older `message_stop` shape). The daemon derives
+    /// totals and per-bucket USD via `[providers.claude.pricing]`.
     fn extract_token_breakdown(&self, stdout_lines: &[String]) -> Option<TokenBreakdown> {
         for line in stdout_lines.iter().rev() {
             let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else {

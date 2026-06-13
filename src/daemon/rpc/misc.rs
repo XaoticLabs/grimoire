@@ -11,12 +11,9 @@ use crate::daemon::persistence::Database;
 
 use super::{parse_params, rpc_err, try_params};
 
-// --- Notify handler ---
-
-/// Publish an operator-facing notification onto the event bus. The `Notifier`
-/// subscriber forwards it to the configured webhook; it also lands in the
-/// durable event log. Decoupling via the bus keeps the RPC layer free of any
-/// HTTP/notifier dependency.
+/// Publish an operator notification onto the event bus; the `Notifier`
+/// subscriber forwards it to the webhook. Going via the bus keeps the RPC
+/// layer free of any HTTP/notifier dependency.
 pub(super) fn handle_notify(bus: &EventBus, req: RpcRequest) -> RpcResponse {
     let params: NotifyParams = try_params!(req);
     if params.message.trim().is_empty() {
@@ -32,9 +29,8 @@ pub(super) fn handle_notify(bus: &EventBus, req: RpcRequest) -> RpcResponse {
     RpcResponse::success_json(req.id, &NotifyResult { published: true })
 }
 
-/// Persist one rubric-scored evaluation, attributing the verdict from
-/// `evaluator_id` to `target_id`. Idempotency is per-call (each insert
-/// mints a new row id); callers that want dedupe should do so client-side.
+/// Persist one rubric-scored evaluation from `evaluator_id` against
+/// `target_id`. Each call mints a new row; dedupe is the caller's job.
 pub(super) async fn handle_eval_record(db: &Arc<Database>, req: RpcRequest) -> RpcResponse {
     let params: crate::shared::protocol::EvalRecordParams = try_params!(req);
     let target_id = params.target_id.clone();
@@ -90,8 +86,7 @@ pub(super) async fn handle_eval_list(db: &Arc<Database>, req: RpcRequest) -> Rpc
     RpcResponse::success_json(req.id, &crate::shared::protocol::EvalListResult { results })
 }
 
-/// Latest score per evaluated target across the whole circle. Lets the CLI
-/// (`grim circle --eval-score-lt`) filter and decorate without an N+1 fanout.
+/// Latest score per evaluated target across the circle, in one query (no N+1).
 pub(super) async fn handle_eval_scores(db: &Arc<Database>, req: RpcRequest) -> RpcResponse {
     let rows = match db.run(Database::latest_eval_scores_all).await {
         Ok(r) => r,
@@ -107,9 +102,8 @@ pub(super) async fn handle_eval_scores(db: &Arc<Database>, req: RpcRequest) -> R
     )
 }
 
-/// Snapshot every configured budget with its USD cap and today's running
-/// spend. Read-only; runs against the same `budget_spend` rows the
-/// dispatch-time gate consults.
+/// Snapshot every budget with its USD cap and today's spend, from the same
+/// `budget_spend` rows the dispatch-time gate consults.
 pub(super) async fn handle_budget_list(
     manager: &Arc<AgentManager>,
     db: &Arc<Database>,

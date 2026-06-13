@@ -13,8 +13,7 @@ pub fn format_restart_with_cap(used: u32, max: Option<u32>) -> String {
     }
 }
 
-/// Render the `grim circle` table as plain text. Includes a `WORKER` column.
-/// Worker ids are truncated to the first 6 chars; `local` for None.
+/// Render the `grim circle` table as plain text with a `WORKER` column.
 pub fn circle_text(agents: &[AgentSummary]) -> String {
     let mut out = String::new();
     out.push_str("ID        STATE     WORKER   TASK\n");
@@ -56,7 +55,6 @@ pub fn format_circle(agents: &[AgentSummary]) {
 }
 
 /// Render the circle with an extra `SCORE` column (latest eval verdict).
-/// Used by `grim circle --eval-score-lt`. Missing scores show as `-`.
 pub fn format_circle_with_scores<S: std::hash::BuildHasher>(
     agents: &[AgentSummary],
     scores: &std::collections::HashMap<String, f64, S>,

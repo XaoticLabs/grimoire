@@ -72,9 +72,8 @@ impl Notifier {
         });
     }
 
-    /// Fan a matched payload out to every configured sink. Each sink is
-    /// fire-and-forget; one sink failing must not prevent the others or
-    /// affect agent execution.
+    /// Fan a payload out to every configured sink, fire-and-forget: one sink
+    /// failing must not affect the others or agent execution.
     async fn dispatch(&self, payload: &Payload) {
         let body = payload_body(payload);
         if self.config.webhook_url.is_some() {
@@ -88,8 +87,7 @@ impl Notifier {
         }
     }
 
-    /// Fire-and-forget POST. Failures are logged but never propagated; a flaky
-    /// webhook must not affect agent execution.
+    /// Fire-and-forget POST; failures are logged, never propagated.
     async fn post(&self, payload: &Payload, body: &serde_json::Value) {
         let Some(url) = self.config.webhook_url.as_deref() else {
             return;

@@ -39,15 +39,12 @@ async fn failed_event_writes_history_row_and_flips_to_restarting() {
         .await
         .unwrap();
 
-    // History row written
     let count = db.count_restarts_in_window("act00001", 0).unwrap();
     assert_eq!(count, 1);
 
-    // State flipped
     let agent = db.get_agent("act00001").unwrap().unwrap();
     assert_eq!(agent.state, AgentState::Restarting);
 
-    // Drain bus events
     let mut saw_state_change = false;
     let mut saw_scheduled = false;
     while let Ok(ev) = rx.try_recv() {
@@ -83,7 +80,6 @@ async fn policy_never_is_silent() {
     assert_eq!(count, 0);
     let agent = db.get_agent("act00002").unwrap().unwrap();
     assert_eq!(agent.state, AgentState::Failed);
-    // No supervision events fired.
     while let Ok(ev) = rx.try_recv() {
         if matches!(
             ev,
@@ -204,12 +200,11 @@ async fn cancel_pending_removes_entries() {
     let now = Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap();
     let clock = Arc::new(TestClock::new(now));
     let sup = build(db.clone(), bus.clone(), clock);
-    // Manually push two entries for A and one for B.
+    // two pending entries for A, one for B
     sup.schedule_restart("act00005", 1, now + chrono::Duration::seconds(2), false)
         .await
         .unwrap();
-    // Re-set state so we can schedule another for A directly (skip the
-    // pending guard via direct call).
+    // re-set state so a second schedule for A bypasses the pending guard
     db.update_agent_state("act00005", &AgentState::Failed, None)
         .unwrap();
     sup.schedule_restart("act00005", 2, now + chrono::Duration::seconds(4), false)

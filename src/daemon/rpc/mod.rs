@@ -42,9 +42,7 @@ fn rpc_fail(req_id: u64, action: &str, err: impl std::fmt::Display) -> RpcRespon
     RpcResponse::error(req_id, -32000, format!("Failed to {action}: {err}"))
 }
 
-/// `Ok` → success_json with the value serialized; `Err` → `Failed to {action}: {err}`.
-/// Use `.map(|v| WrapperResult { ... })` upstream when the success type needs
-/// to be a wire wrapper.
+/// `Ok` → success_json; `Err` → `Failed to {action}: {err}`.
 fn try_op<T: serde::Serialize, E: std::fmt::Display>(
     req_id: u64,
     action: &str,
@@ -56,11 +54,9 @@ fn try_op<T: serde::Serialize, E: std::fmt::Display>(
     }
 }
 
-/// Resolve a peer name to a `Peer`, mapping the standard tri-state outcome
-/// (`Ok(Some)` / `Ok(None)` / `Err`) into an `RpcResponse` error suitable for
-/// early return via `let peer = resolve_peer(req_id, &reg, name).await?;`.
-/// Async so the underlying `Database::get_peer_by_name` runs on the blocking
-/// pool instead of stalling the Tokio worker.
+/// Resolve a peer name to a `Peer`, mapping not-found/error into an
+/// `RpcResponse` for early return. Async so the DB lookup runs on the blocking
+/// pool, not a Tokio worker.
 async fn resolve_peer(
     req_id: u64,
     peer_registry: &PeerRegistry,
@@ -92,20 +88,14 @@ async fn resolve_workspace(
     }
 }
 
-/// RPC errors use code -32000 plus a string in the message; the mail layer
-/// uses the symbolic codes documented in the spec (`body_too_large`,
-/// `unknown_recipient`, …) as the message text so callers can match on it.
+/// Error code -32000 with a symbolic string (`body_too_large`,
+/// `unknown_recipient`, …) as the message, so callers can match on it.
 fn rpc_err(req_id: u64, code: &str) -> RpcResponse {
     RpcResponse::error(req_id, -32000, code.to_string())
 }
 
-/// Parse `req.params` into the inferred type, returning early with the
-/// invalid-params `RpcResponse` on failure. Use in handlers that return
-/// `RpcResponse`:
-///
-/// ```ignore
-/// let params: BanishParams = try_params!(req);
-/// ```
+/// Parse `req.params` into the inferred type, early-returning the
+/// invalid-params `RpcResponse` on failure.
 macro_rules! try_params {
     ($req:expr) => {
         match parse_params(&$req) {
@@ -116,9 +106,7 @@ macro_rules! try_params {
 }
 pub(crate) use try_params;
 
-/// Unwrap a `Result<T, RpcResponse>`, returning early with the error
-/// response on `Err`. Pairs with helpers like `resolve_peer` /
-/// `resolve_workspace` that already produce an `RpcResponse` on failure.
+/// Unwrap a `Result<T, RpcResponse>`, early-returning the error on `Err`.
 macro_rules! try_rpc {
     ($expr:expr) => {
         match $expr {
@@ -129,9 +117,8 @@ macro_rules! try_rpc {
 }
 pub(crate) use try_rpc;
 
-/// Test-only wrapper that fabricates a `PeerRegistry` and a synthetic
-/// `daemon_id`. Production code goes through `handle_rpc` with the real
-/// per-daemon registry from `AppState`.
+/// Test-only wrapper with a fabricated `PeerRegistry` and synthetic
+/// `daemon_id`; production goes through `handle_rpc`.
 pub async fn handle_rpc_test(
     manager: &Arc<AgentManager>,
     db: &Arc<Database>,
@@ -177,8 +164,7 @@ pub async fn handle_rpc(
     daemon_id: &str,
     req: RpcRequest,
 ) -> RpcResponse {
-    // Validate RPC protocol_version. Existing callers omit the field and
-    // default to v1.
+    // Omitted protocol_version defaults to current (back-compat).
     let pv = req.protocol_version.unwrap_or(RPC_PROTOCOL_VERSION);
     if pv != RPC_PROTOCOL_VERSION {
         return rpc_err(req.id, "unsupported_protocol_version");

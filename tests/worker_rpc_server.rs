@@ -84,9 +84,7 @@ async fn register_with_wrong_protocol_version_returns_failed_precondition() {
 
     let (tx, rx) = tokio::sync::mpsc::channel::<WorkerMessage>(8);
     let outbound = tokio_stream::wrappers::ReceiverStream::new(rx);
-    // Send protocol_version=0 (what an old worker would default to with
-    // proto3). The daemon's check sits in front of bearer/version, so the
-    // expected error is FailedPrecondition with `unsupported_protocol_version`.
+    // protocol_version=0 is the proto3 default an old worker sends
     tx.send(WorkerMessage {
         kind: Some(worker_message::Kind::Register(Register {
             worker_id: "w-pv".into(),
@@ -114,10 +112,8 @@ async fn register_with_wrong_protocol_version_returns_failed_precondition() {
 
 #[tokio::test]
 async fn register_protocol_version_check_runs_before_bearer() {
-    // With both wrong version and wrong bearer, the version error wins
-    // because it sits earlier in the gate chain. That ordering matters:
-    // a worker built against an older proto shouldn't see a misleading
-    // "invalid bearer token" message.
+    // With both wrong version and wrong bearer, the version error must win so
+    // an old-proto worker isn't misled by an "invalid bearer token" message.
     let registry = Arc::new(WorkerRegistry::new(Duration::from_secs(30)));
     let handle = spawn_test_server(registry.clone(), "right-secret").await;
     let mut client = connect(&handle).await;
@@ -167,7 +163,6 @@ async fn worker_disconnect_evicts_immediately() {
     .unwrap();
 
     let _stream = client.channel(outbound).await.unwrap();
-    // Wait for the registry to reflect the registration.
     let started = std::time::Instant::now();
     while registry.count() == 0 {
         assert!(
@@ -178,7 +173,7 @@ async fn worker_disconnect_evicts_immediately() {
     }
     assert_eq!(registry.count(), 1);
 
-    // Drop the outbound sender to close the worker side of the bidi stream.
+    // drop the sender to close the worker side of the bidi stream
     drop(tx);
 
     let started = std::time::Instant::now();

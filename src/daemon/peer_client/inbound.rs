@@ -36,8 +36,8 @@ pub(super) async fn handle_inbound(
     in_flight_lifecycle: &mut Option<InFlight>,
     in_flight_dispatch: &mut Option<InFlight>,
 ) -> anyhow::Result<()> {
-    // Each arm is enumerated explicitly so dispatch for a new variant is a
-    // compile error rather than silently routed to a wildcard.
+    // Arms enumerated explicitly so a new variant is a compile error, not a
+    // silent wildcard route.
     #[allow(clippy::match_same_arms)]
     match msg.msg {
         Some(peer_inbound::Msg::HelloAck(_)) => Ok(()),
@@ -53,7 +53,6 @@ pub(super) async fn handle_inbound(
         }
         Some(peer_inbound::Msg::HeartbeatAck(_)) => Ok(()),
         Some(peer_inbound::Msg::MailDeliver(d)) => {
-            // Server pushed mail at us; route through inbox handler.
             let ack = registry.inbox.handle_mail_deliver(peer, &d).await?;
             let _ = out_tx
                 .send(PeerOutbound {
@@ -63,8 +62,8 @@ pub(super) async fn handle_inbound(
             Ok(())
         }
         Some(peer_inbound::Msg::MailAck(ack)) => {
-            // Ack-key match before clearing the slot: a delayed ack for an
-            // already-resolved row must not resolve the wrong follow-up.
+            // Match ack-key before clearing: a delayed ack must not resolve the
+            // wrong follow-up row.
             if matches!(in_flight_mail.as_ref(), Some(f) if f.ack_key == ack.mail_id) {
                 let slot = in_flight_mail.take().expect("just matched");
                 handle_ack_outcome(mail_backend, &slot, ack.ok);
@@ -76,7 +75,6 @@ pub(super) async fn handle_inbound(
             Ok(())
         }
         Some(peer_inbound::Msg::MemoryDeliver(d)) => {
-            // Server pushed a namespace write at us; apply via LWW and ack.
             let ack = apply_memory_deliver(&registry.db, &peer.id, &d);
             let _ = out_tx
                 .send(PeerOutbound {
@@ -94,8 +92,7 @@ pub(super) async fn handle_inbound(
                         "namespace replication rejected");
                 }
             }
-            // Ack for an unknown op; drop it. The sender will retry the
-            // tracked row when the real ack arrives.
+            // Unknown op: drop; the tracked row's real ack will arrive later.
             Ok(())
         }
         Some(peer_inbound::Msg::WorkspaceEventDeliver(d)) => {
@@ -178,9 +175,8 @@ pub(super) async fn handle_inbound(
     }
 }
 
-/// Mail-side observability: forwarding success / rejection events.
-/// Memory has no equivalent (the LWW path is silent by design), so this
-/// stays in the mail-only branch rather than on the trait.
+/// Mail forwarding success/rejection events. Mail-only (the memory LWW path is
+/// silent by design), so it's not on the trait.
 fn emit_mail_ack_event(registry: &Arc<PeerRegistry>, peer: &Peer, ack: &MailAck) {
     if ack.ok {
         registry.bus.publish(StreamEvent::PeerMailForwarded {

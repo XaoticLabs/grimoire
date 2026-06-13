@@ -120,9 +120,8 @@ async fn has_eligible_worker_version_mismatch_returns_false() {
 #[tokio::test]
 async fn has_eligible_worker_ignores_capacity() {
     let reg = WorkerRegistry::new(Duration::from_secs(30));
-    // Register and saturate the worker (in_flight == max_concurrent).
     register(&reg, "A", 8, &[("claude", "1.0.0")]);
-    // pick_least_loaded would skip this worker; has_eligible_worker must not.
+    // saturated worker: pick_least_loaded skips it, has_eligible_worker must not
     assert!(
         reg.pick_least_loaded("claude", &VersionReq::parse("*").unwrap())
             .is_none()
@@ -142,7 +141,7 @@ async fn has_eligible_worker_is_non_mutating() {
 
 #[tokio::test]
 async fn eviction_removes_stale_worker() {
-    // Test relies on a fake clock injected into the registry.
+    // fake clock injected so we can age the worker past the timeout
     let reg = Arc::new(WorkerRegistry::new_with_clock_for_test(
         Duration::from_secs(30),
     ));

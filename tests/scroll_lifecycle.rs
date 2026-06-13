@@ -1,8 +1,5 @@
-//! Integration tests for the scroll lifecycle.
-//!
-//! Tests the end-to-end flow: parse a markdown scroll spec, inscribe it
-//! into the database via ScrollKeeper, and verify the resulting DAG
-//! structure, state assignments, and conflict detection.
+//! Scroll lifecycle: parse a markdown spec, inscribe via ScrollKeeper, and
+//! verify the resulting DAG structure, states, and conflict detection.
 
 use std::sync::Arc;
 
@@ -13,9 +10,8 @@ use grimoire::daemon::scroll_parser;
 use grimoire::shared::config::Config;
 use grimoire::shared::types::*;
 
-/// Create a ScrollKeeper backed by an in-memory DB.
-/// The AgentManager is required but we won't activate any scrolls in these
-/// tests (that would require a real provider), so we create one with defaults.
+/// ScrollKeeper on an in-memory DB. Tests never activate a scroll (that needs
+/// a real provider), so a default AgentManager suffices.
 async fn setup() -> (Arc<Database>, ScrollKeeper) {
     let db = Arc::new(Database::open_in_memory().unwrap());
     let event_bus = EventBus::new(db.clone());
@@ -25,10 +21,6 @@ async fn setup() -> (Arc<Database>, ScrollKeeper) {
     let keeper = ScrollKeeper::new(db.clone(), manager);
     (db, keeper)
 }
-
-// ---------------------------------------------------------------------------
-// Parse → inscribe → verify DB state
-// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn inscribe_basic_scroll() {
@@ -66,33 +58,27 @@ Build the frontend.
     assert_eq!(result.scroll.state, ScrollState::Inscribed);
     assert_eq!(result.scroll.max_concurrency, 2);
     assert_eq!(result.task_count, 3);
-    assert!(result.conflicts.is_empty()); // no overlapping files
+    assert!(result.conflicts.is_empty());
 
-    // Verify tasks in DB
     let tasks = db.get_tasks_for_scroll(&result.scroll.id).unwrap();
     assert_eq!(tasks.len(), 3);
 
-    // First task has no deps → Ready
+    // no deps → Ready
     let db_setup = tasks.iter().find(|r| r.name == "Database Setup").unwrap();
     assert_eq!(db_setup.state, TaskState::Ready);
     assert_eq!(db_setup.file_patterns, vec!["migrations/", "src/db.rs"]);
 
-    // Second task depends on first → Blocked
+    // depends on first → Blocked
     let api = tasks.iter().find(|r| r.name == "API Layer").unwrap();
     assert_eq!(api.state, TaskState::Blocked);
     let api_deps = db.get_task_dependencies(&api.id).unwrap();
     assert_eq!(api_deps.len(), 1);
     assert_eq!(api_deps[0], db_setup.id);
 
-    // Third task has provider override
     let frontend = tasks.iter().find(|r| r.name == "Frontend").unwrap();
     assert_eq!(frontend.provider.as_deref(), Some("aider"));
     assert_eq!(frontend.state, TaskState::Blocked);
 }
-
-// ---------------------------------------------------------------------------
-// Conflict detection: overlapping file patterns
-// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn inscribe_detects_file_conflicts() {
@@ -120,10 +106,6 @@ Work on B.
         vec!["src/shared.rs"]
     );
 }
-
-// ---------------------------------------------------------------------------
-// Multiple independent tasks start as Ready
-// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn independent_tasks_all_ready() {
@@ -159,10 +141,7 @@ Do gamma.
     }
 }
 
-// ---------------------------------------------------------------------------
-// Diamond dependency: A → B, A → C, B+C → D
-// ---------------------------------------------------------------------------
-
+// Diamond: A → B, A → C, B+C → D
 #[tokio::test]
 async fn diamond_dependency_graph() {
     let (db, keeper) = setup().await;
@@ -205,17 +184,15 @@ D after both B and C.
     assert_eq!(c.state, TaskState::Blocked);
     assert_eq!(d.state, TaskState::Blocked);
 
-    // D depends on both B and C
     let d_deps = db.get_task_dependencies(&d.id).unwrap();
     assert_eq!(d_deps.len(), 2);
     assert!(d_deps.contains(&b.id));
     assert!(d_deps.contains(&c.id));
 
-    // A has two dependents: B and C
     let a_dependents = db.get_task_dependents(&a.id).unwrap();
     assert_eq!(a_dependents.len(), 2);
 
-    // Simulate A completes → B and C should become ready
+    // A completes → B and C become ready
     db.update_task_state(&a.id, &TaskState::Complete).unwrap();
     let ready = db.find_ready_tasks(&result.scroll.id).unwrap();
     assert_eq!(ready.len(), 2);
@@ -223,20 +200,15 @@ D after both B and C.
     assert!(ready_names.contains(&"B"));
     assert!(ready_names.contains(&"C"));
 
-    // D still blocked (B and C not complete)
-    assert!(!ready_names.contains(&"D"));
+    assert!(!ready_names.contains(&"D")); // B and C not yet complete
 
-    // Complete B and C → D becomes ready
+    // complete B and C → D becomes ready
     db.update_task_state(&b.id, &TaskState::Complete).unwrap();
     db.update_task_state(&c.id, &TaskState::Complete).unwrap();
     let ready = db.find_ready_tasks(&result.scroll.id).unwrap();
     assert_eq!(ready.len(), 1);
     assert_eq!(ready[0].name, "D");
 }
-
-// ---------------------------------------------------------------------------
-// Scroll status reporting
-// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn scroll_status_counts() {
@@ -271,14 +243,12 @@ Do C.
     assert_eq!(status.active, 0);
     assert_eq!(status.failed, 0);
 
-    // Complete A
     let tasks = db.get_tasks_for_scroll(scroll_id).unwrap();
     let a = tasks.iter().find(|r| r.name == "A").unwrap();
     db.update_task_state(&a.id, &TaskState::Complete).unwrap();
 
     let status = keeper.status(scroll_id).unwrap();
     assert_eq!(status.complete, 1);
-    // B and C are still blocked in state but their deps are met
-    // (find_ready_tasks would find them, but their TaskState is still Blocked)
+    // B/C deps are now met but their stored TaskState is still Blocked
     assert_eq!(status.blocked, 2);
 }

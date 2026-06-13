@@ -1,15 +1,9 @@
 //! Contract tests for the budget + policy admission gates.
 //!
-//! Two enforcement paths live in different layers and need separate
-//! exercise:
-//!
-//!   * **Budget gate**: runs inside `AgentManager::dispatch_internal`,
-//!     after the scheduler has already promoted a `Queued` row. Tested by
-//!     pre-seeding `budget_spend` and asserting `dispatch_internal` either
-//!     refuses (hard) or proceeds (soft).
-//!   * **Policy gate**: runs inside `handle_summon` before the row is
-//!     even enqueued. Tested over the RPC surface, which is the only
-//!     code path that consults `[policy]`.
+//! The budget gate runs in `dispatch_internal` (after the scheduler promotes a
+//! `Queued` row); tested by pre-seeding `budget_spend`. The policy gate runs in
+//! `handle_summon` before enqueue; tested over the RPC surface, the only path
+//! that consults `[policy]`.
 
 use std::path::Path;
 use std::sync::{Arc, Mutex};
@@ -337,9 +331,8 @@ async fn policy_denies_cwd_outside_allow_prefix() {
 }
 
 // --- Tree budgets ----------------------------------------------------------
-// A USD ceiling on a whole supervision tree, set on the root at summon time.
-// Enforced in `dispatch_internal` (queue path) and `invoke` (every wake
-// path); the operator notification fires exactly once per exhaustion.
+// USD ceiling on a whole supervision tree, set on the root at summon time;
+// enforced in `dispatch_internal` and `invoke`, notifying once per exhaustion.
 
 #[tokio::test]
 async fn tree_helpers_walk_up_and_sum_down() {

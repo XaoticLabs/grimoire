@@ -1,7 +1,5 @@
-//! End-to-end integration tests for shared-memory-workspaces v1.
-//!
-//! Exercises the WorkspaceRegistry + Memory KV + WorkspaceWatcher composition
-//! against an in-memory DB. Uses a fake `GitRunner` so tests don't shell out.
+//! End-to-end tests for shared memory workspaces: WorkspaceRegistry + Memory
+//! KV + WorkspaceWatcher over an in-memory DB, with a fake `GitRunner`.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -71,7 +69,7 @@ async fn create_then_list_then_destroy_roundtrip() {
     reg.destroy("my-ws").await.unwrap();
     let (entries, _) = reg.list().unwrap();
     assert!(entries.is_empty());
-    // Memory rows for that workspace must be gone (cascade).
+    // memory rows for the workspace are gone (cascade)
     let cur = db.memory_get("my-ws", "anything").unwrap();
     assert!(cur.is_none());
 }
@@ -167,7 +165,6 @@ async fn destroy_with_running_agent_refused() {
     let repo = fake_git_repo(&td);
     reg.create("ws", &repo, "wip").await.unwrap();
 
-    // Insert a running agent and assign it.
     let agent = Agent {
         id: "agentaaa".into(),
         name: None,
@@ -192,7 +189,6 @@ async fn destroy_with_running_agent_refused() {
     let err = reg.destroy("ws").await.unwrap_err();
     assert!(err.to_string().contains("workspace_in_use"));
 
-    // Workspace still Active.
     let ws = db.get_workspace("ws").unwrap().unwrap();
     assert_eq!(ws.state, WorkspaceState::Active);
 }
@@ -227,24 +223,21 @@ async fn assign_idempotent_for_same_pair() {
     db.insert_agent(&agent).unwrap();
 
     reg.assign("ws", "agentbbb").await.unwrap();
-    // Second call must not error.
-    reg.assign("ws", "agentbbb").await.unwrap();
+    reg.assign("ws", "agentbbb").await.unwrap(); // second call must not error
 }
 
 #[tokio::test]
 async fn boot_reconcile_orphan_dir_emits_event_and_preserves() {
     let (db, bus, reg, td) = build_registry().await;
-    // Pre-create an orphan dir under workspaces root with no DB row.
+    // orphan dir under the workspaces root with no DB row
     let root = td.path().join("workspaces");
     std::fs::create_dir_all(root.join("orphan-1")).unwrap();
     let _ = (&db, &bus);
 
-    // Subscribe to events.
     let mut rx = bus.subscribe();
 
     reg.reconcile_on_boot().await.unwrap();
 
-    // Drain a few events and look for the orphan event.
     let mut found = false;
     for _ in 0..16 {
         match rx.try_recv() {
@@ -269,7 +262,7 @@ async fn boot_reconcile_orphan_row_deletes_and_cascades() {
     let (db, bus, reg, td) = build_registry().await;
     let _ = (&bus, &td);
 
-    // Insert a row whose path doesn't exist on disk.
+    // row whose path doesn't exist on disk
     let ws = Workspace {
         id: "ghost".into(),
         path: PathBuf::from("/nonexistent/ghost"),
@@ -282,12 +275,9 @@ async fn boot_reconcile_orphan_row_deletes_and_cascades() {
         home_workspace_id: None,
     };
     db.insert_workspace(&ws).unwrap();
-
-    // Sanity: row exists.
     assert!(db.get_workspace("ghost").unwrap().is_some());
 
     reg.reconcile_on_boot().await.unwrap();
 
-    // Row is gone.
     assert!(db.get_workspace("ghost").unwrap().is_none());
 }

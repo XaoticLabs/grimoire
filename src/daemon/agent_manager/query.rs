@@ -13,10 +13,8 @@ use super::super::event_bus::EventBus;
 use super::{AgentManager, ManagedAgent};
 
 impl AgentManager {
-    /// The completed agent's result text, extracted the way its own provider
-    /// understands its output (Claude parses its `result` JSON; pi reads the
-    /// final assistant message; generic CLIs take the tail). Used for pact
-    /// `{output}` injection. Returns `None` if there's nothing usable.
+    /// The agent's result text, extracted per its provider's `extract_result`
+    /// (for pact `{output}` injection). `None` if nothing usable.
     pub fn agent_result(&self, agent_id: &str) -> Option<String> {
         let provider_name = self
             .db
@@ -73,15 +71,13 @@ impl AgentManager {
         self.event_bus.subscribe()
     }
 
-    /// Clone of the EventBus shared by this manager. Used by RPC handlers
-    /// that emit events without going through the manager (e.g. mail.send).
+    /// Clone of the shared EventBus, for handlers that emit events directly.
     pub fn event_bus(&self) -> EventBus {
         self.event_bus.clone()
     }
 
-    /// Test helper: insert an agent with a known session_id so `invoke` can be
-    /// driven without a prior real `summon`. Agents are seeded as `Dormant`
-    /// so the invoke path matches production semantics.
+    /// Test helper: seed a `Dormant` agent with a known session_id so `invoke`
+    /// can be driven without a real `summon`.
     pub async fn seed_agent_for_test_with_session(
         self: &Arc<Self>,
         session_id: &str,
@@ -90,9 +86,8 @@ impl AgentManager {
             .await
     }
 
-    /// Like [`Self::seed_agent_for_test_with_session`] but pins the provider
-    /// (defaults to the registry default), so tests can exercise both `Native`
-    /// and `ContextReplay` resume strategies.
+    /// Like [`Self::seed_agent_for_test_with_session`] but pins the provider,
+    /// so tests can exercise both resume strategies.
     pub async fn seed_agent_for_test_with_session_provider(
         self: &Arc<Self>,
         session_id: &str,

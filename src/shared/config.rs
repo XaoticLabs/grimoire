@@ -21,67 +21,55 @@ pub struct Config {
     pub worker: Option<WorkerConfig>,
     #[serde(default)]
     pub notifications: NotificationsConfig,
-    /// Inbound webhooks that publish into the mail bus. Keyed by the URL
-    /// segment used in `POST /webhooks/<name>`. Empty (the default) keeps
-    /// the webhook surface closed.
+    /// Inbound webhooks → mail bus, keyed by the `POST /webhooks/<name>`
+    /// segment. Empty (default) keeps the webhook surface closed.
     #[serde(default)]
     pub webhooks: HashMap<String, WebhookConfig>,
-    /// Per-budget daily USD caps gated at agent dispatch. Keyed by budget
-    /// name (e.g. `team-frontend`). Empty (default) leaves spend unbounded.
+    /// Per-budget daily USD caps gated at agent dispatch, keyed by budget
+    /// name. Empty (default) leaves spend unbounded.
     #[serde(default)]
     pub budgets: HashMap<String, BudgetConfig>,
     /// Allow/deny rules enforced at `agent.summon`. None (default) permits
-    /// every provider and every cwd; a missing field inside the struct
-    /// likewise means "no restriction on this dimension."
+    /// every provider and cwd; a missing field means no restriction on that axis.
     #[serde(default)]
     pub policy: Option<PolicyConfig>,
 }
 
-/// One inbound webhook → mail bridge. Each entry exposes one endpoint at
-/// `/webhooks/<name>` whose raw request body is delivered to `topic` (or to
-/// `recipient` for direct mail). If `secret` is set, callers must present it
-/// in the `X-Grimoire-Webhook-Token` header (the only auth on the otherwise-
-/// public webhook surface). We deliberately *don't* implement provider-specific
-/// HMAC schemes (GitHub's `X-Hub-Signature-256`, Slack's signing-secret); the
-/// expected deploy is "reverse proxy → daemon," where the proxy unwraps any
-/// such header and applies a daemon-side token instead.
+/// One inbound webhook → mail bridge at `/webhooks/<name>`: the raw request
+/// body is delivered to `topic` (or `recipient`). We deliberately *don't*
+/// implement provider-specific HMAC schemes (GitHub `X-Hub-Signature-256`,
+/// Slack signing-secret); the expected deploy is reverse-proxy → daemon, where
+/// the proxy unwraps any such header and applies the daemon-side `secret`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WebhookConfig {
-    /// Destination topic (without the `topic://` prefix). Mutually exclusive
-    /// with `recipient`.
+    /// Destination topic (no `topic://` prefix). Exclusive with `recipient`.
     #[serde(default)]
     pub topic: Option<String>,
-    /// Direct agent recipient ID (without the `agent://` prefix). Mutually
-    /// exclusive with `topic`.
+    /// Direct agent recipient ID (no `agent://` prefix). Exclusive with `topic`.
     #[serde(default)]
     pub recipient: Option<String>,
     /// If present, the request must carry it in `X-Grimoire-Webhook-Token`.
-    /// Unset = the endpoint is open to anyone who can reach the HTTP port.
-    /// The daemon binds 127.0.0.1 by default, but operators exposing it to
-    /// the network should always set this.
+    /// Unset = open to anyone who can reach the HTTP port; operators exposing
+    /// the (default 127.0.0.1) port to the network should always set this.
     #[serde(default)]
     pub secret: Option<String>,
 }
 
-/// Outbound notifications. The daemon fans matched events out to any sink that
-/// is configured: an HTTPS POST (`webhook_url`), an append-only local log
-/// (`log_file`), and/or a desktop toast via `notify-send` (`desktop`). The
-/// notifier task is only spawned when at least one sink is configured.
+/// Outbound notifications. Matched events fan out to each configured sink:
+/// HTTPS POST (`webhook_url`), append-only log (`log_file`), desktop toast
+/// (`desktop`). The notifier task spawns only when at least one sink is set.
 // Each bool is an independent TOML toggle mapping 1:1 to a config key; the
-// clippy-suggested state-machine/enum refactor would obscure that mapping.
+// clippy-suggested enum refactor would obscure that mapping.
 #[allow(clippy::struct_excessive_bools)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NotificationsConfig {
-    /// Webhook endpoint. `None` (default) leaves the webhook sink disabled.
     #[serde(default)]
     pub webhook_url: Option<String>,
-    /// Append a JSON line per matched event to this path. Useful for offline
-    /// demos and local audit. The file is created on first write; the parent
-    /// directory must already exist.
+    /// Append a JSON line per matched event. Created on first write; the
+    /// parent directory must already exist.
     #[serde(default)]
     pub log_file: Option<PathBuf>,
-    /// Fire a desktop toast via `notify-send` per matched event. Linux-only
-    /// (silently no-ops if `notify-send` isn't on PATH).
+    /// Desktop toast via `notify-send`. Linux-only (no-ops if not on PATH).
     #[serde(default)]
     pub desktop: bool,
     /// Notify when an agent reaches `Complete`.
@@ -102,8 +90,7 @@ pub struct NotificationsConfig {
 }
 
 impl NotificationsConfig {
-    /// True when at least one delivery sink is configured. The notifier task
-    /// only spawns when this is true.
+    /// True when at least one delivery sink is configured.
     pub const fn has_sink(&self) -> bool {
         self.webhook_url.is_some() || self.log_file.is_some() || self.desktop
     }
@@ -142,16 +129,15 @@ pub struct WorkerConfig {
     pub heartbeat_timeout_secs: u64,
     #[serde(default = "default_heartbeat_interval_hint")]
     pub heartbeat_interval_hint_secs: u64,
-    /// The daemon's worker-listener transport identity (server cert/key).
-    /// Unset → auto-generated + pinned under `<grimoire_dir>/tls/worker.{crt,key}`.
+    /// Worker-listener transport identity (server cert/key). Unset →
+    /// auto-generated + pinned under `<grimoire_dir>/tls/worker.{crt,key}`.
     #[serde(default)]
     pub tls_cert_path: Option<PathBuf>,
     #[serde(default)]
     pub tls_key_path: Option<PathBuf>,
-    /// Paths to the PEM certs of workers allowed to connect (mTLS client-cert
-    /// pinning). Each worker exposes its cert at `<grimoire_dir>/tls/worker.crt`.
-    /// Empty → the listener binds but trusts no client cert, so no worker can
-    /// register (the bearer secret alone is not accepted without a pinned cert).
+    /// PEM certs of workers allowed to connect (mTLS client-cert pinning).
+    /// Empty → listener binds but trusts no client cert, so no worker can
+    /// register: the bearer secret alone is not accepted without a pinned cert.
     #[serde(default)]
     pub trusted_worker_certs: Vec<PathBuf>,
 }
@@ -176,42 +162,32 @@ pub struct ProviderConfig {
     pub args_template: Vec<String>,
     #[serde(default)]
     pub env: HashMap<String, String>,
-    /// Per-provider confinement. `None` (default) leaves agents un-sandboxed
-    /// for backwards compatibility; setting any field opts the provider in.
-    /// Enforcement layers (cgroup limits, filesystem jail) are applied at
-    /// spawn time when the corresponding host tools are present, and warn
-    /// rather than fail if they are not.
+    /// Per-provider confinement. `None` (default) = un-sandboxed; setting any
+    /// field opts in. Enforcement layers apply at spawn when host tools are
+    /// present, and warn rather than fail when they are not.
     #[serde(default)]
     pub sandbox: Option<SandboxConfig>,
-    /// Token → USD pricing used to attribute spend to `[budgets.*]`. When
-    /// unset, runs through this provider record token usage but do not
-    /// charge a budget (useful for free local models).
+    /// Token → USD pricing used to attribute spend to `[budgets.*]`. Unset →
+    /// runs record token usage but charge no budget (e.g. free local models).
     #[serde(default)]
     pub pricing: Option<ProviderPricing>,
 }
 
-/// Price list for one provider, in USD per million tokens. Mirrors the
-/// numbers vendors publish on their pricing pages so operators can paste
-/// them in. Cache-hit and cache-creation prices fall back to `input` when
-/// omitted (most callers don't care to distinguish at config time).
+/// Price list for one provider, USD per million tokens, mirroring vendor
+/// pricing pages so operators can paste them in.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ProviderPricing {
-    /// USD per 1 000 000 input tokens.
     pub input_per_mtok: f64,
-    /// USD per 1 000 000 output tokens.
     pub output_per_mtok: f64,
-    /// USD per 1 000 000 cache-read tokens. Defaults to `input_per_mtok / 10`
-    /// (the typical 90% cache-read discount) when unset.
+    /// Defaults to `input_per_mtok / 10` (typical 90% cache-read discount).
     #[serde(default)]
     pub cache_read_per_mtok: Option<f64>,
-    /// USD per 1 000 000 cache-creation tokens. Defaults to
-    /// `input_per_mtok * 1.25` (the typical creation premium) when unset.
+    /// Defaults to `input_per_mtok * 1.25` (typical creation premium).
     #[serde(default)]
     pub cache_creation_per_mtok: Option<f64>,
 }
 
 impl ProviderPricing {
-    /// Resolve cache prices, applying the documented defaults.
     pub fn cache_read(&self) -> f64 {
         self.cache_read_per_mtok
             .unwrap_or(self.input_per_mtok / 10.0)
@@ -222,82 +198,61 @@ impl ProviderPricing {
     }
 }
 
-/// One daily-windowed USD spend cap shared across an arbitrary set of
-/// providers. Each completed agent attributes its run cost to *every*
-/// budget whose `providers` list includes the run's provider; at dispatch
-/// time, any matching budget whose today's spend has reached `daily_usd`
-/// refuses new work (`hard`) or just warns (`soft`).
-///
-/// "Day" boundaries are UTC midnight today; calendar-day windows are
-/// what operators reason about for monthly bills.
+/// One UTC-day-windowed USD spend cap shared across a set of providers. A
+/// completed agent attributes its cost to *every* budget whose `providers`
+/// list includes the run's provider; at dispatch a matching budget at/over
+/// `daily_usd` refuses new work (`hard`) or just warns.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BudgetConfig {
-    /// Maximum USD that may be spent across this budget's providers in one
-    /// UTC day. Floats are accepted so operators can paste `0.50`.
+    /// Max USD across this budget's providers in one UTC day.
     pub daily_usd: f64,
-    /// Providers this budget governs. Empty = governs every provider.
+    /// Providers this budget governs. Empty = every provider.
     #[serde(default)]
     pub providers: Vec<String>,
-    /// `true` (default) → dispatch is refused once today's spend ≥ cap.
-    /// `false` → exceeding the cap just logs at WARN; useful for staging.
+    /// `true` (default) → dispatch refused once spend ≥ cap; `false` → WARN only.
     #[serde(default = "default_true")]
     pub hard: bool,
 }
 
-/// Allow/deny rules enforced at `agent.summon`. Both `*_allow` and `*_deny`
-/// can be empty: an empty `allow` means "no allowlist (everything passes
-/// the allow check)"; an empty `deny` means "nothing is denied." When both
-/// are populated, `deny` wins on conflicts.
+/// Allow/deny rules enforced at `agent.summon`. Empty `allow` = no allowlist
+/// (everything passes); empty `deny` = nothing denied; `deny` wins on conflict.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct PolicyConfig {
     /// If non-empty, the agent's provider must be in this set.
     #[serde(default)]
     pub provider_allow: Vec<String>,
-    /// Providers explicitly forbidden, even if they are also allow-listed.
+    /// Forbidden providers, even if also allow-listed.
     #[serde(default)]
     pub provider_deny: Vec<String>,
-    /// If non-empty, the agent's `cwd` must lie under one of these prefixes
-    /// (compared as canonical absolute paths).
+    /// If non-empty, `cwd` must lie under one of these prefixes (canonical
+    /// absolute paths).
     #[serde(default)]
     pub cwd_allow_prefixes: Vec<PathBuf>,
-    /// `cwd` prefixes that may never host an agent (e.g. `/etc`, `/`,
-    /// `infra/`). Deny wins on conflict with `cwd_allow_prefixes`.
+    /// `cwd` prefixes that may never host an agent. Deny wins on conflict.
     #[serde(default)]
     pub cwd_deny_prefixes: Vec<PathBuf>,
 }
 
-/// Per-agent resource and capability limits, modelled after the parts of
-/// `systemd.exec(5)` and `bwrap(1)` that map cleanly onto an LLM-CLI process.
-///
-/// Three orthogonal axes:
-///   * **resource**: `memory_max`, `cpu_quota` (enforced via cgroup v2,
-///     systemd-run user scope when available).
-///   * **filesystem / network**: `fs_jail`, `allow_network`, `ro_paths`,
-///     `rw_paths` (enforced via `bwrap` when available).
-///   * **economic**: `token_budget` (enforced in-process by tracking spend
-///     per agent and suspending on exceed).
-///
-/// The three layers are independent: a config may set only a token budget,
-/// only a memory cap, or any combination. Missing tools degrade gracefully
-/// with a one-time warning instead of failing the spawn.
+/// Per-agent resource/capability limits across three independent axes:
+/// resource (`memory_max`, `cpu_quota` via cgroup v2 / systemd-run), filesystem
+/// + network (`fs_jail`, `allow_network`, `ro_paths`, `rw_paths` via `bwrap`),
+/// and economic (`token_budget`, enforced in-process). Any subset may be set;
+/// missing host tools degrade with a one-time warning rather than failing spawn.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct SandboxConfig {
     /// Hard memory cap (bytes). Maps to systemd `MemoryMax=`.
     #[serde(default)]
     pub memory_max: Option<u64>,
-    /// CPU quota as a percent of one core (100 = one full core, 200 = two).
-    /// Maps to systemd `CPUQuota=<n>%`.
+    /// Percent of one core (100 = one full core). Maps to systemd `CPUQuota=`.
     #[serde(default)]
     pub cpu_quota_percent: Option<u32>,
-    /// Enable bwrap filesystem isolation. When true the agent runs under
-    /// `bwrap` with `ro_paths` mounted read-only and `rw_paths` read-write;
-    /// the rest of `/` is hidden.
+    /// bwrap filesystem isolation: `ro_paths` read-only, `rw_paths` read-write,
+    /// the rest of `/` hidden.
     #[serde(default)]
     pub fs_jail: bool,
-    /// Allow network access. Only consulted when `fs_jail` is true (bwrap
-    /// `--share-net` vs `--unshare-net`). Cgroup egress rules are not yet
-    /// modelled; operators wanting network-deny without an fs jail should
-    /// run the daemon under an outer namespace.
+    /// Only consulted when `fs_jail` (bwrap `--share-net`/`--unshare-net`).
+    /// Cgroup egress isn't modelled; for network-deny without an fs jail run
+    /// the daemon under an outer namespace.
     #[serde(default = "default_true")]
     pub allow_network: bool,
     /// Paths to mount read-only inside the jail.
@@ -307,8 +262,8 @@ pub struct SandboxConfig {
     /// automatically.
     #[serde(default)]
     pub rw_paths: Vec<PathBuf>,
-    /// Maximum total tokens (input+output) an agent may consume across its
-    /// lifetime before the supervisor suspends it. `None` = unlimited.
+    /// Max total tokens (input+output) over the agent's lifetime before the
+    /// supervisor suspends it. `None` = unlimited.
     #[serde(default)]
     pub token_budget: Option<u64>,
 }
@@ -345,22 +300,19 @@ pub struct DaemonConfig {
     /// Federation: heartbeat interval over the peer channel.
     #[serde(default = "default_peer_heartbeat_interval_secs")]
     pub peer_heartbeat_interval_secs: u64,
-    /// Federation: optional `host:port` to bind the peer gRPC listener.
-    /// `None` (default) skips the listener: federation traffic cannot
-    /// arrive, but `mail.send` still routes locally.
+    /// Federation: `host:port` to bind the peer gRPC listener. `None`
+    /// (default) skips it: federation can't arrive, but `mail.send` still
+    /// routes locally.
     #[serde(default)]
     pub peer_listen_addr: Option<String>,
-    /// Federation mTLS: explicit transport-identity cert/key. When unset
-    /// (default) the daemon auto-generates and pins a self-signed pair under
-    /// `<grimoire_dir>/tls/daemon.{crt,key}`. Set both for org PKI.
+    /// Federation mTLS transport identity. Unset → auto-generated + pinned
+    /// self-signed pair under `<grimoire_dir>/tls/daemon.{crt,key}`.
     #[serde(default)]
     pub tls_cert_path: Option<PathBuf>,
     #[serde(default)]
     pub tls_key_path: Option<PathBuf>,
-    /// Authentication for the local UDS RPC and HTTP dashboard. Workers
-    /// and peers carry their own per-link tokens (see `WorkerConfig.secret`
-    /// and `peer add --token`); this section only controls the CLI/HTTP
-    /// trust domain.
+    /// Auth for the local UDS RPC and HTTP dashboard only. Workers and peers
+    /// carry their own per-link tokens (`WorkerConfig.secret`, `peer add --token`).
     #[serde(default)]
     pub auth: AuthConfig,
 }
@@ -369,8 +321,8 @@ pub struct DaemonConfig {
 /// order (env → this field → auto-generated `~/.grimoire/auth.token`).
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct AuthConfig {
-    /// Explicit token override. Empty/absent means "fall through to the
-    /// auto-generated file."
+    /// Explicit token override. Empty/absent → fall through to the
+    /// auto-generated file.
     #[serde(default)]
     pub token: Option<String>,
 }
@@ -502,10 +454,9 @@ impl Config {
             .unwrap_or_else(|| "pi".to_string())
     }
 
-    /// Build a fresh `Arc<AtomicU32>` initialized from the current
-    /// `daemon.max_concurrent_agents` value. The daemon clones this handle
-    /// to share with the scheduler; reloads call [`Config::apply_max_concurrent`]
-    /// to update the live value without restart.
+    /// Shared handle over `daemon.max_concurrent_agents`, cloned to the
+    /// scheduler; reloads call [`Config::apply_max_concurrent`] to update the
+    /// live value without restart.
     pub fn max_concurrent_atomic(&self) -> Arc<AtomicU32> {
         Arc::new(AtomicU32::new(self.daemon.max_concurrent_agents))
     }

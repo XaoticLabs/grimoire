@@ -1,6 +1,5 @@
-//! Contract tests for the file-watch wake source. Uses tempfile for
-//! filesystem isolation. The notify watcher runs on a background thread so
-//! tests sleep past the debounce window before asserting.
+//! Contract tests for the file-watch wake source. The notify watcher runs on
+//! a background thread, so tests sleep past the debounce window before asserting.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -91,13 +90,11 @@ async fn single_file_change_fires_after_debounce() {
     };
     let _wake_id = reg.register_file_watch("agent01", cfg).await.unwrap();
 
-    // Settle: notify watcher needs a moment to attach.
-    tokio::time::sleep(Duration::from_millis(150)).await;
+    tokio::time::sleep(Duration::from_millis(150)).await; // let the notify watcher attach
 
     let target = dir.path().join("src/touched.rs");
     std::fs::write(&target, "// hello\n").unwrap();
-    // Wait past debounce + drain.
-    tokio::time::sleep(Duration::from_millis(500)).await;
+    tokio::time::sleep(Duration::from_millis(500)).await; // past debounce + drain
 
     let calls = sender.calls.lock().await;
     assert!(!calls.is_empty(), "expected at least one fire");
@@ -124,8 +121,7 @@ async fn rapid_changes_coalesce_to_one_fire() {
     tokio::time::sleep(Duration::from_millis(500)).await;
 
     let calls = sender.calls.lock().await;
-    // Coalesce: at most a small number of fires (debounce window). Allow 1-2
-    // because some platforms emit a final touch event after the window.
+    // debounce coalesces to 1-2 fires (some platforms emit a final post-window touch)
     assert!(
         calls.len() <= 2,
         "expected coalesced fires, got {}",

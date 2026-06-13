@@ -1,5 +1,4 @@
-//! Positional `rusqlite::Row` → domain-type mapping helpers shared across
-//! the persistence submodules.
+//! Positional `rusqlite::Row` → domain-type mapping helpers.
 
 use anyhow::Result;
 use chrono::{DateTime, Utc};
@@ -11,7 +10,7 @@ use crate::shared::types::{
 
 use super::QueueRow;
 
-/// Parse an RFC3339 timestamp from a DB column, returning a proper error instead of panicking.
+/// Parse an RFC3339 timestamp from a DB column.
 pub(super) fn parse_timestamp(s: &str) -> Result<DateTime<Utc>> {
     chrono::DateTime::parse_from_rfc3339(s)
         .map(|dt| dt.with_timezone(&Utc))

@@ -77,14 +77,13 @@ pub struct Peer {
     pub name: String,
     pub url: String,
     pub bearer_token_hash: Vec<u8>,
-    /// Plaintext bearer token. Stored alongside the hash so the outbound
-    /// client task can re-issue `Hello` after daemon restarts. Kept in
-    /// plaintext (rather than hash-only) until a token-rotation UX lands.
+    /// Plaintext bearer token, stored alongside the hash so the outbound client
+    /// can re-issue `Hello` after restarts. Plaintext (not hash-only) until a
+    /// token-rotation UX lands.
     pub bearer_token: String,
-    /// PEM-encoded certificate of the remote daemon, pinned out-of-band at
-    /// `peer add` time and used as the sole TLS trust anchor for both the
-    /// outbound client (server-cert verification) and the inbound listener
-    /// (client-cert verification). The `peers.public_key` column carries it.
+    /// PEM cert of the remote daemon, pinned out-of-band at `peer add` and used
+    /// as the sole TLS trust anchor for both the outbound client (server-cert)
+    /// and inbound listener (client-cert). Carried in `peers.public_key`.
     pub public_key: Option<Vec<u8>>,
     pub state: PeerState,
     pub last_seen: Option<i64>,

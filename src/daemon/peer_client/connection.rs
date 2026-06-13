@@ -21,8 +21,7 @@ use super::outbox::{
     AgentLifecycleOutbox, MailOutbox, MemoryOutbox, ScrollDispatchOutbox, WorkspaceEventOutbox,
 };
 
-/// Connection timeout for outbound gRPC to a federation peer. After this
-/// elapses the client task falls back to its exponential backoff.
+/// Outbound gRPC connect timeout; on elapse the task falls back to backoff.
 const PEER_CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 
 pub struct PeerClientHandle {
@@ -48,7 +47,7 @@ pub fn spawn(
     let join = tokio::spawn(async move {
         let mut backoff: u64 = 1;
         loop {
-            // Re-load peer state from DB each iteration.
+            // Re-load each iteration to observe a `Removing` transition.
             let Ok(Some(cur)) = registry.db.get_peer(&peer.id) else {
                 return;
             };
@@ -58,8 +57,7 @@ pub fn spawn(
 
             match run_once(&registry, &cur, &notify_outbox, &mut shutdown_rx).await {
                 Ok(()) => {
-                    // Clean shutdown. `backoff` is no longer relevant since
-                    // we're exiting the reconnect loop entirely.
+                    // Clean shutdown; exit the reconnect loop.
                     return;
                 }
                 Err(e) => {
@@ -91,9 +89,8 @@ async fn run_once(
     notify_outbox: &Arc<Notify>,
     shutdown_rx: &mut oneshot::Receiver<()>,
 ) -> anyhow::Result<()> {
-    // mTLS: present our identity as the client cert and pin the peer's cert
-    // as the sole trust anchor for the server side. `domain_name` matches the
-    // constant SAN minted into every grimoire identity cert.
+    // mTLS: present our client cert, pin the peer's cert as the sole trust
+    // anchor. `domain_name` matches the constant SAN in every identity cert.
     let Some(peer_cert) = peer.pinned_cert_pem() else {
         return Err(anyhow::anyhow!("peer_missing_pinned_cert"));
     };
@@ -161,9 +158,8 @@ async fn run_once(
         peer_id: peer.id.clone(),
     });
 
-    // One in-flight slot per outbox table. Mail's ack_key is the `mail_id`;
-    // memory's is the `op_id`. The generic helpers stash + clear these as
-    // each row ships and acks.
+    // One in-flight slot per outbox table; helpers stash/clear as rows ship
+    // and ack. ack_key is `mail_id` for mail, `op_id` for memory.
     let mut in_flight_mail: Option<InFlight> = None;
     let mut in_flight_memory: Option<InFlight> = None;
     let mut in_flight_workspace: Option<InFlight> = None;
@@ -257,10 +253,8 @@ async fn run_once(
     }
 }
 
-/// True iff the peer row is in `Removing`. Drainer halts in that case so
-/// teardown isn't racing fresh sends. A missing/errored lookup is treated
-/// as "not removing" (matching the pre-refactor behavior, where the
-/// `if let Ok(Some(_)) && removing` guard simply fell through).
+/// True iff the peer is `Removing`, so the drainer halts rather than race
+/// teardown. A missing/errored lookup counts as "not removing".
 fn peer_removing(registry: &Arc<PeerRegistry>, peer_id: &str) -> bool {
     matches!(
         registry.db.get_peer(peer_id),

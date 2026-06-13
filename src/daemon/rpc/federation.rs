@@ -12,26 +12,22 @@ use crate::daemon::persistence::{Database, unix_now};
 
 use super::{parse_params, resolve_peer, resolve_workspace, rpc_err, try_op, try_params, try_rpc};
 
-// --- Federated namespace memory handlers ---
-
-/// Namespaces and keys: non-empty, printable, bounded. Keys may contain `/`
-/// for hierarchy; namespaces are flat labels.
+/// Namespaces/keys: non-empty, printable, bounded. Keys may contain `/` for
+/// hierarchy; namespaces are flat labels.
 fn valid_ns_name(s: &str) -> bool {
     !s.is_empty() && s.len() <= 128 && s.bytes().all(|b| (b'!'..=b'~').contains(&b))
 }
 
-/// Fan a just-applied local write out to every peer the namespace federates
-/// to: enqueue an outbox row and wake that peer's drainer. Best-effort;
-/// enqueue failures are logged, not surfaced to the writer (the write itself
-/// already succeeded locally, and replication retries on its own schedule).
+/// Fan a just-applied local write out to every peer the namespace federates to.
+/// Best-effort: enqueue failures are logged, not surfaced — the local write
+/// already succeeded and replication retries on its own schedule.
 async fn namespace_replicate(
     peer_registry: &Arc<PeerRegistry>,
     write: &crate::daemon::namespace_db::NamespaceWrite,
 ) {
     let namespace = write.namespace.clone();
     let write_owned = write.clone();
-    // Look up outbound peers and enqueue in one trip; tail just fires the
-    // notify-outbox calls on the async runtime.
+    // Look up outbound peers + enqueue in one trip; tail fires notify-outbox.
     let enqueued: Vec<String> = peer_registry
         .db
         .run(move |db| -> Vec<String> {
@@ -222,8 +218,6 @@ pub(super) async fn handle_ns_federate(
     }
 }
 
-// --- Federation handlers ---
-
 pub(super) async fn handle_peer_add(
     peer_registry: &Arc<PeerRegistry>,
     req: RpcRequest,
@@ -380,11 +374,7 @@ pub(super) async fn handle_topic_unfederate(
     }
 }
 
-// --- Federation listings ---
-// Read-only enumeration of `*_federations` rows. Used by `grim topic
-// federations` / `ns federations` / `workspace federations` and the
-// dashboard's Federation page.
-
+// Read-only enumeration of `*_federations` rows.
 pub(super) async fn handle_topic_federations(
     peer_registry: &Arc<PeerRegistry>,
     req: RpcRequest,
@@ -436,12 +426,9 @@ pub(super) async fn handle_workspace_federations(
     }
 }
 
-// --- Workspace federation ---
-
-/// Home-daemon-side opt-in: this workspace's file events will fan out
-/// to `peer` per `direction`. The drainer + producer is not yet wired;
-/// this records the intent so cross-machine subscribe can be set up ahead
-/// of the event flow landing.
+/// Home-daemon-side opt-in: this workspace's file events fan out to `peer` per
+/// `direction`. Records the intent so cross-machine subscribe can be set up
+/// ahead of the (not-yet-wired) drainer + producer.
 pub(super) async fn handle_workspace_federate(
     peer_registry: &Arc<PeerRegistry>,
     req: RpcRequest,
@@ -453,9 +440,8 @@ pub(super) async fn handle_workspace_federate(
         Err(_) => return rpc_err(req.id, "invalid_direction"),
     };
     let ws = try_rpc!(resolve_workspace(req.id, &peer_registry.db, &params.workspace).await);
-    // Only the *home* of a workspace can opt it into outbound federation.
-    // Shadows already point at a remote home and would re-export events
-    // they don't originate.
+    // Only the home can federate outbound; a shadow would re-export events it
+    // doesn't originate.
     if matches!(ws.kind, WorkspaceKind::Shadow) {
         return rpc_err(req.id, "workspace_is_shadow_cannot_federate");
     }
@@ -483,11 +469,9 @@ pub(super) async fn handle_workspace_federate(
     )
 }
 
-/// Consumer-daemon-side: create a local shadow workspace pointing at a
-/// remote home, and pre-record an Inbound federation row so events from
-/// that peer are authorized on arrival. Caller supplies the
-/// `<home-daemon-id>/<home-ws-id>` pair as a single `home` field
-/// matching the `agent://`-style address shape.
+/// Consumer-daemon-side: create a local shadow workspace pointing at a remote
+/// home and pre-record an Inbound federation row so the peer's events are
+/// authorized on arrival. `home` is a `<home-daemon-id>/<home-ws-id>` pair.
 pub(super) async fn handle_workspace_federate_subscribe(
     peer_registry: &Arc<PeerRegistry>,
     req: RpcRequest,
@@ -517,9 +501,9 @@ pub(super) async fn handle_workspace_federate_subscribe(
     let fed_id = crate::shared::constants::generate_short_id();
     let now_ts = chrono::Utc::now();
     let now_secs = unix_now();
-    // Insert shadow + federation in one trip; rollback the shadow row
-    // best-effort if the federation upsert fails. Keeps the original
-    // sequence so existing-id collisions still fail before federations.
+    // Insert shadow then federation in one trip; on federation failure, roll
+    // back the shadow row best-effort. Order matters: id collisions must fail
+    // before the federation row is written.
     let outcome: Result<Result<(), String>, anyhow::Error> = peer_registry
         .db
         .run(move |db| {
@@ -560,10 +544,9 @@ pub(super) async fn handle_workspace_federate_subscribe(
     )
 }
 
-/// Symmetric to `topic.unfederate`: run on each side independently to
-/// drop the federation row. Does *not* delete the shadow workspace row;
-/// that's an explicit `workspace destroy`, so an operator doesn't lose
-/// historical chronicle attribution by accident.
+/// Drop the federation row (run on each side independently). Does *not* delete
+/// the shadow workspace — that's an explicit `workspace destroy`, so chronicle
+/// attribution isn't lost by accident.
 pub(super) async fn handle_workspace_unfederate(
     peer_registry: &Arc<PeerRegistry>,
     req: RpcRequest,
@@ -583,16 +566,12 @@ pub(super) async fn handle_workspace_unfederate(
 }
 
 /// Opt this daemon into agent-lifecycle federation with one peer.
-/// Direction follows the existing federation convention
-/// (`outbound`/`inbound`/`both`); identical directions on both sides
-/// merge to `both`.
+/// Direction (`outbound`/`inbound`/`both`) merges to `both` if both sides match.
 ///
-/// When the resulting direction includes `outbound`, snapshot every
-/// active agent's current state into the outbox so the receiver gets
-/// a current view without waiting for the next transition. The agents
-/// `Dormant`/`Active`/`Failed`/`Complete`/`Restarting` are all
-/// snapshotted; `Queued` ones are not (they have no meaningful state
-/// for a remote observer yet).
+/// When the result includes `outbound`, snapshot every non-`Queued` agent's
+/// current state into the outbox so the receiver gets a current view without
+/// waiting for the next transition. (`Queued` agents have no meaningful state
+/// for a remote observer yet.)
 pub(super) async fn handle_agent_lifecycle_federate(
     peer_registry: &Arc<PeerRegistry>,
     req: RpcRequest,
@@ -629,9 +608,8 @@ pub(super) async fn handle_agent_lifecycle_federate(
                     }
                     let payload = AgentLifecyclePayload {
                         agent_id: a.id.clone(),
-                        // No prior state for a synthetic snapshot — use
-                        // `new == old` so receivers can detect "this is
-                        // a snapshot, not a transition" if they ever care.
+                        // Synthetic snapshot: `new == old` lets receivers tell
+                        // it apart from a real transition.
                         old_state: a.state.clone(),
                         new_state: a.state,
                         name: a.name,

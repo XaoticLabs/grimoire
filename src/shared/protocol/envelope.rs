@@ -6,8 +6,8 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct EmptyResult {}
 
-/// Single-`id` params shape for RPC methods whose only argument is an id
-/// (agent, scroll, workspace, …). Aliases share the wire shape `{"id": "..."}`.
+/// Single-`id` params shape `{"id": "..."}` for RPC methods whose only argument
+/// is an id (agent, scroll, workspace, …).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IdParams {
     pub id: String,
@@ -24,13 +24,10 @@ pub struct RpcRequest {
     /// `unsupported_protocol_version`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub protocol_version: Option<u32>,
-    /// Bearer token. Required when the daemon cannot identify the caller
-    /// via `SO_PEERCRED` (i.e. UDS connections from a different UID, or
-    /// any future non-UDS transport that reuses `RpcRequest`). UDS
-    /// connections from the daemon's own UID may omit the token; the
-    /// kernel's peer-credential check substitutes for authentication.
-    /// Sent on every request; the server caches `authed=true` per
-    /// connection after the first successful check.
+    /// Bearer token. Required when the daemon cannot identify the caller via
+    /// `SO_PEERCRED` (UDS from a different UID, or any non-UDS transport); UDS
+    /// from the daemon's own UID may omit it. Sent on every request; the server
+    /// caches `authed=true` per connection after the first successful check.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub auth_token: Option<String>,
 }
@@ -60,9 +57,8 @@ impl RpcResponse {
         }
     }
 
-    /// Build a success response from any serializable payload. Panics only if
-    /// serialization fails, which for the plain `derive(Serialize)` result
-    /// structs used here is a programmer error, not a runtime condition.
+    /// Build a success response from any serializable payload. Panics only on
+    /// serialization failure, a programmer error for these `derive(Serialize)` structs.
     pub fn success_json<T: Serialize>(id: u64, value: &T) -> Self {
         let result = serde_json::to_value(value)
             .expect("RPC result payloads are plain derive(Serialize) structs");

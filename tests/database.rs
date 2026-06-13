@@ -1,8 +1,4 @@
 //! Integration tests for the persistence layer.
-//!
-//! These tests exercise the full lifecycle of agents, events, pacts,
-//! scrolls, and tasks through the database, verifying that related
-//! operations compose correctly.
 use chrono::Utc;
 use grimoire::daemon::persistence::{Database, QueueRow};
 use grimoire::shared::protocol::StreamEvent;
@@ -12,8 +8,7 @@ use std::path::PathBuf;
 fn test_db() -> Database {
     Database::open_in_memory().unwrap()
 }
-/// Allocate a fresh on-disk path for tests that need to inspect schema or
-/// reopen the same file. Cleanup on drop.
+/// On-disk path for tests that inspect schema or reopen the same file. Cleanup on drop.
 struct TempDbPath(PathBuf);
 impl TempDbPath {
     fn new(label: &str) -> Self {
@@ -58,9 +53,6 @@ fn make_agent(id: &str) -> Agent {
         workspace_id: None,
     }
 }
-// ---------------------------------------------------------------------------
-// Durable event log: schema
-// ---------------------------------------------------------------------------
 #[test]
 fn events_table_exists_after_migration() {
     let tmp = TempDbPath::new("events-table");
@@ -96,12 +88,9 @@ fn migrate_is_idempotent() {
     {
         let _db = Database::open(tmp.path()).unwrap();
     }
-    // Reopen the same file, must succeed (CREATE TABLE IF NOT EXISTS, etc.)
+    // Reopen the same file; must be a no-op (CREATE TABLE IF NOT EXISTS).
     let _db = Database::open(tmp.path()).unwrap();
 }
-// ---------------------------------------------------------------------------
-// Durable event log: append_event
-// ---------------------------------------------------------------------------
 fn sample_agent_for_created(id: &str) -> Agent {
     Agent {
         id: id.to_string(),
@@ -195,7 +184,6 @@ fn append_event_round_trips_payload() {
             })
             .unwrap();
         let decoded: StreamEvent = serde_json::from_str(&payload).unwrap();
-        // Payload re-serializes identically, equivalent to original.
         let original_json = serde_json::to_string(&event).unwrap();
         let decoded_json = serde_json::to_string(&decoded).unwrap();
         assert_eq!(original_json, decoded_json);
@@ -271,7 +259,7 @@ fn append_event_seq_monotonic_per_scroll() {
 fn append_event_scopes_are_independent() {
     let tmp = TempDbPath::new("scopes");
     let db = Database::open(tmp.path()).unwrap();
-    // Interleave: A, S, A, S, A
+    // Interleave agent (A) and scroll (S) events: A, S, A, S, A.
     db.append_event(&StreamEvent::Output {
         agent_id: "A".to_string(),
         stream: "stdout".to_string(),
@@ -389,9 +377,6 @@ fn append_event_returns_monotonic_id() {
         last = id;
     }
 }
-// ---------------------------------------------------------------------------
-// Agent lifecycle: insert → update state → update pid → get → list → delete
-// ---------------------------------------------------------------------------
 #[test]
 fn agent_full_lifecycle() {
     let db = test_db();
@@ -419,9 +404,6 @@ fn agent_full_lifecycle() {
     db.delete_agent("lifecycle-1").unwrap();
     assert!(db.get_agent("lifecycle-1").unwrap().is_none());
 }
-// ---------------------------------------------------------------------------
-// Agent listing with state filter
-// ---------------------------------------------------------------------------
 #[test]
 fn agent_list_with_state_filter() {
     let db = test_db();
@@ -444,9 +426,6 @@ fn agent_list_with_state_filter() {
     let failed = db.list_agents(Some("failed")).unwrap();
     assert!(failed.is_empty());
 }
-// ---------------------------------------------------------------------------
-// Agent events: insert events, retrieve with and without tail
-// ---------------------------------------------------------------------------
 #[test]
 fn agent_events_lifecycle() {
     let db = test_db();
@@ -471,9 +450,6 @@ fn agent_events_lifecycle() {
     assert_eq!(tail[0].payload, "line 3"); // reversed back to ASC
     assert_eq!(tail[1].payload, "line 4");
 }
-// ---------------------------------------------------------------------------
-// Pact lifecycle: create → query → fire → verify state
-// ---------------------------------------------------------------------------
 #[test]
 fn pact_lifecycle() {
     let db = test_db();
@@ -518,9 +494,6 @@ fn pact_lifecycle() {
     let pending = db.get_pending_pacts_for_agent("pact-source").unwrap();
     assert!(pending.is_empty());
 }
-// ---------------------------------------------------------------------------
-// Scroll + task lifecycle: insert scroll, tasks, dependencies, query
-// ---------------------------------------------------------------------------
 #[test]
 fn scroll_task_lifecycle() {
     let db = test_db();
@@ -535,7 +508,7 @@ fn scroll_task_lifecycle() {
         updated_at: now,
     };
     db.insert_scroll(&scroll).unwrap();
-    // Create three tasks: A (ready), B (ready), C (depends on A and B)
+    // task-a, task-b ready; task-c depends on both.
     let task_a = Task {
         id: "task-a".to_string(),
         scroll_id: "scroll-1".to_string(),
@@ -631,9 +604,6 @@ fn scroll_task_lifecycle() {
     assert_eq!(ready.len(), 1);
     assert_eq!(ready[0].id, "task-c");
 }
-// ---------------------------------------------------------------------------
-// Active task counting and scroll state transitions
-// ---------------------------------------------------------------------------
 #[test]
 fn scroll_state_transitions_and_active_count() {
     let db = test_db();
@@ -685,9 +655,6 @@ fn scroll_state_transitions_and_active_count() {
     let s = db.get_scroll("scroll-st").unwrap().unwrap();
     assert_eq!(s.state, ScrollState::Complete);
 }
-// ---------------------------------------------------------------------------
-// Agent output extraction (JSON result events)
-// ---------------------------------------------------------------------------
 #[test]
 fn agent_stdout_lines_collected_in_order() {
     let db = test_db();
@@ -706,8 +673,7 @@ fn agent_stdout_lines_collected_in_order() {
         })
         .unwrap();
     }
-    // The raw stdout lines are returned in order; result extraction is the
-    // provider's job (provider-neutral persistence).
+    // Raw lines in order; result extraction is the provider's job (persistence is provider-neutral).
     let lines = db.get_agent_stdout_lines("output-1").unwrap();
     assert_eq!(lines.len(), 2);
     assert!(lines[1].contains("All tasks completed successfully"));
@@ -719,9 +685,6 @@ fn agent_stdout_lines_empty_when_no_output() {
     db.insert_agent(&agent).unwrap();
     assert!(db.get_agent_stdout_lines("output-2").unwrap().is_empty());
 }
-// ---------------------------------------------------------------------------
-// Scroll listing
-// ---------------------------------------------------------------------------
 #[test]
 fn scroll_list() {
     let db = test_db();
@@ -741,9 +704,6 @@ fn scroll_list() {
     let scrolls = db.list_scrolls().unwrap();
     assert_eq!(scrolls.len(), 3);
 }
-// ---------------------------------------------------------------------------
-// Dependency edges query for cycle detection
-// ---------------------------------------------------------------------------
 #[test]
 fn dependency_edges_for_scroll() {
     let db = test_db();
@@ -780,7 +740,6 @@ fn dependency_edges_for_scroll() {
         };
         db.insert_task(&task).unwrap();
     }
-    // e-b depends on e-a, e-c depends on e-b
     db.insert_task_dependency("e-b", "e-a").unwrap();
     db.insert_task_dependency("e-c", "e-b").unwrap();
     let edges = db.get_all_dependencies_for_scroll("edges-s").unwrap();
@@ -788,9 +747,6 @@ fn dependency_edges_for_scroll() {
     assert!(edges.contains(&("e-b".to_string(), "e-a".to_string())));
     assert!(edges.contains(&("e-c".to_string(), "e-b".to_string())));
 }
-// ---------------------------------------------------------------------------
-// task_queue: durable work queue
-// ---------------------------------------------------------------------------
 fn make_queued_agent(id: &str) -> Agent {
     let mut a = make_agent(id);
     a.state = AgentState::Queued;
@@ -848,7 +804,7 @@ fn peek_next_dispatch_orders_adhoc_before_scroll() {
     db.insert_agent(&make_queued_agent("adhoc001")).unwrap();
     let t0 = Utc::now();
     let t1 = t0 + chrono::Duration::seconds(1);
-    // scroll enqueued first (older), then ad-hoc (newer)
+    // Older scroll row enqueued before newer ad-hoc row, so lane priority is what's under test.
     db.enqueue_task(&make_queue_row("scroll01", "scroll", t0))
         .unwrap();
     db.enqueue_task(&make_queue_row("adhoc001", "adhoc", t1))
@@ -984,9 +940,6 @@ fn enqueue_requires_existing_agent() {
     let err = db.enqueue_task(&row);
     assert!(err.is_err(), "FK to agents(id) should reject orphan rows");
 }
-// ---------------------------------------------------------------------------
-// Restart recovery
-// ---------------------------------------------------------------------------
 fn seed_agent_in_state(db: &Database, id: &str, state: AgentState) {
     let mut a = make_agent(id);
     a.state = state;
@@ -1069,9 +1022,6 @@ fn restart_recovery_empty_db_is_zero() {
     assert_eq!(report.failed.len(), 0);
     assert_eq!(report.queued_remaining, 0);
 }
-// ---------------------------------------------------------------------------
-// Mail / subscriptions (agent messaging bus)
-// ---------------------------------------------------------------------------
 fn make_mail(id: &str, recipient: &str, body: &str) -> Mail {
     Mail {
         id: id.to_string(),
@@ -1286,10 +1236,8 @@ fn list_topics_with_counts_sorts_and_counts() {
 }
 #[test]
 fn mail_migrate_is_idempotent() {
-    // Open the same on-disk DB twice. `Database::open` calls `migrate()` on
-    // every open; the second open must be a no-op.
+    // `Database::open` runs migrate() each time; the second open must be a no-op.
     let tmp = TempDbPath::new("mail-migrate");
     let _db1 = Database::open(tmp.path()).unwrap();
     let _db2 = Database::open(tmp.path()).unwrap();
-    // (no panic == pass)
 }

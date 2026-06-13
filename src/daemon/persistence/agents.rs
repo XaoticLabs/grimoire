@@ -7,13 +7,12 @@ use crate::shared::types::{Agent, AgentEvent, AgentId, AgentState};
 
 use super::{RecoveryReport, StoredEvent, row_to_agent};
 
-/// Column list for `SELECT … FROM agents` queries. Order must match
-/// `row_to_agent`'s positional column reads.
+/// `SELECT … FROM agents` column list; order must match `row_to_agent`.
 const AGENT_COLS: &str = "id, name, state, task, model, provider, cwd, pid, session_id, exit_code, created_at, updated_at, worker_id, restart_policy, restart_count, workspace_id";
 
 impl super::Database {
-    /// Append a stream event to the durable log. Returns the new row's id.
-    /// Computes `seq` per (agent_id) when present, else per (scroll_id), else 0.
+    /// Append a stream event to the durable log, returning its row id. `seq` is
+    /// per agent_id if present, else per scroll_id, else 0.
     pub fn append_event(&self, event: &StreamEvent) -> Result<i64> {
         let agent_id = event.agent_id();
         let scroll_id = event.scroll_id();
@@ -73,8 +72,8 @@ impl super::Database {
         Ok(())
     }
 
-    /// Update a single `agents` column plus `updated_at`. Caller supplies the
-    /// column name; SQL uses a fixed template so no injection surface exists.
+    /// Update one `agents` column plus `updated_at`. `column` is a crate
+    /// literal, so the format-string template has no injection surface.
     fn update_agent_field(
         &self,
         id: &str,
@@ -115,8 +114,7 @@ impl super::Database {
         self.update_agent_field(id, "pid", &pid)
     }
 
-    /// Atomically add `tokens` to `agents.tokens_used` for `id`. Returns the
-    /// new running total. A `0` increment is a no-op fast path.
+    /// Add `tokens` to `agents.tokens_used`, returning the new total (0 is a no-op).
     pub fn add_agent_tokens(&self, id: &str, tokens: u64) -> Result<u64> {
         if tokens == 0 {
             return self.get_agent_tokens(id);
@@ -134,15 +132,13 @@ impl super::Database {
         Ok(total.max(0) as u64)
     }
 
-    /// Set or clear the parent of an agent. Used by `agent.summon --parent`
-    /// to wire the supervision tree at creation time.
+    /// Set or clear an agent's supervision-tree parent.
     pub fn set_agent_parent(&self, id: &str, parent_id: Option<&str>) -> Result<()> {
         self.update_agent_field(id, "parent_agent_id", &parent_id)
     }
 
-    /// Children of `parent_id` whose state is still in-flight (Queued,
-    /// Summoning, Active, Dormant). Completed / Banished / Failed children
-    /// are excluded; there's nothing to cascade onto.
+    /// Children of `parent_id` still in-flight (Queued/Summoning/Active/Dormant);
+    /// terminal children are excluded since there's nothing to cascade onto.
     pub fn list_live_children(&self, parent_id: &str) -> Result<Vec<String>> {
         let conn = self.conn_lock();
         let mut stmt = conn.prepare(
@@ -188,8 +184,7 @@ impl super::Database {
     }
 
     // --- Tree budgets -----------------------------------------------------
-    // A tree budget is a USD ceiling on a whole supervision tree, set on the
-    // root at summon time. Enforcement walks the parent chain up to find the
+    // A USD ceiling on a whole supervision tree. Enforcement walks up to the
     // root, then sums `usd_spent` over the subtree.
 
     /// Set (or replace) the USD cap for the tree rooted at `root_id`.
@@ -216,8 +211,8 @@ impl super::Database {
         Ok(row)
     }
 
-    /// Mark the tree exhausted. Returns `true` only on the first marking, so
-    /// the caller can fire the operator notification exactly once.
+    /// Mark the tree exhausted; `true` only on the first marking, so the
+    /// operator notification fires exactly once.
     pub fn mark_tree_budget_exhausted(&self, root_id: &str) -> Result<bool> {
         let conn = self.conn_lock();
         let changed = conn.execute(
@@ -228,8 +223,8 @@ impl super::Database {
         Ok(changed > 0)
     }
 
-    /// Walk `parent_agent_id` links up to the tree root. An agent with no
-    /// parent is its own root. Depth-capped to defuse cycles.
+    /// Walk `parent_agent_id` to the tree root (own root if no parent).
+    /// Depth-capped to defuse cycles.
     pub fn find_tree_root(&self, agent_id: &str) -> Result<String> {
         let conn = self.conn_lock();
         let root: String = conn.query_row(
@@ -349,9 +344,8 @@ impl super::Database {
         Ok(events)
     }
 
-    /// Count agents grouped by state string (matches `AgentState::as_str`).
-    /// Returned in no particular order; the metrics renderer fans missing
-    /// states out to zero so the exposition is shape-stable across scrapes.
+    /// Agent counts grouped by state string, unordered. The metrics renderer
+    /// zero-fills missing states for a shape-stable exposition.
     pub fn count_agents_by_state(&self) -> Result<Vec<(String, i64)>> {
         let conn = self.conn_lock();
         let mut stmt = conn.prepare("SELECT state, COUNT(*) FROM agents GROUP BY state")?;
@@ -363,16 +357,14 @@ impl super::Database {
         Ok(out)
     }
 
-    /// Total rows in the durable `events` stream log. Cheap (table has a
-    /// rowid index) but not O(1); fine at metrics-scrape rates.
+    /// Total rows in the durable `events` log.
     pub fn count_events_total(&self) -> Result<i64> {
         let conn = self.conn_lock();
         let n: i64 = conn.query_row("SELECT COUNT(*) FROM events", [], |r| r.get(0))?;
         Ok(n)
     }
 
-    /// Count durable events of a single `kind` (the per-variant tag from
-    /// `StreamEvent::kind`). Backs the per-event-type counter metrics.
+    /// Count durable events of one `kind` (`StreamEvent::kind` tag).
     pub fn count_events_by_kind(&self, kind: &str) -> Result<i64> {
         let conn = self.conn_lock();
         let n: i64 = conn.query_row(
@@ -383,9 +375,7 @@ impl super::Database {
         Ok(n)
     }
 
-    /// Count notification events grouped by their `level` payload field.
-    /// Used to label the operator-facing notifications counter so warn/error
-    /// rates show up distinctly in dashboards.
+    /// Notification-event counts grouped by their `level` payload field.
     pub fn count_notifications_by_level(&self) -> Result<Vec<(String, i64)>> {
         let conn = self.conn_lock();
         let mut stmt = conn.prepare(
@@ -403,12 +393,9 @@ impl super::Database {
         Ok(out)
     }
 
-    /// Read the full durable stream-event log for one agent, oldest first.
-    /// This is the rich `events` table (every `StreamEvent` variant), not the
-    /// legacy `agent_events` stdout/stderr stream that `get_events` serves.
-    /// Rows whose payload fails to deserialize (a schema that predates a
-    /// variant rename, say) are skipped rather than failing the whole read;
-    /// a partial timeline beats no timeline.
+    /// Full durable stream-event log for one agent, oldest first — the rich
+    /// `events` table, not the legacy `agent_events` stream `get_events` serves.
+    /// Undeserializable rows are skipped, not fatal (a partial timeline beats none).
     pub fn read_stream_events(&self, agent_id: &str) -> Result<Vec<StoredEvent>> {
         let conn = self.conn_lock();
         let mut stmt = conn.prepare(
@@ -443,9 +430,8 @@ impl super::Database {
         Ok(())
     }
 
-    /// An agent's stdout lines in emission order. The raw material for a
-    /// provider's `extract_result` (pact `{output}` injection) and the
-    /// `ContextReplay` transcript. Provider-neutral; no format assumed here.
+    /// An agent's stdout lines in emission order; provider-neutral raw material
+    /// for `extract_result` and the `ContextReplay` transcript.
     pub fn get_agent_stdout_lines(&self, agent_id: &str) -> Result<Vec<String>> {
         let conn = self.conn_lock();
         let mut stmt = conn.prepare(
@@ -461,11 +447,8 @@ impl super::Database {
         Ok(lines)
     }
 
-    /// Reconstruct an agent's prior stdout as a single string, for the
-    /// `ContextReplay` resume strategy (providers with no native session). Capped
-    /// to the last `budget_bytes` (oldest output truncated with a note),
-    /// mirroring the scheduler's mail-fold budgeting. Returns the empty string if the agent
-    /// produced no output.
+    /// Prior stdout as one string for `ContextReplay` resume, capped to the
+    /// last `budget_bytes` (oldest output truncated with a note).
     pub fn get_agent_transcript(&self, agent_id: &str, budget_bytes: usize) -> Result<String> {
         let full = self.get_agent_stdout_lines(agent_id)?.join("\n");
         if full.len() <= budget_bytes {
@@ -497,10 +480,9 @@ impl super::Database {
         Ok(())
     }
 
-    /// Promote `Complete` agents that still have a `session_id` to `Dormant`.
-    /// Idempotent: replays are no-ops because the WHERE clause filters
-    /// already-Dormant rows. Returns the IDs that flipped, so the caller can
-    /// emit `StateChange { Complete -> Dormant }` events for each.
+    /// Promote `Complete` agents that still have a `session_id` to `Dormant`,
+    /// returning the flipped ids (for `StateChange` events). Idempotent: the
+    /// WHERE clause excludes already-Dormant rows.
     pub fn migrate_dormant_agents(&self) -> Result<Vec<AgentId>> {
         let mut conn = self.conn_lock();
         let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
@@ -527,11 +509,9 @@ impl super::Database {
         Ok(ids)
     }
 
-    /// On daemon startup, mark every agent that was mid-flight (`Active` or
-    /// `Summoning`) as `Failed` (their child processes are gone), then report
-    /// what was changed plus how many `Queued` agents survived for the
-    /// scheduler to pick up. `Complete`/`Failed`/`Banished` rows and `Queued`
-    /// rows are left untouched.
+    /// On boot, fail every mid-flight (`Active`/`Summoning`) agent — their
+    /// processes are gone — and report the changes plus surviving `Queued`
+    /// count. Terminal and `Queued` rows are untouched.
     pub fn restart_recovery(&self) -> Result<RecoveryReport> {
         let mut conn = self.conn_lock();
         let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;

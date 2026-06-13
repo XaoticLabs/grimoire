@@ -12,8 +12,8 @@ pub struct MailSendParams {
     pub sender: Option<AgentId>,
     #[serde(default)]
     pub wake_eligible: Option<bool>,
-    /// Correlation id of an earlier mail this one is a reply to. The id is
-    /// echoed back unchanged so request/reply (see `mail.ask`) can match.
+    /// Correlation id of the mail this replies to, echoed back unchanged so
+    /// request/reply (see `mail.ask`) can match.
     #[serde(default)]
     pub in_reply_to: Option<String>,
 }
@@ -35,9 +35,8 @@ pub struct MailAskResult {
     pub reply: Mail,
 }
 
-/// Post a task to a topic (or single agent) and collect replies for a
-/// fixed window. Used to gather bids from a fleet; the typical pattern is
-/// "fan out a job to `topic://workers`, take the first/best bid."
+/// Post a task to a topic (or single agent) and collect replies for a fixed
+/// window — fan out a job to `topic://workers`, then take the best bid.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MailTenderParams {
     pub to: String,

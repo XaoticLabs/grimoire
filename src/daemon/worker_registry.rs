@@ -14,9 +14,7 @@ pub type WorkerId = String;
 
 pub const MIN_WORKER_VERSION: &str = "0.1.0";
 
-// `worker_id` mirrors the field name used in `RegisterParams`, the proto wire
-// format, and the SQLite schema. Renaming to `id` would diverge from every
-// other layer that names the same value.
+// `worker_id` matches `RegisterParams`, the proto wire format, and the schema.
 #[allow(clippy::struct_field_names)]
 pub struct Worker {
     pub worker_id: WorkerId,
@@ -81,8 +79,7 @@ impl WorkerRegistry {
     fn now(&self) -> Instant {
         let c = self.clock.lock();
         if c.enabled {
-            // For test clock, use a fixed reference; subtract offset so
-            // last_heartbeat looks "older".
+            // Test clock: advancing the offset makes last_heartbeat look older.
             Instant::now() + c.offset
         } else {
             Instant::now()

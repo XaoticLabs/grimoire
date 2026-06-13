@@ -1,16 +1,11 @@
 //! `grim race` — fork a task into N competing variants, run each in its own
-//! isolated git worktree, score every result against a rubric, and
-//! (optionally) auto-merge the winner's branch by score.
+//! isolated git worktree, score every result against a rubric, and optionally
+//! auto-merge the winner's branch by score.
 //!
-//! This is the "verification loop as infrastructure" wrapper: fork (one
-//! worktree + agent per variant), run, eval-gate (the same evaluator the
-//! scroll verification gate uses), and merge-on-score, as a single command.
-//!
-//! Orchestration lives CLI-side and composes the daemon's existing
-//! primitives over RPC — `agent.summon`, `agent.result`, `agent.artifact`,
-//! plus the shared eval prompt — so the daemon stays stateless about races.
-//! Worktrees and per-variant branches are created with plain `git` so each
-//! variant is fully isolated and the winner is a mergeable branch.
+//! Orchestration lives CLI-side and composes the daemon's existing RPC
+//! primitives (`agent.summon`/`result`/`artifact` + the shared eval prompt) so
+//! the daemon stays stateless about races. Worktrees + per-variant branches use
+//! plain `git` so each variant is isolated and the winner is a mergeable branch.
 
 use anyhow::{Context, Result, anyhow, bail};
 use colored::Colorize;
@@ -23,9 +18,8 @@ use crate::shared::protocol::{
     AgentArtifactResult, AgentResultResponse, ReplayResponse, SummonResult,
 };
 
-/// Substitute a variant into a task template. If the template contains the
-/// `{variant}` placeholder it is replaced everywhere; otherwise the variant
-/// is appended as an explicit instruction so a plain task still works.
+/// Substitute a variant into a task template: replaces the `{variant}`
+/// placeholder, or appends the variant as an instruction if absent.
 #[must_use]
 pub fn substitute_variant(template: &str, variant: &str) -> String {
     if template.contains("{variant}") {
@@ -75,10 +69,8 @@ pub struct RaceResult {
     pub has_commit: bool,
 }
 
-/// Pick the winning index: highest score wins; ties break toward the cheaper
-/// run, then the one with a mergeable commit. A variant whose agent never
-/// completed is only eligible if nothing else is. Returns `None` for an
-/// empty slice.
+/// Winning index by [`is_better`] total order. A non-completed variant only
+/// wins if nothing else completed. `None` for an empty slice.
 #[must_use]
 pub fn pick_winner(results: &[RaceResult]) -> Option<usize> {
     if results.is_empty() {
@@ -150,7 +142,6 @@ pub async fn run(
     timeout_secs: u64,
     keep_worktrees: bool,
 ) -> Result<()> {
-    // Parse + validate variants.
     let variants: Vec<String> = {
         let mut seen = std::collections::HashSet::new();
         variants_csv
@@ -189,7 +180,7 @@ pub async fn run(
 
     let mut client = DaemonClient::connect().await?;
 
-    // 1) Worktree + agent per variant.
+    // Worktree + agent per variant.
     let mut results: Vec<RaceResult> = Vec::new();
     let worktree_root = repo.join(".grim-race").join(race_id);
     for variant in &variants {
@@ -250,14 +241,12 @@ pub async fn run(
         });
     }
 
-    // 2) Wait for every variant agent to reach a terminal state.
     println!("  {} running… (timeout {}s)", "⏱".dimmed(), timeout_secs);
     let deadline = Instant::now() + Duration::from_secs(timeout_secs);
     for r in &mut results {
         r.completed = wait_terminal(&mut client, &r.agent_id, deadline).await?;
     }
 
-    // 3) Commit each worktree, score it, and read its artifact.
     for r in &mut results {
         // Commit whatever the agent changed so the branch is mergeable.
         git(&r.worktree, &["add", "-A"]).await.ok();
@@ -279,7 +268,6 @@ pub async fn run(
             r.has_commit = true;
         }
 
-        // Artifact (files/cost) — captured by the daemon at agent completion.
         if let Ok(art) = client
             .call_typed::<AgentArtifactResult>(
                 "agent.artifact",
@@ -294,7 +282,6 @@ pub async fn run(
             r.usd = a.usd_spent;
         }
 
-        // Score against the rubric using the shared evaluator contract.
         match score_variant(
             &mut client,
             &r.agent_id,
@@ -319,10 +306,8 @@ pub async fn run(
         }
     }
 
-    // 4) Report.
     print_results(&results);
 
-    // 5) Pick + (optionally) merge the winner.
     let Some(win_idx) = pick_winner(&results) else {
         bail!("no variants to choose from");
     };
@@ -372,7 +357,7 @@ pub async fn run(
         );
     }
 
-    // 6) Clean up worktrees (branches are kept for inspection/merge).
+    // Clean up worktrees; branches are kept for inspection/merge.
     if keep_worktrees {
         println!(
             "  {} worktrees kept under {}",
@@ -561,14 +546,12 @@ mod tests {
             r("a", true, 0.8, 0.20, true),
             r("b", true, 0.8, 0.05, false),
         ];
-        // equal score → cheaper b wins
         assert_eq!(pick_winner(&rs).unwrap(), 1);
 
         let rs2 = vec![
             r("a", true, 0.8, 0.10, false),
             r("b", true, 0.8, 0.10, true),
         ];
-        // equal score + cost → the one with a mergeable commit wins
         assert_eq!(pick_winner(&rs2).unwrap(), 1);
     }
 
@@ -586,8 +569,7 @@ mod tests {
         assert!(pick_winner(&[]).is_none());
     }
 
-    // These guard paths bail before any daemon connection, so they are
-    // safe to exercise without a running daemon.
+    // These guard paths bail before any daemon connection.
     #[tokio::test]
     async fn fewer_than_two_variants_is_rejected() {
         let err = run(

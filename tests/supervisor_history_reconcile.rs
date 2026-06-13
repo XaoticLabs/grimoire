@@ -66,7 +66,7 @@ fn failed_again_after_restart_marks_failed_again() {
         .update_latest_scheduled_outcome("rec00002", RestartHistoryOutcome::FailedAgain)
         .unwrap();
     assert_eq!(n, 1);
-    // The window count includes 'failed_again' rows.
+    // window count includes failed_again rows
     let count = db.count_restarts_in_window("rec00002", 0).unwrap();
     assert_eq!(count, 1);
 }

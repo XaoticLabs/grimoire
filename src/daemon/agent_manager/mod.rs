@@ -1,7 +1,6 @@
-//! Agent lifecycle manager: the in-memory registry of `ManagedAgent`s plus the
-//! constructor/accessor surface. Dispatch, lifecycle transitions, and queries
-//! live in sibling submodules and extend `AgentManager` via additional `impl`
-//! blocks.
+//! Agent lifecycle manager: in-memory `ManagedAgent` registry plus the
+//! constructor/accessor surface. Dispatch, lifecycle, and queries extend
+//! `AgentManager` from sibling submodules.
 
 use anyhow::Result;
 use std::collections::HashMap;
@@ -21,18 +20,15 @@ use super::provider_registry::ProviderRegistry;
 use super::supervisor::Supervisor;
 use super::wake_registry::WakeRegistry;
 
-// These submodules only add `impl AgentManager` / trait-impl blocks; they
-// expose no items of their own, so there is nothing to re-export.
+// These submodules only add `impl AgentManager` / trait-impl blocks.
 mod dispatch;
 mod lifecycle;
 mod query;
 
-/// Byte budget for the `ContextReplay` transcript prepended on resume. Matches
-/// the scheduler's mail-fold cap; oldest output is truncated past this.
+/// Byte budget for the `ContextReplay` transcript prepended on resume.
 const CONTEXT_REPLAY_BUDGET_BYTES: usize = 16 * 1024;
 
-/// Which queue lane an enqueued agent belongs to. Drives dispatch ordering:
-/// the scheduler drains `Adhoc` before `Scroll` on each tick.
+/// Queue lane. The scheduler drains `Adhoc` before `Scroll` each tick.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Lane {
     Adhoc,
@@ -62,15 +58,12 @@ pub struct AgentManager {
     config: Config,
     registry: Arc<ProviderRegistry>,
     executor: Arc<dyn Executor>,
-    /// Self-reference used by `Dispatcher::dispatch` to call into the
-    /// `Arc<Self>`-flavored `dispatch_internal`. Set at construction via
+    /// Self-reference for the `Arc<Self>`-flavored `dispatch_internal`, set via
     /// `Arc::new_cyclic`.
     weak_self: Weak<Self>,
-    /// Set by daemon boot once the wake registry exists. Banish cascades
-    /// retire any registered wake sources for the agent.
+    /// Set by daemon boot; banish cascades retire the agent's wake sources.
     wake_registry: Mutex<Option<Arc<WakeRegistry>>>,
-    /// Set by daemon boot once the supervisor exists. Banish cascades
-    /// cancel any pending restart for the agent and clear supervision config.
+    /// Set by daemon boot; banish cascades cancel pending restarts.
     supervisor: Mutex<Option<Arc<Supervisor>>>,
 }
 
@@ -147,21 +140,17 @@ impl AgentManager {
         Ok(())
     }
 
-    /// Inject the wake registry. Banish cascades retire wake sources
-    /// through it. Called once by daemon boot wiring.
+    /// Inject the wake registry (once, at boot).
     pub async fn set_wake_registry(&self, registry: Arc<WakeRegistry>) {
         *self.wake_registry.lock().await = Some(registry);
     }
 
-    /// Inject the supervisor. Banish cascades cancel pending restarts
-    /// through it. Called once by daemon boot wiring.
+    /// Inject the supervisor (once, at boot).
     pub async fn set_supervisor(&self, supervisor: Arc<Supervisor>) {
         *self.supervisor.lock().await = Some(supervisor);
     }
 
-    /// Borrow the registered supervisor. Returns `None` if the daemon
-    /// hasn't finished its boot wiring yet (impossible from the RPC
-    /// surface, but the wiring step is async, so we expose the option).
+    /// The registered supervisor, or `None` before boot wiring completes.
     pub async fn supervisor(&self) -> Option<Arc<Supervisor>> {
         self.supervisor.lock().await.clone()
     }
@@ -174,17 +163,15 @@ impl AgentManager {
         self.config.policy.as_ref()
     }
 
-    /// Read-only accessor on the loaded `[budgets.*]` blocks. Used by
-    /// `budget.list` to enumerate caps alongside today's spend.
+    /// The loaded `[budgets.*]` blocks.
     pub const fn budgets(
         &self,
     ) -> &std::collections::HashMap<String, crate::shared::config::BudgetConfig> {
         &self.config.budgets
     }
 
-    /// Provider name a summon without `--provider` would default to.
-    /// Exposed for the policy gate so we can match the resolved name, not
-    /// `None`.
+    /// Provider a summon without `--provider` defaults to; lets the policy
+    /// gate match the resolved name rather than `None`.
     pub fn default_provider_name(&self) -> &str {
         self.registry.default_name()
     }

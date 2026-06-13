@@ -54,8 +54,7 @@ impl Orchestrator {
             return;
         }
 
-        // Extract the completed agent's result text, the way its provider
-        // understands its own output format.
+        // Result text parsed per the provider's own output format.
         let output = self.manager.agent_result(agent_id).unwrap_or_default();
 
         for pact in pacts {

@@ -6,10 +6,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::shared::types::{DaemonId, NamespaceFederation, TopicFederation, WorkspaceFederation};
 
-// --- Federation listing ---
 // One row per (peer, scope) federation. `created_at` is unix seconds for the
 // topic/ns shape and ISO-8601 for workspaces (matches the underlying types).
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TopicFederationsResult {
     pub federations: Vec<TopicFederation>,
@@ -25,15 +23,13 @@ pub struct WorkspaceFederationsResult {
     pub federations: Vec<WorkspaceFederation>,
 }
 
-// --- Peer params/results ---
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PeerAddParams {
     pub name: String,
     pub url: String,
     pub bearer_token: String,
-    /// PEM-encoded certificate of the remote daemon, exchanged out-of-band
-    /// alongside the token. Pinned as the sole TLS trust anchor for this peer.
+    /// PEM cert of the remote daemon, exchanged out-of-band. Pinned as the
+    /// sole TLS trust anchor for this peer.
     pub cert_pem: String,
 }
 
@@ -91,8 +87,6 @@ pub struct PeerPingResult {
     pub state: String,
 }
 
-// --- Topic federation ---
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TopicFederateParams {
     pub topic: String,
@@ -118,9 +112,7 @@ pub struct TopicUnfederateResult {
     pub removed: bool,
 }
 
-// --- Workspace federation ---
-
-/// Home-daemon side: opt a local workspace into cross-daemon file event
+/// Home-daemon side: opt a local workspace into cross-daemon file-event
 /// federation with a peer.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorkspaceFederateParams {
@@ -136,13 +128,11 @@ pub struct WorkspaceFederateResult {
     pub direction: String,
 }
 
-/// Consumer-daemon side: create a local shadow workspace pointing at a
-/// remote home, and pre-record the inbound federation row so events
-/// from that peer are authorized when the producer/consumer paths land.
+/// Consumer-daemon side: create a local shadow workspace pointing at a remote
+/// home, and pre-record the inbound federation row that authorizes its events.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorkspaceFederateSubscribeParams {
-    /// `<home-daemon-id>/<home-workspace-id>`. The canonical address of
-    /// the remote workspace this shadow tracks.
+    /// `<home-daemon-id>/<home-workspace-id>`: address of the tracked remote workspace.
     pub home: String,
     pub peer: String,
     /// Optional local alias. Defaults to `<home-workspace>-shadow`.
@@ -160,7 +150,6 @@ fn default_shadow_branch() -> String {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[allow(clippy::struct_field_names)] // all three fields legitimately end in `_id`
 pub struct WorkspaceFederateSubscribeResult {
-    /// Local workspace id assigned to the new shadow row.
     pub local_workspace_id: String,
     pub home_daemon_id: String,
     pub home_workspace_id: String,
@@ -177,8 +166,6 @@ pub struct WorkspaceUnfederateResult {
     pub removed: bool,
 }
 
-// --- Agent lifecycle federation ---
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentLifecycleFederateParams {
     pub peer: String,
@@ -189,9 +176,8 @@ pub struct AgentLifecycleFederateParams {
 pub struct AgentLifecycleFederateResult {
     pub peer: String,
     pub direction: String,
-    /// How many existing agents were snapshotted into the outbox as a
-    /// replay so the receiver gets current state without waiting for
-    /// the next transition. `0` if direction is purely inbound.
+    /// Count of existing agents snapshotted into the outbox as a replay so the
+    /// receiver gets current state without waiting. `0` if direction is inbound-only.
     pub replayed: u32,
 }
 
@@ -204,8 +190,6 @@ pub struct AgentLifecycleUnfederateParams {
 pub struct AgentLifecycleUnfederateResult {
     pub removed: bool,
 }
-
-// --- Cross-peer scroll task dispatch ---
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PeerSetAcceptDispatchParams {
@@ -231,8 +215,6 @@ pub struct ScrollDispatchTaskResult {
     pub scroll_id: String,
     pub task_id: String,
     pub peer: String,
-    /// The outbox sender_seq of the queued delivery. Useful for
-    /// operators verifying that the row landed; not strictly needed
-    /// for the receiver side.
+    /// Outbox sender_seq of the queued delivery, for operators verifying the row landed.
     pub sender_seq: u64,
 }
