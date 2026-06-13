@@ -1,4 +1,4 @@
-//! F4a: remote file-watch wake source. Sister to `file_watch` for the
+//! Remote file-watch wake source. Sister to `file_watch` for the
 //! shadow side of a federated workspace — there's no local notify
 //! watcher to arm; instead the registry subscribes to the event bus
 //! and matches paths off the `WorkspaceFileChanged` events that

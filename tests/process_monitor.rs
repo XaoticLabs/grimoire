@@ -1,6 +1,5 @@
-// Tests for the `monitor_agent` refactor that splits source-of-lines from
+// Tests for `monitor_agent`, which splits source-of-lines from
 // persistence + publish.
-// activate the tests.
 
 use std::sync::Arc;
 

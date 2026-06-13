@@ -222,7 +222,7 @@ pub(super) async fn handle_ns_federate(
     }
 }
 
-// --- Federation handlers (Tasks 10, 11, 12) ---
+// --- Federation handlers ---
 
 pub(super) async fn handle_peer_add(
     peer_registry: &Arc<PeerRegistry>,
@@ -582,7 +582,7 @@ pub(super) async fn handle_workspace_unfederate(
     }
 }
 
-/// F4b: opt this daemon into agent-lifecycle federation with one peer.
+/// Opt this daemon into agent-lifecycle federation with one peer.
 /// Direction follows the existing federation convention
 /// (`outbound`/`inbound`/`both`); identical directions on both sides
 /// merge to `both`.

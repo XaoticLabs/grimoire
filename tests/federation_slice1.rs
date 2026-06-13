@@ -40,6 +40,6 @@ fn req_helper_constructs_rpc_request() {
     assert_eq!(r.protocol_version, Some(1));
 }
 
-// Note: full handler-level tests for `unsupported_protocol_version` and
+// Full handler-level tests for `unsupported_protocol_version` and
 // `federation_not_configured` require booting the daemon harness; they
-// live in `tests/peer_e2e.rs` once the harness lands.
+// live in `tests/peer_e2e.rs`.

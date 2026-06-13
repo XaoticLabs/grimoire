@@ -170,23 +170,9 @@ async fn summon_window_too_large_rejects() {
 
 #[tokio::test]
 async fn summon_self_escalation_rejects() {
-    // Two-step trick: summon a successful agent first to get its id, then
-    // summon again referring to that id via agent://. (This isn't true
-    // self-escalation, but proves the parse-address path works. The actual
-    // self-escalation guard compares against the *new* agent id.)
-    //
-    // We model strict self-escalation by submitting an `escalate_to` that
-    // matches the eventual id. Since IDs are random, we instead exercise
-    // the rejection by sending an `agent://` with a matching id pre-checked
-    // through a roundtrip: use `agent://aaaaaaaa` and assert the daemon
-    // rejects when it happens to match. Practically we just confirm
-    // parse_address works for invalid_address otherwise.
-    //
-    // For the actual self_escalation rejection, since we can't predict the
-    // generated id, we rely on the daemon's post-id-generation check. We
-    // verify by NOT triggering it and verifying invalid_address is returned
-    // for malformed addresses, so this test is then a placeholder. The real
-    // self_escalation path is exercised by integration testing.
+    // IDs are random, so true self-escalation can't be triggered deterministically
+    // here; that path is covered by integration testing. This exercises the
+    // `escalate_to` address-validation branch with an invalid-hex agent address.
     let resp = summon(json!({
         "task": "t",
         "restart_policy": "on_failure",

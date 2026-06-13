@@ -1,13 +1,13 @@
-//! Federation Task 13: end-to-end two-daemon harness, now over mTLS.
+//! End-to-end two-daemon harness over mTLS.
 //!
 //! Spawns two in-process `PeerRegistry` instances (each backed by its
 //! own tempdir database + EventBus + DaemonId + self-signed identity),
 //! wires daemon-A to daemon-B's TLS Tonic server, and exercises the
 //! handshake + cert-pinning paths.
 //!
-//! The full plan-spec harness boots the entire `grimd` AppState. This
-//! file goes a layer below: it exercises the federation transport
-//! directly without dragging in the agent manager / scheduler.
+//! Goes a layer below the full AppState harness: it exercises the
+//! federation transport directly without dragging in the agent manager
+//! or scheduler.
 
 use std::sync::Arc;
 use std::time::Duration;

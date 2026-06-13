@@ -484,7 +484,7 @@ impl Database {
                 ON workspace_federations(workspace_id);",
         )?;
 
-        // F3b: per-peer outbox for workspace file events. Mirrors the
+        // Per-peer outbox for workspace file events. Mirrors the
         // namespace_outbox shape — `sender_seq` is the monotonic
         // correlation key the receiver acks back; `payload` is the
         // JSON-serialized WorkspaceFileChanged batch.
@@ -506,7 +506,7 @@ impl Database {
                 ON workspace_event_outbox(peer_id, state, next_attempt_at);",
         )?;
 
-        // F3c: receiver-side dedupe. `(sender_daemon_id, sender_seq)` is
+        // Receiver-side dedupe. `(sender_daemon_id, sender_seq)` is
         // the at-least-once correlation key — the sender retries until
         // it gets a positive ack, so the receiver must ignore replays.
         // `received_at` is purely informational / for future pruning.
@@ -522,7 +522,7 @@ impl Database {
                 ON workspace_event_inbox(workspace_id);",
         )?;
 
-        // F5a: peer dispatch column on tasks. Coordinator records which
+        // Peer dispatch column on tasks. Coordinator records which
         // peer (if any) the task is dispatched to. NULL ⇒ local task.
         add_column_if_missing(&conn, "tasks", "peer_name", "peer_name TEXT")?;
 
@@ -539,7 +539,7 @@ impl Database {
             "verifier_agent_id TEXT",
         )?;
 
-        // F5a: peers.accept_scroll_dispatch — opt-in flag. The dispatch
+        // peers.accept_scroll_dispatch — opt-in flag. The dispatch
         // handler refuses inbound `ScrollTaskDispatch` from peers that
         // haven't been enrolled, so operators can pin which peers may
         // hand them work.
@@ -550,7 +550,7 @@ impl Database {
             "accept_scroll_dispatch INTEGER NOT NULL DEFAULT 0",
         )?;
 
-        // F5a: scroll task dispatches. One row per (scroll, task,
+        // Scroll task dispatches. One row per (scroll, task,
         // peer) dispatch. `remote_agent_id` is filled in once the
         // receiver acks. `state` is `pending` → `dispatched` →
         // `complete`/`failed`/`cancelled`. Mirrors the outbox-row
@@ -659,7 +659,7 @@ impl Database {
             "approval_state TEXT NOT NULL DEFAULT 'none'",
         )?;
 
-        // F4b: agent lifecycle federation. Subscription rows are
+        // Agent lifecycle federation. Subscription rows are
         // per-peer (no per-agent filter on the wire — receivers filter
         // via the `RemoteAgentCompletion` wake source's config). Outbox
         // mirrors `workspace_event_outbox`. Inbox dedupes on

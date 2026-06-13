@@ -13,7 +13,6 @@ pub async fn run(
     let mut client = DaemonClient::connect().await?;
 
     if list || (source_id.is_none() && task.is_none()) {
-        // List pacts
         let params = serde_json::json!({ "source_id": source_id });
         let response = client.call("pact.list", params).await?;
 
@@ -63,7 +62,6 @@ pub async fn run(
             );
         }
     } else {
-        // Create pact
         let source_id = source_id.context("--source is required to create a pact")?;
         let task = task.context("--task is required to create a pact")?;
 

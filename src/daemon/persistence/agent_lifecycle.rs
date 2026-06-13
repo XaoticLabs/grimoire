@@ -1,4 +1,4 @@
-//! F4b: persistence helpers for agent-lifecycle federation.
+//! Persistence helpers for agent-lifecycle federation.
 //!
 //! Three tables back the producer/consumer pipeline (definitions in
 //! `mod.rs::migrate`):

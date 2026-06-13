@@ -27,7 +27,7 @@ pub enum MemoryWriteOutcome {
     Conflict { current_version: u64 },
 }
 
-/// F3b: one pending workspace-event-outbox row, ready to ship.
+/// One pending workspace-event-outbox row, ready to ship.
 #[derive(Debug, Clone)]
 pub struct WsEventOutboxRow {
     pub id: String,
@@ -573,7 +573,7 @@ impl Database {
         ))
     }
 
-    /// F3b: enqueue a serialized `WorkspaceFileChanged` payload for one
+    /// Enqueue a serialized `WorkspaceFileChanged` payload for one
     /// outbound peer. `sender_seq` is allocated atomically as
     /// `MAX(sender_seq) + 1` per (peer, workspace) — strictly monotonic
     /// so the receiver can detect gaps even though we don't currently
@@ -652,8 +652,8 @@ impl Database {
     }
 
     /// Successful ack → drop the row. Workspace events are
-    /// fire-and-acknowledge; replay-on-resubscribe is a separate (F3c)
-    /// concern handled by snapshotting, not by keeping outbox history.
+    /// fire-and-acknowledge; replay-on-resubscribe is a separate concern
+    /// handled by snapshotting, not by keeping outbox history.
     pub fn workspace_event_mark_delivered(&self, id: &str) -> Result<()> {
         let conn = self.workspace_conn_lock();
         conn.execute(
@@ -676,7 +676,7 @@ impl Database {
 
     /// Boot recovery: revert `in_flight` to `pending` so the drainer
     /// reships. Receiver-side dedupe by `(sender_daemon_id, sender_seq)`
-    /// (F3c) is what makes the resend idempotent.
+    /// is what makes the resend idempotent.
     pub fn workspace_event_reset_in_flight(&self) -> Result<usize> {
         let conn = self.workspace_conn_lock();
         Ok(conn.execute(
@@ -685,7 +685,7 @@ impl Database {
         )?)
     }
 
-    /// F3c: try to record an inbound workspace event from
+    /// Try to record an inbound workspace event from
     /// `sender_daemon_id` at `sender_seq` targeting local shadow
     /// `workspace_id`. Returns `true` if this is a first sighting
     /// (caller should republish), `false` if it was already recorded
@@ -712,7 +712,7 @@ impl Database {
         Ok(n > 0)
     }
 
-    /// F3c: resolve the local shadow workspace id that mirrors a
+    /// Resolve the local shadow workspace id that mirrors a
     /// `(home_daemon_id, home_workspace_id)` pair. The sender ships its
     /// own (home) workspace id on the wire; the receiver looks up which
     /// of its local shadows is pointing at that pair to find the

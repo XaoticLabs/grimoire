@@ -1,4 +1,4 @@
-//! Contract tests for --keep-alive on summon (T8). Validates the
+//! Contract tests for --keep-alive on summon. Validates the
 //! persistence flag + completion-time branch.
 
 use std::path::PathBuf;

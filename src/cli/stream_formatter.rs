@@ -179,7 +179,7 @@ pub fn format_stream_json(line: &str) -> Option<String> {
         "tool_use" => Some(format_tool_use(&v)),
         "tool_result" => Some(format_tool_result(&v)),
         "result" => Some(format_result(&v)),
-        "rate_limit_event" => None, // suppress
+        "rate_limit_event" => None,
         _ => None,
     }
 }
@@ -300,7 +300,6 @@ fn format_tool_result(v: &serde_json::Value) -> String {
             if lines.len() <= 5 {
                 format!("  {} {}\n{}\n", "✓".green(), name.dimmed(), text.dimmed())
             } else {
-                // Truncate long output
                 let preview: String = lines[..3].join("\n");
                 format!(
                     "  {} {} ({} lines)\n{}\n  {}\n",

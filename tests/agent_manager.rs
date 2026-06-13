@@ -333,9 +333,8 @@ async fn invoke_queued_returns_error_with_clear_message() {
 #[tokio::test]
 async fn invoke_complete_unchanged() {
     // Regression guard: invoke against a Dormant agent (with a real session)
-    // continues to drive the executor. Pre-Task-1 this seeded Complete; the
-    // helper now seeds Dormant, which is the state Complete-with-session
-    // agents land in after the boot migration.
+    // continues to drive the executor. The helper seeds Dormant, which is the
+    // state Complete-with-session agents land in after the boot migration.
     let (_, _, manager, log) = fresh_manager().await;
 
     let agent_id = manager

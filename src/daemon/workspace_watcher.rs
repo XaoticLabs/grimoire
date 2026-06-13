@@ -176,19 +176,19 @@ fn emit_batch(workspace_id: &str, db: &Database, bus: &EventBus, buffer: &mut Ve
 
     publish_workspace_file_change(workspace_id, db, bus, &paths, &kinds, truncated_count);
 
-    // F3b: fan out to federated peers. One outbox row per peer with
-    // direction `outbound` or `both`. Failures are logged but never
-    // abort the local publish — federation is best-effort on top of
-    // the always-durable local event.
+    // Fan out to federated peers. One outbox row per peer with direction
+    // `outbound` or `both`. Failures are logged but never abort the local
+    // publish — federation is best-effort on top of the always-durable
+    // local event.
     fanout_to_federated_peers(db, workspace_id, &paths, &kinds, truncated_count);
 
     buffer.clear();
 }
 
 /// Publish a `WorkspaceFileChanged` stream event and topic mail. The
-/// shared path between the watcher (local FS changes) and the F3c
-/// federation receiver (events arriving from a home daemon onto a
-/// shadow workspace), so shadows and locals emit byte-identical events.
+/// shared path between the watcher (local FS changes) and the federation
+/// receiver (events arriving from a home daemon onto a shadow workspace),
+/// so shadows and locals emit byte-identical events.
 pub fn publish_workspace_file_change(
     workspace_id: &str,
     db: &Database,

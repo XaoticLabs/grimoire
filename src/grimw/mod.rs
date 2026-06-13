@@ -1,4 +1,4 @@
-#![allow(missing_docs)] // Worker process; documentation pass pending.
+#![allow(missing_docs)] // Worker process; internal surface.
 
 pub mod config;
 pub mod rpc_client;

@@ -1,4 +1,4 @@
-//! Contract tests for the file-watch wake source (T5). Uses tempfile for
+//! Contract tests for the file-watch wake source. Uses tempfile for
 //! filesystem isolation. The notify watcher runs on a background thread so
 //! tests sleep past the debounce window before asserting.
 

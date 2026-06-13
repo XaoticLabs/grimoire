@@ -293,7 +293,6 @@ impl WorkspaceRegistry {
             .update_workspace_state(id, WorkspaceState::Destroying)
             .map_err(|e| WorkspaceError(format!("db:{e}")))?;
 
-        // Stop watcher.
         if let Some(handle) = self.watchers.lock().await.remove(id) {
             handle.shutdown();
         }
@@ -338,7 +337,7 @@ impl WorkspaceRegistry {
     }
 
     async fn ensure_watcher_started(&self, ws: &Workspace) {
-        // F3c: shadow workspaces have no on-disk worktree — they get
+        // Shadow workspaces have no on-disk worktree — they get
         // their `WorkspaceFileChanged` events republished by the peer
         // client from inbound federation messages, so there's nothing
         // for `notify` to watch here.

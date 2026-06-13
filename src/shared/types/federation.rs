@@ -1,5 +1,5 @@
-//! Federation peer types (see plan/federation.md): peers, outbox/inbox
-//! rows, and topic/namespace federation declarations.
+//! Federation peer types: peers, outbox/inbox rows, and topic/namespace
+//! federation declarations.
 
 use super::PeerId;
 use serde::{Deserialize, Serialize};
@@ -78,9 +78,8 @@ pub struct Peer {
     pub url: String,
     pub bearer_token_hash: Vec<u8>,
     /// Plaintext bearer token. Stored alongside the hash so the outbound
-    /// client task can re-issue `Hello` after daemon restarts. Spec calls
-    /// for hash-only storage; v1 keeps plaintext for ergonomics until
-    /// a token-rotation UX lands.
+    /// client task can re-issue `Hello` after daemon restarts. Kept in
+    /// plaintext (rather than hash-only) until a token-rotation UX lands.
     pub bearer_token: String,
     /// PEM-encoded certificate of the remote daemon, pinned out-of-band at
     /// `peer add` time and used as the sole TLS trust anchor for both the

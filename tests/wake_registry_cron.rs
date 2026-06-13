@@ -1,5 +1,5 @@
-//! Contract tests for the cron wake source through the `WakeRegistry`
-//! (T3). Uses `TestClock` for deterministic time travel.
+//! Contract tests for the cron wake source through the `WakeRegistry`.
+//! Uses `TestClock` for deterministic time travel.
 
 use std::path::PathBuf;
 use std::sync::Arc;

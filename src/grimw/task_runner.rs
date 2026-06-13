@@ -178,7 +178,6 @@ impl TaskDispatcher {
         }
 
         tokio::spawn(async move {
-            // Stream stdout
             if let Some(stdout) = stdout {
                 let outbound = outbound.clone();
                 let agent_id = agent_id.clone();

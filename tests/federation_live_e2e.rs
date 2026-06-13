@@ -1,18 +1,18 @@
-//! Federation phase-3 live two-daemon e2e tests.
+//! Live two-daemon end-to-end federation tests.
 //!
 //! Boots two in-process daemons (tempdir DB + EventBus + PeerRegistry +
 //! mTLS Tonic server each, same harness shape as `peer_e2e.rs`) and
-//! exercises the flows that previously had only schema/matcher tests:
+//! exercises the federation flows over real gRPC:
 //!
-//! - F3: workspace file-event federation (`WorkspaceEventDeliver`) — a
+//! - Workspace file-event federation (`WorkspaceEventDeliver`): a
 //!   simulated watcher batch on daemon A crosses the wire and is
 //!   republished on daemon B's shadow workspace (bus event + topic mail).
-//! - F4a: `RemoteFileWatch` wake — an agent on B armed against the
+//! - `RemoteFileWatch` wake: an agent on B armed against the
 //!   shadow workspace wakes when A's federated file event arrives.
-//! - F4b: `RemoteAgentCompletion` wake — agent lifecycle federates via
+//! - `RemoteAgentCompletion` wake: agent lifecycle federates via
 //!   `AgentLifecycleDeliver`; an agent on B wakes when its remote
 //!   parent on A completes.
-//! - F5: `ScrollTaskDispatch` — A dispatches a scroll task to B
+//! - `ScrollTaskDispatch`: A dispatches a scroll task to B
 //!   (opt-in), B queues a local agent and acks; B's completion ships
 //!   back to A as a `RemoteAgentStateChanged`.
 //!
@@ -294,7 +294,7 @@ async fn fanout_workspace_event(
     }
 }
 
-/// F3: a file-change batch on A's federated workspace crosses the wire
+/// A file-change batch on A's federated workspace crosses the wire
 /// and is republished on B's shadow workspace — both as a
 /// `WorkspaceFileChanged` bus event and as `workspace/<id>/files` topic
 /// mail to local subscribers.
@@ -364,7 +364,7 @@ async fn workspace_file_event_federates_to_shadow_workspace() {
     .await;
 }
 
-/// F4a: an agent on B with a `remote_file_watch` wake source against
+/// An agent on B with a `remote_file_watch` wake source against
 /// the shadow workspace wakes (wake mail row) when A's federated file
 /// event arrives over the wire. Ignore globs are honored.
 #[tokio::test]
@@ -425,7 +425,7 @@ async fn remote_file_watch_wake_fires_across_daemons() {
     );
 }
 
-/// F4b: agent lifecycle on A federates to B; an agent on B with a
+/// Agent lifecycle on A federates to B; an agent on B with a
 /// `remote_agent_completion` wake source on A's parent wakes when the
 /// parent completes. This is the wire path behind
 /// `grim summon --on-remote-parent <id> --sender-daemon <daemon-id>`.
@@ -518,11 +518,11 @@ async fn remote_agent_completion_wake_fires_across_daemons() {
     );
 }
 
-/// F5: A dispatches a scroll task to B over the wire; B (opted in via
+/// A dispatches a scroll task to B over the wire; B (opted in via
 /// `accept_scroll_dispatch`) queues a local agent and acks with its id,
 /// which patches A's durable dispatch row. B's agent completing then
 /// federates back to A as a `RemoteAgentStateChanged` (the signal the
-/// ScrollKeeper's F5b subscriber consumes to settle the task).
+/// ScrollKeeper's subscriber consumes to settle the task).
 ///
 /// Covered slice: outbox -> wire -> receiver agent+queue rows -> ack ->
 /// coordinator row patch -> lifecycle return leg. Not covered here:

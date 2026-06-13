@@ -31,7 +31,7 @@ impl ScrollKeeper {
             return Ok(());
         }
 
-        // Get currently active tasks for conflict checking
+        // Active tasks, for conflict checking against ready ones.
         let all_tasks = self.db.get_tasks_for_scroll(scroll_id)?;
         let active_tasks: Vec<&Task> = all_tasks
             .iter()
@@ -88,7 +88,7 @@ impl ScrollKeeper {
                 continue;
             }
 
-            // F5b: peer-targeted tasks are dispatched, not spawned.
+            // Peer-targeted tasks are dispatched, not spawned.
             // The receiver enqueues an agent of its own and federates
             // lifecycle back; the task's local `agent_id` is filled in
             // by the dispatch ack handler.

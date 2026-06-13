@@ -1,4 +1,4 @@
-//! Contract tests for the new StreamEvent variants.
+//! Contract tests for the supervision `StreamEvent` variants.
 
 use grimoire::shared::protocol::StreamEvent;
 

@@ -217,7 +217,7 @@ fn shadow_workspace_roundtrips() {
     );
 }
 
-/// F3c: `find_shadow_workspace` resolves a `(home_daemon_id,
+/// `find_shadow_workspace` resolves a `(home_daemon_id,
 /// home_workspace_id)` pair back to the local shadow row, and returns
 /// `None` when there is no matching shadow.
 #[test]
@@ -245,7 +245,7 @@ fn find_shadow_workspace_resolves() {
     );
 }
 
-/// F5a: scroll dispatch wire layer round-trips.
+/// Scroll dispatch wire layer round-trips.
 ///
 /// - `peers.accept_scroll_dispatch` defaults to off; `set_*` toggles it.
 /// - `scroll_dispatch_insert` + `set_remote_agent_id` updates the
@@ -299,7 +299,7 @@ fn scroll_dispatch_schema_and_inbox() {
     );
 }
 
-/// F4b: agent-lifecycle federation rows merge direction the same way
+/// Agent-lifecycle federation rows merge direction the same way
 /// workspace/namespace federations do; `outbound_peers` honors
 /// direction; inbox dedupe is `INSERT OR IGNORE` on
 /// `(sender_daemon_id, sender_seq)`.
@@ -343,7 +343,7 @@ fn agent_lifecycle_federation_and_inbox() {
     assert_eq!(db.delete_agent_lifecycle_federation(&peer.id).unwrap(), 0);
 }
 
-/// F3c: the inbox dedupe table is INSERT-OR-IGNORE keyed on
+/// The inbox dedupe table is INSERT-OR-IGNORE keyed on
 /// `(sender_daemon_id, sender_seq)` — a replayed event returns `false`
 /// so the receiver knows to drop without republishing. Different
 /// senders sharing the same seq are independent rows.

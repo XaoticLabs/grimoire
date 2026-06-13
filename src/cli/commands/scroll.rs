@@ -96,7 +96,6 @@ pub async fn run(
             }
             println!("{} Scroll {} abandoned", "✓".green(), scroll_id);
         } else {
-            // Show status
             let params = serde_json::json!({"id": scroll_id});
             let response = client.call("scroll.status", params).await?;
             if let Some(error) = response.error {

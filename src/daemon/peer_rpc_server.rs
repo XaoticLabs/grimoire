@@ -176,7 +176,7 @@ impl PeerService for PeerSvc {
                             .await;
                     }
                     Some(peer_outbound::Msg::WorkspaceEventDeliver(d)) => {
-                        // F3c: republish onto local shadow workspace.
+                        // Republish onto local shadow workspace.
                         let ack = super::peer_client::apply_workspace_event_deliver(
                             &db,
                             &bus,
@@ -190,7 +190,7 @@ impl PeerService for PeerSvc {
                             .await;
                     }
                     Some(peer_outbound::Msg::AgentLifecycleDeliver(d)) => {
-                        // F4b: republish as local RemoteAgentStateChanged.
+                        // Republish as local RemoteAgentStateChanged.
                         let ack = super::peer_client::apply_agent_lifecycle_deliver(
                             &db,
                             &bus,

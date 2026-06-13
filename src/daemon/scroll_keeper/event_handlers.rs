@@ -105,7 +105,7 @@ impl ScrollKeeper {
         self.retry_or_fail(&task).await;
     }
 
-    /// F5b: a `RemoteAgentStateChanged` arrived. Look up the
+    /// A `RemoteAgentStateChanged` arrived. Look up the
     /// dispatch row and, on a terminal remote state, mirror it onto
     /// the local task. Non-terminal transitions are ignored — the
     /// task already sits in `active` once `update_task_agent` runs at

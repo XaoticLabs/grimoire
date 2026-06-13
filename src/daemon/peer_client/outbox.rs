@@ -45,7 +45,7 @@ impl OutboxBackend for MailOutbox<'_> {
     }
 }
 
-/// F3b: workspace-file-event federation backend. Drives
+/// Workspace-file-event federation backend. Drives
 /// `workspace_event_outbox` rows over the workspace channel. The
 /// payload is already JSON-serialized at enqueue time, so the backend
 /// is just a passthrough.
@@ -91,7 +91,7 @@ impl OutboxBackend for WorkspaceEventOutbox<'_> {
     }
 }
 
-/// F5a: scroll-dispatch outbox backend.
+/// Scroll-dispatch outbox backend.
 pub(super) struct ScrollDispatchOutbox<'a> {
     pub(super) db: &'a Database,
 }
@@ -160,7 +160,7 @@ pub struct ScrollDispatchPayload {
     pub file_patterns: Vec<String>,
 }
 
-/// F4b: agent-lifecycle federation backend. Drives
+/// Agent-lifecycle federation backend. Drives
 /// `agent_lifecycle_outbox` rows over the lifecycle channel.
 pub(super) struct AgentLifecycleOutbox<'a> {
     pub(super) db: &'a Database,

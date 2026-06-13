@@ -223,7 +223,7 @@ pub enum StreamEvent {
         level: String,
         source: String,
     },
-    /// F4b: republished agent state-change from a federated peer.
+    /// Republished agent state-change from a federated peer.
     /// Produced by the inbound `AgentLifecycleDeliver` handler after
     /// dedupe; consumed by `RemoteAgentCompletion` wake sources and
     /// the dashboard's federated-agents view.
@@ -312,8 +312,6 @@ impl StreamEvent {
         }
     }
 
-    /// Stable kind tag matching the serde rename for this variant.
-    /// Used as the durable event log's `kind` column so serialized payload
     /// Wire tag for this event (the `type` field on the JSON envelope) and
     /// the SQL `events.kind` column value. The drift-detection test
     /// `kind_matches_serde_rename_for_each_variant` keeps these in sync with

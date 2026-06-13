@@ -1,4 +1,4 @@
-//! F4b: remote agent-completion wake source. Sister to
+//! Remote agent-completion wake source. Sister to
 //! `parent_completion` for federated parents — fires on a
 //! `RemoteAgentStateChanged` bus event whose `(sender_daemon_id,
 //! agent_id)` match this source's config and whose `new_state` is in

@@ -1,5 +1,5 @@
 //! Contract tests for the wake_sources / wake_rate_limits schema and the
-//! Database CRUD helpers (T2).
+//! Database CRUD helpers.
 
 use std::path::PathBuf;
 

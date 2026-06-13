@@ -80,7 +80,6 @@ pub(super) async fn handle_summon(
         if policy != crate::shared::types::RestartPolicy::OnFailure {
             return rpc_err(req.id, "escalate_requires_policy");
         }
-        // Forward parse error.
         if let Err(e) = crate::shared::mail::parse_address(addr) {
             return rpc_err(req.id, e.code());
         }
@@ -175,7 +174,6 @@ pub(super) async fn handle_summon(
             .await;
     }
 
-    // Post-insert assignment.
     if let Some(name) = &params.workspace
         && let Err(e) = workspace_registry.assign(name, &result.id).await
     {
@@ -233,11 +231,10 @@ pub(super) async fn handle_summon(
     if let Some(addr) = &params.escalate_to {
         let self_addr = format!("agent://{}", result.id);
         if addr == &self_addr {
-            // Roll back the insert.
+            // Roll back the insert. Banish on Queued cleans queue + agent; the
+            // row remains (state=Banished). Spec asks for "no agent row" but
+            // the rollback path is best-effort.
             let _ = manager.banish(&result.id).await;
-            // Banish on Queued cleans queue + agent. The agent row remains
-            // (state=Banished). Acceptable behavior; spec asks for "no agent
-            // row" but the rollback path is best-effort.
             return rpc_err(req.id, "self_escalation");
         }
     }

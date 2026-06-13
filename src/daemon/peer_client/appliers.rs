@@ -77,7 +77,7 @@ pub struct AgentLifecyclePayload {
     pub exit_code: Option<i32>,
 }
 
-/// F4b: republish an inbound `AgentLifecycleDeliver` as a local
+/// Republish an inbound `AgentLifecycleDeliver` as a local
 /// `RemoteAgentStateChanged` stream event. Shared between the outbound
 /// client's reverse stream and the inbound server.
 pub fn apply_agent_lifecycle_deliver(
@@ -162,7 +162,7 @@ struct WorkspaceEventPayload {
     truncated: u32,
 }
 
-/// F3c: republish an inbound `WorkspaceEventDeliver` onto the local
+/// Republish an inbound `WorkspaceEventDeliver` onto the local
 /// shadow workspace. Shared between the outbound client's reverse
 /// stream (peer_client) and the inbound server (peer_rpc_server).
 ///
@@ -272,7 +272,7 @@ pub fn apply_workspace_event_deliver(
     }
 }
 
-/// F5a: receive a `ScrollTaskDispatch` from a coordinator peer and
+/// Receive a `ScrollTaskDispatch` from a coordinator peer and
 /// queue a local agent for it.
 ///
 /// Gates:
@@ -283,7 +283,7 @@ pub fn apply_workspace_event_deliver(
 /// The receiver does NOT acquire any scroll DB rows on its side —
 /// scrolls are coordinator-owned. The dispatched agent is a plain
 /// queued agent; it shows up in `grim ps` like anything else and is
-/// surfaced to the coordinator only via F4b lifecycle federation.
+/// surfaced to the coordinator only via lifecycle federation.
 pub async fn apply_scroll_task_dispatch(
     db: &Database,
     bus: &crate::daemon::event_bus::EventBus,

@@ -25,7 +25,6 @@ pub async fn run() -> Result<()> {
         );
     }
 
-    // Try to open browser
     #[cfg(target_os = "macos")]
     {
         let _ = std::process::Command::new("open").arg(&url).spawn();

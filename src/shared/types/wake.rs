@@ -9,12 +9,12 @@ pub enum WakeSourceKind {
     Cron,
     FileWatch,
     ParentCompletion,
-    /// F4a: file events for a shadow workspace, delivered via federation
+    /// File events for a shadow workspace, delivered via federation
     /// (`WorkspaceEventDeliver`) and republished onto the local bus. The
     /// matcher runs over the rel-paths the home daemon reported — there
     /// is no on-disk worktree on this side to canonicalize against.
     RemoteFileWatch,
-    /// F4b: lifecycle events from a federated agent, delivered via
+    /// Lifecycle events from a federated agent, delivered via
     /// `AgentLifecycleDeliver` and republished as
     /// `RemoteAgentStateChanged`. Filters on (sender_daemon_id,
     /// remote_agent_id, target states).

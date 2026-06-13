@@ -1,4 +1,4 @@
-//! F4a: contract tests for the `RemoteFileWatch` wake source.
+//! Contract tests for the `RemoteFileWatch` wake source.
 
 use std::path::PathBuf;
 use std::sync::Arc;

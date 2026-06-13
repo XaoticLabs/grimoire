@@ -1,4 +1,4 @@
-//! F4b: bus subscriber that fans local `StateChange` events into the
+//! Bus subscriber that fans local `StateChange` events into the
 //! `agent_lifecycle_outbox` for every peer with an outbound lifecycle
 //! federation. The drainer in `peer_client::run_once` ships them.
 //!

@@ -103,7 +103,6 @@ async fn standing_review(repo: Option<PathBuf>, provider: Option<String>) -> Res
         wake.wake_id.bold()
     );
 
-    // Closing instructions.
     println!("{}", "Done. Your standing reviewer is live.".bold().green());
     println!("  • Edit a file in {repo_str} to wake it.");
     println!(

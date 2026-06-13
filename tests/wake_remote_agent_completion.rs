@@ -1,4 +1,4 @@
-//! F4b: contract tests for the `RemoteAgentCompletion` wake source.
+//! Contract tests for the `RemoteAgentCompletion` wake source.
 
 use std::path::PathBuf;
 use std::sync::Arc;

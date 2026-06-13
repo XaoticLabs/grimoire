@@ -1,4 +1,4 @@
-//! Contract tests for the `Clock` trait + `SystemClock` + `TestClock` (T2).
+//! Contract tests for the `Clock` trait + `SystemClock` + `TestClock`.
 
 use std::sync::Arc;
 

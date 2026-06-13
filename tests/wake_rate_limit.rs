@@ -1,5 +1,5 @@
 //! Contract tests for the per-agent token-bucket rate limiter on the wake
-//! fire path (T6).
+//! fire path.
 
 use std::path::PathBuf;
 use std::sync::Arc;

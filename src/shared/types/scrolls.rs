@@ -100,8 +100,8 @@ pub struct Task {
     pub order_index: u32,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
-    /// F5a: when set, the scroll coordinator dispatches this task to
-    /// the named peer instead of spawning a local agent. The receiver
+    /// When set, the scroll coordinator dispatches this task to the
+    /// named peer instead of spawning a local agent. The receiver
     /// queues a local agent and federates lifecycle back; the
     /// coordinator's `agent_id` is set to the receiver's local id once
     /// the dispatch ack arrives.

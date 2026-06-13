@@ -369,7 +369,7 @@ fn worker_registered_kind_string() {
 }
 
 // ---------------------------------------------------------------------------
-// StatusResponse / DaemonStatusResult: queue-distinct counts (Task 10)
+// StatusResponse / DaemonStatusResult: queue-distinct counts
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -411,7 +411,7 @@ fn daemon_status_result_includes_queued_and_cap() {
 }
 
 // ---------------------------------------------------------------------------
-// QueueListResponse / QueueEntry (Task 11)
+// QueueListResponse / QueueEntry
 // ---------------------------------------------------------------------------
 
 #[test]

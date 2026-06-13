@@ -1,8 +1,5 @@
 // Tests for `Executor` trait + `LocalExecutor`; `AgentManager` is routed
 // through it.
-//
-// Gated with `#![cfg(any())]` until the
-// GREEN phase begins; remove the gate to activate.
 
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};

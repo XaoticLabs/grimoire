@@ -95,10 +95,10 @@ impl Executor for StubExecutor {
 }
 
 fn seed_dormant_with_session(db: &Database, id: &str, session_id: Option<&str>) -> AgentId {
-    // After T1, the wake-mail filter requires Dormant agents. A Dormant
-    // agent always has a session_id in production; for the "no session"
-    // negative test we still seed Complete (which is *not* a wake candidate
-    // either, exercising the same skip path).
+    // The wake-mail filter requires Dormant agents. A Dormant agent always
+    // has a session_id in production; for the "no session" negative test we
+    // still seed Complete (which is *not* a wake candidate either, exercising
+    // the same skip path).
     let state = if session_id.is_some() {
         AgentState::Dormant
     } else {
@@ -297,8 +297,8 @@ async fn dormant_agent_with_pending_mail_is_woken() {
 
 #[tokio::test]
 async fn complete_agent_no_longer_woken_by_mail() {
-    // After T1, the scheduler's mail-wake filter requires Dormant. A pure
-    // Complete agent (even with session_id) is not a wake candidate.
+    // The scheduler's mail-wake filter requires Dormant. A pure Complete
+    // agent (even with session_id) is not a wake candidate.
     let db = Arc::new(Database::open_in_memory().unwrap());
     let bus = EventBus::new(db.clone());
     let waker = Arc::new(RecordingWaker::default());

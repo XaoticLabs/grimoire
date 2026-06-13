@@ -338,7 +338,7 @@ enum Commands {
         #[arg(long)]
         abandon: bool,
 
-        /// F5a: dispatch one task of this scroll to a peer instead of
+        /// Dispatch one task of this scroll to a peer instead of
         /// running it locally. Pair with `--to <peer>`. The receiver
         /// must have `peer set-accept-dispatch` enabled for the
         /// coordinator.

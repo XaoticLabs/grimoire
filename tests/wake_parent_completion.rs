@@ -1,4 +1,4 @@
-//! Contract tests for the parent-completion wake source (T4).
+//! Contract tests for the parent-completion wake source.
 
 use std::path::PathBuf;
 use std::sync::Arc;

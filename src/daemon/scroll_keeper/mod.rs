@@ -113,11 +113,10 @@ impl ScrollKeeper {
                         ref new_state,
                         ..
                     }) => {
-                        // F5b: a federated peer is reporting that one
-                        // of our dispatched tasks just transitioned.
-                        // Resolve `(sender_daemon_id, remote_agent_id)`
-                        // to the local dispatch row and update the
-                        // task state to match.
+                        // A federated peer is reporting that one of our
+                        // dispatched tasks just transitioned. Resolve
+                        // `(sender_daemon_id, remote_agent_id)` to the local
+                        // dispatch row and update the task state to match.
                         self.handle_remote_state_change(sender_daemon_id, agent_id, new_state)
                             .await;
                     }

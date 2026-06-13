@@ -3,7 +3,6 @@
 use serde::{Deserialize, Serialize};
 
 /// Empty `{}` result body for RPC methods that just report success.
-/// Serializes to `{}` so the wire format matches per-method empty result types.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct EmptyResult {}
 

@@ -1,4 +1,4 @@
-//! Contract tests for the four new `StreamEvent` wake variants (T2).
+//! Contract tests for the four `StreamEvent` wake variants.
 
 use grimoire::shared::protocol::StreamEvent;
 

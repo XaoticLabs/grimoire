@@ -177,7 +177,7 @@ pub(super) async fn handle_scroll_reject(
     )
 }
 
-/// F5a: dispatch one scroll task to a peer.
+/// Dispatch one scroll task to a peer.
 ///
 /// The coordinator looks up the task, serializes the payload, writes
 /// the durable `scroll_task_dispatches` row, and enqueues the wire

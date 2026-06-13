@@ -1,4 +1,4 @@
-//! F5a: persistence helpers for cross-peer scroll task dispatch.
+//! Persistence helpers for cross-peer scroll task dispatch.
 //!
 //! - `scroll_task_dispatches` is the durable record of "task T of
 //!   scroll S has been handed to peer P, who acked with

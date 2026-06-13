@@ -72,7 +72,6 @@ async fn multiple_subscribers_receive_copies() {
         line: "hello".to_string(),
     });
 
-    // All three should receive the event
     let e1 = rx1.recv().await.unwrap();
     let e2 = rx2.recv().await.unwrap();
     let e3 = rx3.recv().await.unwrap();
@@ -90,7 +89,6 @@ async fn multiple_subscribers_receive_copies() {
 async fn publish_without_subscribers() {
     let bus = fresh_bus();
 
-    // This should not panic
     bus.publish(StreamEvent::Output {
         agent_id: "orphan".to_string(),
         stream: "stdout".to_string(),

@@ -534,7 +534,6 @@ async fn handle_topic_send(
                 };
             }
 
-            // Federation fanout (Task 12).
             let federated_peers = db
                 .list_outbound_federations_for_topic(&topic_for_db)
                 .unwrap_or_default();

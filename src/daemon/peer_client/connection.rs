@@ -110,7 +110,6 @@ async fn run_once(
     let (out_tx, out_rx) = mpsc::channel::<PeerOutbound>(64);
     let outbound_stream = tokio_stream::wrappers::ReceiverStream::new(out_rx);
 
-    // Hello.
     let hello = PeerOutbound {
         msg: Some(peer_outbound::Msg::Hello(Hello {
             daemon_id: registry.daemon_id.clone(),

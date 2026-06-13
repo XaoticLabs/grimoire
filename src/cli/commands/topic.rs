@@ -1,4 +1,4 @@
-//! `grim topic`: federate / unfederate topics across peers (Task 12).
+//! `grim topic`: federate / unfederate topics across peers.
 
 use anyhow::{Result, anyhow};
 use clap::Subcommand;

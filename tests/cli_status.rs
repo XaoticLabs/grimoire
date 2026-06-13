@@ -52,7 +52,7 @@ fn status_text_lists_one_worker() {
     assert!(text.contains("w-abc1") || text.contains("w-abc1234"));
 }
 
-// --- Task 10: queue-distinct counts in status ----------------------------
+// --- queue-distinct counts in status -------------------------------------
 
 #[test]
 fn status_reports_queued_count() {

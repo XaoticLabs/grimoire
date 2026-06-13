@@ -1,4 +1,4 @@
-//! Outbound peer client (Tasks 6, 7). One task per peer link:
+//! Outbound peer client. One task per peer link:
 //! connects, performs the `Hello`/`HelloAck` handshake, runs the
 //! heartbeat + select loop, and reconnects with exponential backoff
 //! on disconnect.

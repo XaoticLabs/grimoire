@@ -151,9 +151,10 @@ impl AgentManager {
         ))
     }
 
-    /// successful `claim_for_dispatch`. On failure, returns `Err` *without*
-    /// mutating queue state, since the scheduler owns the requeue path so the
-    /// row's original `enqueued_at` (and therefore lane fairness) is preserved.
+    /// Drive a row claimed via `claim_for_dispatch` through the executor. On
+    /// failure, returns `Err` *without* mutating queue state, since the
+    /// scheduler owns the requeue path so the row's original `enqueued_at`
+    /// (and therefore lane fairness) is preserved.
     pub(crate) async fn dispatch_internal(self: &Arc<Self>, row: QueueRow) -> Result<()> {
         let agent_id = row.id.clone();
         let provider_name = row

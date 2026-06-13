@@ -27,7 +27,7 @@ pub struct TaskSpec {
     pub cwd: Option<String>,
     pub file_patterns: Vec<String>,
     pub depends_on: Vec<String>,
-    /// F5a: when set, the coordinator dispatches this task to the
+    /// When set, the coordinator dispatches this task to the
     /// named peer instead of spawning a local agent. The peer must
     /// have `accept_scroll_dispatch = 1` and lifecycle federation in
     /// the inbound direction back to the coordinator.
@@ -410,7 +410,7 @@ Build the frontend login page.
         assert_eq!(spec.tasks[2].depends_on, vec!["API Routes"]);
     }
 
-    /// F5a: `peer:` directive on a task marks it for cross-peer
+    /// A `peer:` directive on a task marks it for cross-peer
     /// dispatch and is preserved on the parsed `TaskSpec`.
     #[test]
     fn peer_directive_attached_to_task() {

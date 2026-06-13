@@ -7,7 +7,6 @@ pub async fn run(key: Option<String>, value: Option<String>) -> Result<()> {
     let config_path = Config::config_path();
 
     match (key, value) {
-        // No args: show current config
         (None, _) => {
             let config = Config::load()?;
             println!(
@@ -61,7 +60,6 @@ pub async fn run(key: Option<String>, value: Option<String>) -> Result<()> {
                 config_path.display().to_string().dimmed()
             );
         }
-        // Key only: show that value
         (Some(key), None) => {
             let config = Config::load()?;
             let value = match key.as_str() {

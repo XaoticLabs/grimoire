@@ -192,21 +192,20 @@ pub async fn start() -> Result<()> {
     }
     peer_registry.spawn_all_active().await;
 
-    // F3b: let the workspace watcher wake outbox drainers immediately
-    // after enqueueing a federated event, rather than waiting on the
-    // peer's next heartbeat tick.
+    // Let the workspace watcher wake outbox drainers immediately after
+    // enqueueing a federated event, rather than waiting on the peer's next
+    // heartbeat tick.
     workspace_watcher::set_peer_registry(peer_registry.clone());
 
-    // F4b: agent-lifecycle producer. One bus subscriber fans every
-    // local `StateChange` event into the lifecycle outbox for each
-    // federated peer. Boot recovery: revert any in-flight rows so
-    // the drainer reships.
+    // Agent-lifecycle producer. One bus subscriber fans every local
+    // `StateChange` event into the lifecycle outbox for each federated peer.
+    // Boot recovery: revert any in-flight rows so the drainer reships.
     let _ = db.agent_lifecycle_reset_in_flight();
     agent_lifecycle_publisher::spawn(db.clone(), event_bus.clone(), peer_registry.clone());
 
-    // F5b: hand peer_registry to scroll_keeper so peer-targeted tasks
-    // dispatch via the outbox path. Also revert any in-flight
-    // scroll-dispatch outbox rows so the drainer reships them.
+    // Hand peer_registry to scroll_keeper so peer-targeted tasks dispatch via
+    // the outbox path. Also revert any in-flight scroll-dispatch outbox rows so
+    // the drainer reships them.
     let _ = db.scroll_dispatch_reset_in_flight();
     scroll_keeper.set_peer_registry(peer_registry.clone()).await;
 

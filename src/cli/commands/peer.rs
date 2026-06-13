@@ -1,4 +1,4 @@
-//! `grim peer`: federation peer management (Task 11).
+//! `grim peer`: federation peer management.
 
 use anyhow::{Result, anyhow};
 use clap::Subcommand;
@@ -35,7 +35,7 @@ pub enum PeerCommand {
     Remove { name: String },
     /// Ping a peer (returns RTT and stream state).
     Ping { name: String },
-    /// F4b: opt this daemon into agent-lifecycle federation with a peer.
+    /// Opt this daemon into agent-lifecycle federation with a peer.
     /// Direction merges the same way as workspace/namespace federations
     /// (outbound + inbound -> both). Outbound side replays current
     /// agent states so the receiver starts with a populated view.
@@ -48,7 +48,7 @@ pub enum PeerCommand {
     },
     /// Remove the lifecycle federation with a peer.
     LifecycleUnfederate { name: String },
-    /// F5a: toggle whether this daemon accepts inbound scroll task
+    /// Toggle whether this daemon accepts inbound scroll task
     /// dispatches from `name`. Default is off; this gate must be on
     /// for the receiver to spawn agents on behalf of a coordinator.
     SetAcceptDispatch {
