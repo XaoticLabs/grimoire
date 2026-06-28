@@ -2,7 +2,6 @@
 
 > **`cron` + `systemd` for AI coding agents.** Bring your own CLI.
 
-[![CI](https://github.com/XaoticLabs/grimoire/actions/workflows/ci.yml/badge.svg)](https://github.com/XaoticLabs/grimoire/actions/workflows/ci.yml)
 [![MSRV](https://img.shields.io/badge/MSRV-1.95-blue.svg)](#msrv)
 [![license](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#license)
 

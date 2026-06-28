@@ -1,4 +1,4 @@
-# Developer convenience targets. CI should mirror these.
+# Developer convenience targets.
 
 .PHONY: check fmt fmt-check clippy test audit deny machete typos all ci
 

@@ -10,17 +10,17 @@ Thanks for your interest. Grimoire is a solo project at the moment. I'll try to 
 - `protoc` on your PATH (used by `build.rs` to compile the worker/peer
   protos).
 - Optional dev tools: `cargo-deny`, `cargo-machete`, `cargo-audit`,
-  `typos-cli`, `pre-commit`. CI installs these via `taiki-e/install-action`;
-  locally, `cargo install` or your package manager works.
+  `typos-cli`, `pre-commit`. These can be installed via `cargo install`
+  or your package manager.
 
 ## The gate
 
-Everything CI runs is mirrored in the `Makefile`. The two targets that
+The full set of checks is mirrored in the `Makefile`. The two targets that
 matter day-to-day:
 
 ```sh
 make all   # fmt-check, clippy, test, typos. Run before pushing.
-make ci    # the full CI gate including cargo-deny, cargo-machete
+make ci    # the full gate including cargo-deny, cargo-machete
 ```
 
 `cargo lint` (alias defined in `.cargo/config.toml`) is a shortcut for
